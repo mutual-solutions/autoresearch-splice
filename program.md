@@ -63,15 +63,20 @@ LOOP FOREVER:
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
    `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`
-9. If `combined` **improved** (strictly higher): keep the commit, advance branch.
-10. If equal or worse: `git reset --hard HEAD~1` to discard.
+9. If `combined` **improved** (strictly higher):
+   a. **Verify**: Run `uv run python .omc/coordination/verify_agent.py --agent-name autoresearch --reported-combined <score>`
+   b. If verify **PASSES** (exit 0): keep the commit, advance branch. Log status=`keep`.
+   c. If verify **FAILS** (exit 1): `git reset --hard HEAD~1`. Log status=`verify-fail`. Treat as discard.
+10. If equal or worse: `git reset --hard HEAD~1`. Log status=`discard`.
+11. **Stop signal**: If `.omc/autoresearch-stop` exists, stop the loop immediately.
+12. Print `RESULT:<status>` as the last line (keep, discard, or verify-fail).
 
 ## results.tsv format
 
 Tab-separated. Do NOT use commas in descriptions.
 
 ```
-commit	splice_f1	precision	recall	fp_rate	status	description
+commit	combined	splice_f1	clean_score	precision	recall	fp_rate	clean_fp	status	description
 a1b2c3d	0.000000	0.00	0.00	0.00	keep	baseline
 b2c3d4e	0.712000	0.80	0.64	0.05	keep	spectral flux peak-pick 3-sigma
 c3d4e5f	0.690000	0.75	0.64	0.08	discard	lower threshold hurt precision
