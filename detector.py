@@ -127,11 +127,29 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
     order = np.argsort(-heights)
     peaks_idx = peaks_idx[order[:2]]
 
-    # Convert to times and refine
+    # Convert to times, filter quiet boundaries, refine
+    candidates = [times_arr[idx] for idx in sorted(peaks_idx)]
+
+    # Reject quiet-to-loud boundaries (same filter as phase detector)
+    check_samples = int(0.5 * sr)
+    energy_threshold_db = -35
+    filtered = []
+    for t in candidates:
+        center_sample = int(t * sr)
+        left_start = max(0, center_sample - check_samples)
+        right_end = min(len(audio), center_sample + check_samples)
+        if center_sample - left_start < sr // 10 or right_end - center_sample < sr // 10:
+            continue
+        left_rms = np.sqrt(np.mean(audio[left_start:center_sample] ** 2))
+        right_rms = np.sqrt(np.mean(audio[center_sample:right_end] ** 2))
+        left_db = 20 * np.log10(max(left_rms, 1e-10))
+        right_db = 20 * np.log10(max(right_rms, 1e-10))
+        if left_db > energy_threshold_db and right_db > energy_threshold_db:
+            filtered.append(t)
+
     results = []
-    for idx in sorted(peaks_idx):
-        coarse_t = times_arr[idx]
-        refined_t = _refine_splice_point(audio, sr, coarse_t, search_radius_s=1.0)
+    for t in filtered:
+        refined_t = _refine_splice_point(audio, sr, t, search_radius_s=1.0)
         results.append(refined_t)
 
     return results
