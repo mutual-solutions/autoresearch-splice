@@ -121,19 +121,27 @@ case "${1:-help}" in
         echo "Stop signal sent. Loop will exit after current iteration."
         ;;
     status)
+        # Fast — no subprocesses, no prepare.py, just file reads
         if tmux has-session -t "$SESSION" 2>/dev/null; then
-            echo "STATUS: RUNNING"
+            echo "🟢 RUNNING"
         else
-            echo "STATUS: STOPPED"
+            echo "🔴 STOPPED"
         fi
+        [ -f "$STOP_FILE" ] && echo "⏸  Stop signal pending"
         if [ -f "$RESULTS" ]; then
-            echo "Last result: $(tail -1 "$RESULTS")"
-            echo "Total experiments: $(($(wc -l < "$RESULTS") - 1))"
-            keeps=$(grep -c "keep" "$RESULTS" 2>/dev/null || echo 0)
-            echo "Keeps: $keeps"
+            total=$(($(wc -l < "$RESULTS") - 1))
+            keeps=$(grep -c $'	keep\t' "$RESULTS" 2>/dev/null || true)
+            discards=$(grep -c $'	discard\t' "$RESULTS" 2>/dev/null || true)
+            vfails=$(grep -c "verify-fail" "$RESULTS" 2>/dev/null || true)
+            keeps=${keeps:-0}; discards=${discards:-0}; vfails=${vfails:-0}
+            echo "Experiments: $total (keep: $keeps, discard: $discards, verify-fail: $vfails)"
+            echo "Last: $(tail -1 "$RESULTS" | cut -f9,10)"
         fi
         if [ -f "$LOG_FILE" ]; then
-            echo "Last log: $(tail -1 "$LOG_FILE")"
+            last_log=$(tail -1 "$LOG_FILE")
+            echo "Log: $last_log"
+            # Show backoff state if rate limited
+            echo "$last_log" | grep -qi "backoff" && echo "⚠️  Rate limited — backing off"
         fi
         ;;
     _loop)
