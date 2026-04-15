@@ -111,8 +111,8 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
     silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.5, silence)
     t2_z = t2_z * (silence_at_test > 0.5).astype(float)
 
-    p999 = np.percentile(t2_z, 99.9) if len(t2_z) > 10 else 4.0
-    threshold = max(p999, 4.0)
+    p995 = np.percentile(t2_z, 99.5) if len(t2_z) > 10 else 4.0
+    threshold = max(p995, 3.5)
 
     # Peak pick
     min_dist_idx = max(1, int(5.0 / hop_s))
