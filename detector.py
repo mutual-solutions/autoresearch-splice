@@ -125,7 +125,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
     # Top 2 peaks
     heights = props['peak_heights']
     order = np.argsort(-heights)
-    peaks_idx = peaks_idx[order[:2]]
+    peaks_idx = peaks_idx[order[:1]]
 
     # Convert to times, filter quiet boundaries, refine
     candidates = [times_arr[idx] for idx in sorted(peaks_idx)]
