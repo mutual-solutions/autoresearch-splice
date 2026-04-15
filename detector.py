@@ -409,8 +409,8 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     t2_arr = np.array(t2_scores)
     times_arr = np.array(test_times)
 
-    # --- Z-score and threshold ---
-    t2_z = _zscore(t2_arr)
+    # --- Robust z-score (MAD-based) for outlier-resistant normalization ---
+    t2_z = _robust_zscore(t2_arr)
 
     # Silence suppression: suppress detections where audio is silent
     silence = _silence_mask(audio, sr, hop_ms=500, threshold_db=-45)
@@ -793,6 +793,15 @@ def _zscore(x: np.ndarray) -> np.ndarray:
     if sd < 1e-8:
         return np.zeros_like(x)
     return (x - mu) / sd
+
+
+def _robust_zscore(x: np.ndarray) -> np.ndarray:
+    """MAD-based robust z-score: outlier-resistant normalization."""
+    med = np.median(x)
+    mad = np.median(np.abs(x - med))
+    if mad < 1e-8:
+        return np.zeros_like(x)
+    return (x - med) / (mad * 1.4826)  # 1.4826 scales MAD to std for normal
 
 
 def _peak_pick(curve: np.ndarray, threshold: float, min_dist_s: float,
