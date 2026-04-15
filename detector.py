@@ -259,7 +259,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     # --- GPD tail-based threshold with Bonferroni correction ---
     n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=2.0)
+    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.5)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
