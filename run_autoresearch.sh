@@ -43,11 +43,9 @@ Read program.md for full instructions, then execute exactly ONE experiment itera
 4. git commit -m \"hypothesis: <description>\"
 5. Run: uv run python prepare.py
 6. Parse combined score from output
-7. If combined > previous best: run uv run python .omc/coordination/verify_agent.py --agent-name autoresearch --reported-combined <score>
-   - If verify PASSES: keep commit, log to results.tsv as 'keep'
-   - If verify FAILS: git reset --hard HEAD~1, log to results.tsv as 'verify-fail'
-8. If combined <= previous best: git reset --hard HEAD~1, log to results.tsv as 'discard'
-9. Print exactly one line at the end: RESULT:<status> where status is keep, discard, or verify-fail
+7. If combined > previous best: print RESULT:keep-pending
+8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
+9. Do NOT run verify_agent.py yourself. The shell wrapper handles verification.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
@@ -81,16 +79,52 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         last_status=$(echo "$last_output" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
 
         case "$last_status" in
-            keep)
-                consecutive_discards=0
-                echo "$(date -Iseconds) Iteration: KEEP (reset discard counter)" >> "$LOG_FILE"
+            keep-pending)
+                # STRUCTURAL VERIFICATION: shell runs verify_agent.py directly (not Claude)
+                echo "$(date -Iseconds) Keep pending — running structural verification..." >> "$LOG_FILE"
+
+                # Extract reported combined from Claude's output
+                reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+
+                verify_output=$(uv run python .omc/coordination/verify_agent.py \
+                    --agent-name autoresearch \
+                    --reported-combined "$reported" 2>&1)
+                verify_exit=$?
+
+                echo "$verify_output" >> "$LOG_FILE"
+
+                if [ $verify_exit -eq 0 ]; then
+                    consecutive_discards=0
+                    echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported)" >> "$LOG_FILE"
+                else
+                    # Verification failed — revert
+                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
+                    consecutive_discards=$((consecutive_discards + 1))
+                    echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+                fi
                 ;;
-            discard|verify-fail)
+            keep)
+                # Legacy: if Claude outputs "keep" instead of "keep-pending", still verify
+                echo "$(date -Iseconds) Keep (legacy) — running structural verification..." >> "$LOG_FILE"
+                reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+                verify_output=$(uv run python .omc/coordination/verify_agent.py \
+                    --agent-name autoresearch --reported-combined "$reported" 2>&1)
+                verify_exit=$?
+                echo "$verify_output" >> "$LOG_FILE"
+                if [ $verify_exit -eq 0 ]; then
+                    consecutive_discards=0
+                    echo "$(date -Iseconds) VERIFIED KEEP" >> "$LOG_FILE"
+                else
+                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
+                    consecutive_discards=$((consecutive_discards + 1))
+                    echo "$(date -Iseconds) VERIFY-FAIL (legacy keep)" >> "$LOG_FILE"
+                fi
+                ;;
+            discard)
                 consecutive_discards=$((consecutive_discards + 1))
-                echo "$(date -Iseconds) Iteration: $last_status (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+                echo "$(date -Iseconds) Iteration: discard (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
                 ;;
             unknown)
-                # Unknown = claude didn't produce RESULT line, don't count as experiment discard
                 echo "$(date -Iseconds) Iteration: unknown output (not counting toward circuit breaker)" >> "$LOG_FILE"
                 sleep 30
                 ;;

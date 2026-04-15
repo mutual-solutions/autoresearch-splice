@@ -64,8 +64,11 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
             _sys.path.insert(0, _coord)
         from fp_filter import filter_detections as _fp_filter
         merged = _fp_filter(audio, sr, merged)
-    except (ImportError, FileNotFoundError, Exception):
-        pass  # graceful degradation
+    except (ImportError, FileNotFoundError):
+        pass  # classifier not installed — graceful degradation
+    except Exception as e:
+        import sys as _sys2
+        print(f"WARNING: FP classifier error (falling back to unfiltered): {e}", file=_sys2.stderr)
 
     return merged
 
