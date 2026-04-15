@@ -377,7 +377,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     Detect crossfade splices via Hotelling's T^2 test on CQT subband PSD vectors.
     Optionally confirm with CPE curve to reduce FP.
     """
-    K = 8  # number of constant-Q bands
+    K = 16  # number of constant-Q bands (finer spectral resolution for subtle crossfades)
     hop_s = 0.5  # step between test points
 
     # --- CQT-like subband decomposition ---
