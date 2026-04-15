@@ -5,3 +5,10 @@
 - TP=0, FP=10, FN=12
 - Runtime: 75-84s (over 60s budget)
 - Bottleneck: _two_window_ttest Python loop
+
+## AGC experiment (discarded)
+- AGC normalizes amplitude but phase is independent of amplitude
+- At -20dB RMS, phase estimation is already accurate — AGC adds nothing
+- At -40dB RMS (near silence), phase is noise-dominated — AGC can't fix that
+- Conclusion: phase-based detection has a fundamental floor around -30dB
+- Below that, need different approach (noise floor spectrum comparison, not phase)

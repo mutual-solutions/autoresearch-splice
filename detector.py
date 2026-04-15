@@ -21,17 +21,101 @@ OVERLAP_S = 10.0
 
 
 def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
-    """Run both phase (hard cut) and PSD change-point (crossfade) detectors."""
-    phase_hits = _detect_phase(audio, sr)
+    """Run CPE (unified), crossfade, and noise floor detectors."""
+    # CPE replaces phase detector (unified amplitude+phase)
+    cpe_hits = _detect_cpe(audio, sr)
     xfade_hits = _detect_crossfade(audio, sr)
 
-    # Merge and deduplicate (within 1s = same detection)
-    all_hits = sorted(phase_hits + xfade_hits)
+    all_hits = sorted(cpe_hits + xfade_hits)
     merged = []
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
     return merged
+
+
+# ===== MODE 4: Complex Prediction Error (unified amplitude+phase) =====
+
+def _detect_cpe(audio: np.ndarray, sr: int) -> list[float]:
+    """
+    Complex Prediction Error: unified amplitude-phase splice detector.
+
+    D(f,t) = X(f,t) - X(f,t-1) · e^{j2πf·hop/sr}
+    Score(t) = Σ_f |D(f,t)|²
+
+    AGC normalizes amplitude so quiet regions contribute equally.
+    Then GPD threshold on the CPE score curve.
+    """
+    hop_ms = 10
+    hop_s = hop_ms / 1000.0
+    n_fft = 1024
+    hop_length = max(1, int(sr * hop_ms / 1000))
+
+    # AGC: normalize amplitude so quiet sections are amplified
+    agc_window = max(1, int(sr * 0.200))
+    sq = audio ** 2
+    local_power = uniform_filter1d(sq, size=agc_window, mode='constant')
+    local_rms = np.sqrt(np.maximum(local_power, 1e-10))
+    audio_agc = audio / local_rms
+
+    # STFT on AGC'd audio
+    _, _, Zxx = sp_signal.stft(audio_agc, fs=sr, nperseg=n_fft,
+                                noverlap=n_fft - hop_length)
+
+    # Complex prediction error
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+    phase_advance = np.exp(1j * 2 * np.pi * freqs * (hop_length / sr))[:, np.newaxis]
+    predicted = Zxx[:, :-1] * phase_advance
+    error = Zxx[:, 1:] - predicted
+    cpe_score = np.sum(np.abs(error) ** 2, axis=0)
+
+    cpe_z = _zscore(cpe_score)
+
+    # Silence suppression (on original audio, not AGC'd)
+    silence = _silence_mask(audio, sr, hop_ms=hop_ms, threshold_db=-45)
+    min_len = min(len(cpe_z), len(silence))
+    cpe_z = cpe_z[:min_len]
+    silence = silence[:min_len]
+
+    # Quiet-boundary filter: suppress detections at silence edges
+    fused = cpe_z * silence
+
+    # GPD threshold
+    non_silent = fused[silence > 0.5]
+    n_tests = len(non_silent)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.5)
+
+    peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
+
+    # Cap at 1
+    if len(peaks) > 1:
+        peak_frames = [int(p / hop_s) for p in peaks]
+        scores = [fused[min(f, min_len - 1)] for f in peak_frames]
+        top_idx = [np.argmax(scores)]
+        peaks = [peaks[top_idx[0]]]
+
+    # Quiet boundary filter
+    filtered = []
+    check_samples = int(0.5 * sr)
+    for p in peaks:
+        center_sample = int(p * sr)
+        left_start = max(0, center_sample - check_samples)
+        right_end = min(len(audio), center_sample + check_samples)
+        if center_sample - left_start < sr // 10 or right_end - center_sample < sr // 10:
+            continue
+        left_rms = np.sqrt(np.mean(audio[left_start:center_sample] ** 2))
+        right_rms = np.sqrt(np.mean(audio[center_sample:right_end] ** 2))
+        left_db = 20 * np.log10(max(left_rms, 1e-10))
+        right_db = 20 * np.log10(max(right_rms, 1e-10))
+        if left_db > -35 and right_db > -35:
+            filtered.append(p)
+
+    # Refine
+    refined = []
+    for p in filtered:
+        r = _refine_splice_point(audio, sr, p, search_radius_s=0.3)
+        refined.append(r)
+    return refined
 
 
 # ===== MODE 1: Phase discontinuity (hard cuts) =====
@@ -60,6 +144,105 @@ def _detect_phase(audio: np.ndarray, sr: int) -> list[float]:
         if not deduped or p - deduped[-1] > 1.0:
             deduped.append(p)
     return deduped
+
+
+# ===== MODE 3: Noise floor jump (quiet sections) =====
+
+def _detect_noise_floor_jump(audio: np.ndarray, sr: int) -> list[float]:
+    """
+    Detect splice by comparing noise floor level in quiet regions.
+    Activates per-FRAME: only analyzes frames where local RMS < -20 dBFS.
+    Loud frames are ignored (phase detector handles those).
+    """
+    frame_ms = 20
+    frame_samples = max(1, int(sr * frame_ms / 1000))
+    n_frames = len(audio) // frame_samples
+    if n_frames < 50:
+        return []
+
+    frames = audio[:n_frames * frame_samples].reshape(n_frames, frame_samples)
+    rms = np.sqrt(np.mean(frames ** 2, axis=1))
+    rms_db = 20 * np.log10(np.maximum(rms, 1e-10))
+
+    # Quiet frames: absolute threshold -20 dBFS
+    QUIET_THRESHOLD_DB = -20
+    is_quiet = rms_db < QUIET_THRESHOLD_DB
+
+    if np.sum(is_quiet) < 20:
+        return []
+
+    # Sliding two-window comparison on quiet-only frames
+    hop_frames = max(1, int(0.5 / (frame_ms / 1000)))
+    window_frames = max(10, int(5.0 / (frame_ms / 1000)))
+
+    # Minimum fraction of quiet frames required in BOTH windows
+    MIN_QUIET_FRAC = 0.15  # at least 15% of window must be quiet
+
+    scores = []
+    times = []
+
+    for center in range(window_frames, n_frames - window_frames, hop_frames):
+        left_mask = is_quiet[max(0, center - window_frames):center]
+        right_mask = is_quiet[center:min(n_frames, center + window_frames)]
+
+        left_quiet_frac = left_mask.sum() / max(len(left_mask), 1)
+        right_quiet_frac = right_mask.sum() / max(len(right_mask), 1)
+
+        # Both sides must have enough quiet frames
+        if left_quiet_frac < MIN_QUIET_FRAC or right_quiet_frac < MIN_QUIET_FRAC:
+            scores.append(0.0)
+            times.append(center * frame_ms / 1000.0)
+            continue
+
+        left_noise = rms_db[max(0, center - window_frames):center][left_mask]
+        right_noise = rms_db[center:min(n_frames, center + window_frames)][right_mask]
+
+        if len(left_noise) < 3 or len(right_noise) < 3:
+            scores.append(0.0)
+            times.append(center * frame_ms / 1000.0)
+            continue
+
+        # Raw Welch's t-statistic (absolute threshold, no z-score)
+        diff = abs(left_noise.mean() - right_noise.mean())
+        se = np.sqrt(left_noise.var() / len(left_noise) +
+                     right_noise.var() / len(right_noise))
+        t_stat = diff / max(se, 0.01)
+
+        scores.append(t_stat)
+        times.append(center * frame_ms / 1000.0)
+
+    if not scores:
+        return []
+
+    scores = np.array(scores)
+    times = np.array(times)
+
+    # Absolute threshold on t-statistic: t > 6 is very significant
+    NOISE_T_THRESHOLD = 20.0
+
+    min_dist_idx = max(1, int(5.0 / 0.5))
+    peaks_idx, props = sp_signal.find_peaks(scores, height=NOISE_T_THRESHOLD,
+                                             distance=min_dist_idx)
+    if len(peaks_idx) == 0:
+        return []
+
+    # Top 1 only
+    best = peaks_idx[np.argmax(props['peak_heights'])]
+    return [times[best]]
+
+
+def _step_detector_noise(curve: np.ndarray, half_win: int = 50) -> np.ndarray:
+    """Step detector optimized for noise floor: absolute diff of left/right means."""
+    n = len(curve)
+    if n < 2 * half_win + 1:
+        return np.zeros(n)
+    cs = np.concatenate([[0], np.cumsum(curve)])
+    idx = np.arange(n)
+    l_start = np.maximum(idx - half_win, 0)
+    r_end = np.minimum(idx + half_win, n)
+    l_mean = (cs[idx] - cs[l_start]) / np.maximum(idx - l_start, 1)
+    r_mean = (cs[r_end] - cs[idx]) / np.maximum(r_end - idx, 1)
+    return np.abs(r_mean - l_mean)
 
 
 # ===== MODE 2: CQT PSD change-point (crossfades) =====

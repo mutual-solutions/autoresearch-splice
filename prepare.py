@@ -194,6 +194,43 @@ def evaluate(data_dir):
     }
 
 
+def evaluate_multi(data_dirs):
+    """Evaluate across multiple data directories and aggregate."""
+    total_tp, total_fp, total_fn, total_clean_fp = 0, 0, 0, 0
+    total_files, total_clean = 0, 0
+
+    for d in data_dirs:
+        if not os.path.exists(d):
+            continue
+        result = evaluate(d)
+        total_tp += result["tp"]
+        total_fp += result["fp"]
+        total_fn += result["fn"]
+        total_clean_fp += result["clean_fp"]
+        total_files += result["tp"] + result["fn"]  # spliced files
+        # count clean files from ground truth
+        gt_path = os.path.join(d, "ground_truth.json")
+        with open(gt_path) as f:
+            gt = json.load(f)
+        n_clean = sum(1 for e in gt.values() if not e.get("spliced", False))
+        total_clean += n_clean
+
+    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 1.0
+    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+    clean_score = 1.0 - (total_clean_fp / max(total_clean, 1))
+
+    combined = f1 * clean_score
+    print(f"\n{'='*60}")
+    print(f"AGGREGATE across {len(data_dirs)} datasets:")
+    print(f"splice_f1: {f1:.6f}")
+    print(f"clean_score: {clean_score:.6f}")
+    print(f"combined: {combined:.6f}")
+    print(f"precision: {precision:.2f}")
+    print(f"recall: {recall:.2f}")
+    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={total_clean_fp} clean_total={total_clean}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Audio splice detection evaluation oracle"
@@ -203,9 +240,23 @@ if __name__ == "__main__":
         default=os.path.join(os.path.dirname(__file__), "data", "spliced"),
         help="Path to spliced test data directory (default: data/spliced/)",
     )
+    parser.add_argument(
+        "--multi", action="store_true",
+        help="Evaluate on both normal and quiet datasets",
+    )
     args = parser.parse_args()
 
     t0 = time.time()
-    evaluate(args.data_dir)
+    if args.multi:
+        base = os.path.dirname(os.path.realpath(args.data_dir))
+        dirs = [args.data_dir]
+        quiet = os.path.join(base, "spliced_quiet")
+        if os.path.exists(quiet):
+            dirs.append(quiet)
+        for d in dirs:
+            evaluate(d)
+        evaluate_multi(dirs)
+    else:
+        evaluate(args.data_dir)
     elapsed = time.time() - t0
     print(f"elapsed: {elapsed:.1f}s")
