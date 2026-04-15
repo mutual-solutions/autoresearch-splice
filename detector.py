@@ -384,6 +384,14 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     band_powers = _cqt_band_powers(audio, sr, K, frame_s=0.050, hop_s=0.020)
     # band_powers: (K, n_frames), each frame = 20ms
 
+    # --- Append spectral flux as (K+1)th feature dimension ---
+    # Spectral flux = frame-to-frame L2 norm of band power change
+    flux = np.sqrt(np.sum(np.diff(band_powers, axis=1) ** 2, axis=0))
+    flux = np.concatenate([[flux[0]], flux])  # pad to match n_frames
+    # Smooth flux with small window to reduce noise
+    flux_smooth = uniform_filter1d(flux, size=5, mode='nearest')
+    band_powers = np.vstack([band_powers, flux_smooth[np.newaxis, :]])
+
     frames_per_window = max(1, int(compare_window_s / 0.020))
     hop_frames = max(1, int(hop_s / 0.020))
     n_frames = band_powers.shape[1]
