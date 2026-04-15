@@ -4,9 +4,13 @@ Autonomous research for **audio splice detection using classical signal processi
 
 ## Research goal
 
-Maximize **F1 score** on a labeled test set of WAV files containing known splice points.
-The single metric reported by the evaluation oracle is `splice_f1: 0.XXX` (higher is better).
-Secondary metrics: `precision: X.XX, recall: X.XX, fp_rate: X.XX`.
+Maximize **combined score** = F1 × clean_score on a labeled test set.
+Three metrics reported by the evaluation oracle:
+- `splice_f1: 0.XXX` — F1 score on splice detection (higher is better)
+- `clean_score: 0.XXX` — 1.0 if zero FP on clean files, penalized per clean FP (higher is better)
+- `combined: 0.XXX` — F1 × clean_score. THIS is the metric to optimize. Both must be high.
+
+Use `combined` for keep/discard decisions. An improvement in F1 that adds clean FPs is NOT an improvement.
 
 ## Constraints — NON-NEGOTIABLE
 
@@ -56,10 +60,10 @@ LOOP FOREVER:
 5. `git commit -m "hypothesis: <one line>"`
 6. Run evaluation: `uv run prepare.py > run.log 2>&1`
    - Must finish in <60s. If it hangs past 90s, kill it (treat as crash).
-7. Read results: `grep "^splice_f1:\|^precision:\|^recall:\|^fp_rate:" run.log`
+7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
-   `commit  splice_f1  precision  recall  fp_rate  status  description`
-9. If `splice_f1` **improved** (strictly higher): keep the commit, advance branch.
+   `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`
+9. If `combined` **improved** (strictly higher): keep the commit, advance branch.
 10. If equal or worse: `git reset --hard HEAD~1` to discard.
 
 ## results.tsv format

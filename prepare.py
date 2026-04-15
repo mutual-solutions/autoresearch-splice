@@ -100,6 +100,8 @@ def evaluate(data_dir):
     total_fp = 0
     total_fn = 0
     total_files = len(cases)
+    clean_files = 0
+    clean_fp = 0
     errors = 0
 
     print(f"Evaluating {total_files} files from {data_dir}")
@@ -138,6 +140,11 @@ def evaluate(data_dir):
         total_fp += fp
         total_fn += fn
 
+        # Track clean file FPs
+        if not case["spliced"]:
+            clean_files += 1
+            clean_fp += fp
+
         # Per-file summary
         status = "OK" if (tp == len(case["gt_times"]) and fp == 0) else "MISS"
         tier_str = f"T{case['tier']}"
@@ -153,8 +160,17 @@ def evaluate(data_dir):
     f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
     fp_rate = total_fp / total_files if total_files > 0 else 0.0
 
+    # Clean score: 1.0 if no FP on clean files, 0.0 if all clean files have FP
+    clean_score = 1.0 - (clean_fp / max(clean_files, 1))
+    clean_score = max(0.0, clean_score)
+
+    # Combined: F1 × clean_score. Both must be high to score well.
+    combined = f1 * clean_score
+
     # Primary metric (what the autoresearch loop optimizes)
     print(f"splice_f1: {f1:.6f}")
+    print(f"clean_score: {clean_score:.6f}")
+    print(f"combined: {combined:.6f}")
 
     # Secondary metrics
     print(f"precision: {precision:.2f}")
@@ -162,16 +178,19 @@ def evaluate(data_dir):
     print(f"fp_rate: {fp_rate:.2f}")
 
     # Extra detail
-    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} files={total_files} errors={errors}")
+    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={clean_fp} files={total_files} errors={errors}")
 
     return {
         "splice_f1": f1,
+        "clean_score": clean_score,
+        "combined": combined,
         "precision": precision,
         "recall": recall,
         "fp_rate": fp_rate,
         "tp": total_tp,
         "fp": total_fp,
         "fn": total_fn,
+        "clean_fp": clean_fp,
     }
 
 
