@@ -133,6 +133,7 @@ def evaluate(data_dir):
     errors = 0
     fp_per_file = {}   # name -> fp count
     xfade_results = {}  # crossfade_ms -> {"tp": int, "total": int}
+    all_loc_distances = []  # distances between TP detections and ground truth
 
     print(f"Evaluating {total_files} files from {data_dir}")
     print("-" * 60)
@@ -280,7 +281,10 @@ def evaluate(data_dir):
         "clean_fp": clean_fp,
         "fp_distribution": fp_dist,
         "max_fp_file": max_fp_file,
-        "t2_by_xfade": {xf: dict(v) for xf, v in xfade_results.items()},
+        "t2_by_xfade": {xf: {"tp": v["tp"], "total": v["total"]} for xf, v in xfade_results.items()},
+        "loc_distances": all_loc_distances,
+        "loc_mean": loc_mean,
+        "loc_median": loc_median,
     }
 
 

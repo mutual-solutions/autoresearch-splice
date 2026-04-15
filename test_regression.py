@@ -25,6 +25,7 @@ EXPECTED = {
     "t1_recall_min": 0.50,
     "t2_recall_min": 0.25,
     "opus32k_combined_min": 0.35,
+    "loc_mean_max": 0.8,
 }
 
 T1_COUNT = 20
@@ -110,6 +111,7 @@ def main():
     failures += 0 if check("Clean FP", r["clean_fp"], EXPECTED["clean_fp_max"], op="<=") else 1
     failures += 0 if check("T1 recall", r["t1_tp"] / T1_COUNT, EXPECTED["t1_recall_min"]) else 1
     failures += 0 if check("T2 recall", r["t2_tp"] / T2_COUNT, EXPECTED["t2_recall_min"]) else 1
+    failures += 0 if check("Loc mean", r["loc_mean"], EXPECTED["loc_mean_max"], op="<=") else 1
 
     # --- Opus 32k codec robustness ---
     if shutil.which("ffmpeg") or os.path.exists("/opt/homebrew/bin/ffmpeg"):
