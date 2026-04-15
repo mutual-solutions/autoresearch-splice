@@ -21,11 +21,11 @@ OVERLAP_S = 10.0
 
 
 def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
-    """Run CPE2 (unified, abruptness) + crossfade detectors."""
-    phase_hits = _detect_phase(audio, sr)
-    xfade_hits = _detect_crossfade(audio, sr)
+    """Unified CPE + crossfade detector with CPE confirmation for xfade hits."""
+    cpe_hits, cpe_curve, cpe_hop_s = _detect_cpe(audio, sr)
+    xfade_hits = _detect_crossfade(audio, sr, cpe_curve, cpe_hop_s)
 
-    all_hits = sorted(phase_hits + xfade_hits)
+    all_hits = sorted(cpe_hits + xfade_hits)
     merged = []
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
@@ -33,112 +33,9 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     return merged
 
 
-# ===== MODE 5: CPE₂ — Complex Prediction Error 2nd derivative =====
-# "How ABRUPTLY does the prediction error change?"
-# Natural transitions: CPE rises/falls gradually → CPE₂ small
-# Splice: CPE spikes in one frame → CPE₂ large
-
-def _detect_cpe2(audio: np.ndarray, sr: int) -> list[float]:
-    """
-    Second derivative of Complex Prediction Error.
-    Unifies amplitude + phase while selecting for ABRUPT changes only.
-    """
-    hop_ms = 10
-    hop_s = hop_ms / 1000.0
-    n_fft = 1024
-    hop_length = max(1, int(sr * hop_ms / 1000))
-
-    duration_s = len(audio) / sr
-    if duration_s <= WINDOW_S + 5:
-        return _analyze_cpe2_segment(audio, sr, n_fft, hop_length, hop_s, offset_s=0.0)
-
-    # Sliding window for long files
-    window_samples = int(WINDOW_S * sr)
-    step_samples = int((WINDOW_S - OVERLAP_S) * sr)
-    all_peaks = []
-    pos = 0
-    while pos < len(audio):
-        end = min(pos + window_samples, len(audio))
-        segment = audio[pos:end]
-        if len(segment) < sr * 10:
-            break
-        peaks = _analyze_cpe2_segment(segment, sr, n_fft, hop_length, hop_s, offset_s=pos / sr)
-        all_peaks.extend(peaks)
-        pos += step_samples
-
-    all_peaks.sort()
-    deduped = []
-    for p in all_peaks:
-        if not deduped or p - deduped[-1] > 1.0:
-            deduped.append(p)
-    return deduped
-
-
-def _analyze_cpe2_segment(audio: np.ndarray, sr: int, n_fft: int,
-                          hop_length: int, hop_s: float,
-                          offset_s: float = 0.0) -> list[float]:
-    # STFT
-    _, _, Zxx = sp_signal.stft(audio, fs=sr, nperseg=n_fft,
-                                noverlap=n_fft - hop_length)
-
-    # Complex prediction error (first order)
-    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
-    phase_advance = np.exp(1j * 2 * np.pi * freqs * (hop_length / sr))[:, np.newaxis]
-    predicted = Zxx[:, :-1] * phase_advance
-    D1 = Zxx[:, 1:] - predicted  # complex prediction error per bin per frame
-
-    # CPE power per frame (first derivative)
-    cpe1 = np.sum(np.abs(D1) ** 2, axis=0)
-
-    # Second derivative: abruptness of CPE change
-    cpe2 = np.abs(np.diff(cpe1))
-
-    cpe2_z = _zscore(cpe2)
-
-    # Silence suppression
-    silence = _silence_mask(audio, sr, hop_ms=10, threshold_db=-45)
-    min_len = min(len(cpe2_z), len(silence))
-    cpe2_z = cpe2_z[:min_len]
-    fused = cpe2_z * silence[:min_len]
-
-    # GPD threshold
-    non_silent = fused[silence[:min_len] > 0.5]
-    n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.5)
-
-    peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
-
-    # Cap at 1
-    if len(peaks) > 1:
-        peak_frames = [int(p / hop_s) for p in peaks]
-        scores = [fused[min(f, min_len - 1)] for f in peak_frames]
-        peaks = [peaks[np.argmax(scores)]]
-
-    # Quiet boundary filter
-    filtered = []
-    check_samples = int(0.5 * sr)
-    for p in peaks:
-        center_sample = int(p * sr)
-        left_start = max(0, center_sample - check_samples)
-        right_end = min(len(audio), center_sample + check_samples)
-        if center_sample - left_start < sr // 10 or right_end - center_sample < sr // 10:
-            continue
-        left_rms = np.sqrt(np.mean(audio[left_start:center_sample] ** 2))
-        right_rms = np.sqrt(np.mean(audio[center_sample:right_end] ** 2))
-        if 20 * np.log10(max(left_rms, 1e-10)) > -35 and 20 * np.log10(max(right_rms, 1e-10)) > -35:
-            filtered.append(p)
-
-    # Refine
-    refined = []
-    for p in filtered:
-        r = _refine_splice_point(audio, sr, p, search_radius_s=0.3)
-        refined.append(r + offset_s)
-    return refined
-
-
 # ===== MODE 4: Complex Prediction Error (unified amplitude+phase) =====
 
-def _detect_cpe(audio: np.ndarray, sr: int) -> list[float]:
+def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, float]:
     """
     Complex Prediction Error: unified amplitude-phase splice detector.
 
@@ -185,7 +82,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> list[float]:
     # GPD threshold
     non_silent = fused[silence > 0.5]
     n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.5)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.05)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -217,7 +114,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> list[float]:
     for p in filtered:
         r = _refine_splice_point(audio, sr, p, search_radius_s=0.3)
         refined.append(r)
-    return refined
+    return refined, fused, hop_s
 
 
 # ===== MODE 1: Phase discontinuity (hard cuts) =====
@@ -349,13 +246,15 @@ def _step_detector_noise(curve: np.ndarray, half_win: int = 50) -> np.ndarray:
 
 # ===== MODE 2: CQT PSD change-point (crossfades) =====
 
-def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
+def _detect_crossfade(audio: np.ndarray, sr: int,
+                      cpe_curve: np.ndarray = None,
+                      cpe_hop_s: float = 0.01,
+                      compare_window_s: float = 5.0) -> list[float]:
     """
-    Detect crossfade splices via Hotelling's T² test on CQT subband PSD vectors.
-    Compares the PSD distribution in a sliding left-window vs right-window.
+    Detect crossfade splices via Hotelling's T^2 test on CQT subband PSD vectors.
+    Optionally confirm with CPE curve to reduce FP.
     """
     K = 8  # number of constant-Q bands
-    compare_window_s = 5.0  # seconds per comparison window
     hop_s = 0.5  # step between test points
 
     # --- CQT-like subband decomposition ---
@@ -396,8 +295,8 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
     silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.5, silence)
     t2_z = t2_z * (silence_at_test > 0.5).astype(float)
 
-    p995 = np.percentile(t2_z, 99.5) if len(t2_z) > 10 else 5.0
-    threshold = max(p995, 5.0)
+    p995 = np.percentile(t2_z, 99.5) if len(t2_z) > 10 else 4.5
+    threshold = max(p995, 4.5)
 
     # Peak pick
     min_dist_idx = max(1, int(5.0 / hop_s))
@@ -407,19 +306,19 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
     if len(peaks_idx) == 0:
         return []
 
-    # Top 2 peaks
     heights = props['peak_heights']
     order = np.argsort(-heights)
-    peaks_idx = peaks_idx[order[:1]]
+    top_idx = peaks_idx[order[0]]
+    top_height = heights[order[0]]
 
     # Convert to times, filter quiet boundaries, refine
-    candidates = [times_arr[idx] for idx in sorted(peaks_idx)]
+    candidates = [(times_arr[top_idx], top_height)]
 
-    # Reject quiet-to-loud boundaries (same filter as phase detector)
+    # Reject quiet-to-loud boundaries
     check_samples = int(0.5 * sr)
     energy_threshold_db = -35
     filtered = []
-    for t in candidates:
+    for t, t2_height in candidates:
         center_sample = int(t * sr)
         left_start = max(0, center_sample - check_samples)
         right_end = min(len(audio), center_sample + check_samples)
@@ -430,10 +329,32 @@ def _detect_crossfade(audio: np.ndarray, sr: int) -> list[float]:
         left_db = 20 * np.log10(max(left_rms, 1e-10))
         right_db = 20 * np.log10(max(right_rms, 1e-10))
         if left_db > energy_threshold_db and right_db > energy_threshold_db:
-            filtered.append(t)
+            filtered.append((t, t2_height))
+
+    # CPE confirmation: xfade must have elevated CPE OR very strong T^2
+    if cpe_curve is not None and len(filtered) > 0:
+        cpe_p99 = np.percentile(cpe_curve, 99)
+        confirmed = []
+        for t, t2_height in filtered:
+            # Accept if T^2 z-score is extremely strong (no confirmation needed)
+            if t2_height > 6.0:
+                confirmed.append(t)
+                continue
+            # Otherwise require CPE confirmation
+            frame_center = int(t / cpe_hop_s)
+            frame_radius = int(2.0 / cpe_hop_s)
+            lo = max(0, frame_center - frame_radius)
+            hi = min(len(cpe_curve), frame_center + frame_radius)
+            if hi > lo:
+                local_max = np.max(cpe_curve[lo:hi])
+                if local_max > cpe_p99:
+                    confirmed.append(t)
+        filtered_times = confirmed
+    else:
+        filtered_times = [t for t, _ in filtered]
 
     results = []
-    for t in filtered:
+    for t in filtered_times:
         refined_t = _refine_splice_point(audio, sr, t, search_radius_s=1.0)
         results.append(refined_t)
 
