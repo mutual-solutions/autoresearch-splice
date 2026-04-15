@@ -43,7 +43,7 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     all_hits = sorted(phase_hits + xfade_hits)
 
     # Pairwise as additional signal when block structure is clear
-    if pw_score >= 6.0 and pw_time is not None:
+    if pw_score >= 50.0 and pw_time is not None:
         if not any(abs(pw_time - h) < 5.0 for h in all_hits):
             all_hits.append(pw_time)
             all_hits.sort()
