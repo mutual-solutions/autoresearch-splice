@@ -53,6 +53,20 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
+
+    # Optional: FP filter using trained classifier
+    try:
+        import sys as _sys
+        import os as _os
+        _proj = _os.path.dirname(_os.path.abspath(__file__))
+        _coord = _os.path.join(_proj, ".omc", "coordination")
+        if _coord not in _sys.path:
+            _sys.path.insert(0, _coord)
+        from fp_filter import filter_detections as _fp_filter
+        merged = _fp_filter(audio, sr, merged)
+    except (ImportError, FileNotFoundError, Exception):
+        pass  # graceful degradation
+
     return merged
 
 
@@ -575,7 +589,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     # --- GPD tail-based threshold with Bonferroni correction ---
     n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.05)
+    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.02)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
