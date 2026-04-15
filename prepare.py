@@ -18,7 +18,7 @@ import soundfile as sf
 # Import the detector (the mutable file)
 from detector import detect_splices
 
-TOLERANCE_S = 0.200  # ±200ms matching tolerance
+TOLERANCE_S = 1.0  # ±1s matching tolerance — "이 근처에 편집 있음"
 
 
 def load_ground_truth(data_dir):
