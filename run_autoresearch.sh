@@ -53,17 +53,38 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             --add-dir "$PROJECT_DIR" \
             2>&1 | tee -a "$LOG_FILE" | tail -5
 
+        # Check if claude itself failed (rate limit, token exhausted, crash)
+        claude_exit=$?
+        last_output=$(tail -50 "$LOG_FILE")
+
+        if echo "$last_output" | grep -qiE "rate.limit|usage.limit|credit|quota|429|overloaded|capacity"; then
+            echo "$(date -Iseconds) API limit detected. Backing off 5 minutes..." >> "$LOG_FILE"
+            sleep 300
+            continue
+        fi
+
+        if [ $claude_exit -ne 0 ] && ! echo "$last_output" | grep -q "RESULT:"; then
+            echo "$(date -Iseconds) Claude failed (exit $claude_exit). Backing off 60 seconds..." >> "$LOG_FILE"
+            sleep 60
+            continue
+        fi
+
         # Parse result from claude output
-        last_status=$(tail -20 "$LOG_FILE" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
+        last_status=$(echo "$last_output" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
 
         case "$last_status" in
             keep)
                 consecutive_discards=0
                 echo "$(date -Iseconds) Iteration: KEEP (reset discard counter)" >> "$LOG_FILE"
                 ;;
-            discard|verify-fail|unknown)
+            discard|verify-fail)
                 consecutive_discards=$((consecutive_discards + 1))
                 echo "$(date -Iseconds) Iteration: $last_status (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+                ;;
+            unknown)
+                # Unknown = claude didn't produce RESULT line, don't count as experiment discard
+                echo "$(date -Iseconds) Iteration: unknown output (not counting toward circuit breaker)" >> "$LOG_FILE"
+                sleep 30
                 ;;
         esac
 
