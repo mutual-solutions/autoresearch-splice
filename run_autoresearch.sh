@@ -14,6 +14,7 @@ run_loop() {
     cd "$PROJECT_DIR"
     rm -f "$STOP_FILE"
     consecutive_discards=0
+    rate_limit_backoff=300  # start at 5 min, double each time, cap at 5 hours
 
     echo "$(date -Iseconds) Autoresearch loop started" >> "$LOG_FILE"
 
@@ -58,10 +59,17 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         last_output=$(tail -50 "$LOG_FILE")
 
         if echo "$last_output" | grep -qiE "rate.limit|usage.limit|credit|quota|429|overloaded|capacity"; then
-            echo "$(date -Iseconds) API limit detected. Backing off 5 minutes..." >> "$LOG_FILE"
-            sleep 300
+            minutes=$((rate_limit_backoff / 60))
+            echo "$(date -Iseconds) API limit detected. Exponential backoff: ${minutes}m..." >> "$LOG_FILE"
+            sleep "$rate_limit_backoff"
+            # Double backoff, cap at 5 hours (18000s)
+            rate_limit_backoff=$((rate_limit_backoff * 2))
+            [ "$rate_limit_backoff" -gt 18000 ] && rate_limit_backoff=18000
             continue
         fi
+
+        # Successful claude run — reset backoff
+        rate_limit_backoff=300
 
         if [ $claude_exit -ne 0 ] && ! echo "$last_output" | grep -q "RESULT:"; then
             echo "$(date -Iseconds) Claude failed (exit $claude_exit). Backing off 60 seconds..." >> "$LOG_FILE"
