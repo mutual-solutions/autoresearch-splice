@@ -191,7 +191,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     # GPD threshold
     non_silent = fused[silence > 0.5]
     n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.1)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.05)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -575,7 +575,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     # --- GPD tail-based threshold with Bonferroni correction ---
     n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.05)
+    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.5)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 

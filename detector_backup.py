@@ -191,7 +191,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     # GPD threshold
     non_silent = fused[silence > 0.5]
     n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.1)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.05)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -575,7 +575,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     # --- GPD tail-based threshold with Bonferroni correction ---
     n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.05)
+    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.5)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -696,15 +696,15 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
 
 def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> float:
     """
-    Compute detection threshold using GPD method-of-moments estimator.
+    Compute detection threshold using Generalized Pareto Distribution.
 
-    Deterministic replacement for scipy genpareto.fit() (MLE) which can
-    converge to different local optima across runs. The method-of-moments
-    estimator has a closed-form solution: no optimization, no randomness.
-
-    1. Fit GPD to the upper tail (top 5%) via method of moments
+    1. Fit GPD to the upper tail (top 5%) of the score distribution
     2. Apply Bonferroni correction: per-test alpha = alpha / n_tests
     3. Return the score value where the tail probability = corrected alpha
+
+    This gives an honest threshold that accounts for:
+    - The actual heavy-tailed distribution (not Gaussian assumption)
+    - The number of test points (longer files → higher threshold)
     """
     if len(scores) < 50:
         return float(np.max(scores) + 1) if len(scores) > 0 else 10.0
@@ -715,46 +715,40 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> flo
     exceedances = scores[scores > u] - u
 
     if len(exceedances) < 10:
+        # Not enough tail data, fall back to empirical quantile
         corrected_q = 1.0 - alpha / max(n_tests, 1)
-        return float(np.percentile(scores, min(corrected_q, 1.0 - 1e-5) * 100))
+        return float(np.percentile(scores, corrected_q * 100))
 
-    # Method-of-moments GPD estimator (closed-form, deterministic)
-    mean_exc = float(np.mean(exceedances))
-    var_exc = float(np.var(exceedances, ddof=1))
-
-    if mean_exc < 1e-10:
-        return u
-
-    # GPD moments: E[X] = scale/(1-shape), Var[X] = scale^2/((1-shape)^2*(1-2*shape))
-    # Solving: shape = 0.5*(1 - mean^2/var), scale = mean*(1-shape)
-    ratio = mean_exc ** 2 / max(var_exc, 1e-10)
-    shape = 0.5 * (1.0 - ratio)
-    scale = mean_exc * (1.0 - shape)
-
-    # Clamp shape to valid range for threshold computation
-    shape = max(min(shape, 0.5), -0.5)
-    scale = max(scale, 1e-10)
+    # Fit GPD to exceedances
+    try:
+        shape, loc, scale = genpareto.fit(exceedances, floc=0)
+    except Exception:
+        corrected_q = 1.0 - alpha / max(n_tests, 1)
+        return float(np.percentile(scores, corrected_q * 100))
 
     # Bonferroni-corrected per-test significance
     p_per_test = alpha / max(n_tests, 1)
 
-    # Tail probability
+    # Tail probability: P(X > u) ≈ (1 - tail_quantile)
     p_tail = 1.0 - tail_quantile
 
-    # Target survival in the tail
+    # We want: P(X > threshold) = p_per_test
+    # P(X > threshold) = p_tail * P(excess > threshold - u)
+    # P(excess > threshold - u) = p_per_test / p_tail
     target_survival = p_per_test / p_tail
 
     if target_survival >= 1.0:
+        # Threshold would be below u, use u as minimum
         return u
 
-    # GPD quantile: x = (scale/shape) * (survival^(-shape) - 1) for shape != 0
-    if abs(shape) > 1e-6:
-        excess_threshold = (scale / shape) * (target_survival ** (-shape) - 1.0)
-    else:
-        # Exponential case (shape ≈ 0): x = -scale * log(survival)
-        excess_threshold = -scale * np.log(max(target_survival, 1e-30))
+    # GPD inverse survival: x = scale/shape * ((survival)^{-shape} - 1) for shape != 0
+    try:
+        excess_threshold = genpareto.isf(target_survival, shape, loc=0, scale=scale)
+        threshold = u + excess_threshold
+    except Exception:
+        threshold = u + exceedances.max()
 
-    threshold = u + max(excess_threshold, 0.0)
+    # Safety floor
     return max(float(threshold), u)
 
 
