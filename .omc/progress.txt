@@ -1,0 +1,7 @@
+# Autoresearch Splice — Progress
+
+## Baseline (2026-04-15)
+- F1: 0.000, precision: 0.00, recall: 0.00, fp_rate: 0.67
+- TP=0, FP=10, FN=12
+- Runtime: 75-84s (over 60s budget)
+- Bottleneck: _two_window_ttest Python loop
