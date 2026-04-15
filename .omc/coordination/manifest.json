@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "dataset": "data/spliced",
+  "expected_counts": {
+    "tier1": 20,
+    "tier2": 20,
+    "clean": 50
+  },
+  "ground_truth_sha256_prefix": "c76f4804df0f",
+  "total_files": 91,
+  "notes": "Counts exclude .DS_Store. GT hash is first 12 chars of sha256. ground_truth.json validated separately via sha256 prefix."
+}
