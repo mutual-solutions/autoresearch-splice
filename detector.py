@@ -263,11 +263,11 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
-    # Cap at 2
-    if len(peaks) > 2:
+    # Cap at 1 — only the strongest phase detection per segment
+    if len(peaks) > 1:
         peak_frames = [int(p / hop_s) for p in peaks]
         scores = [fused[min(f, min_len - 1)] for f in peak_frames]
-        top_idx = np.argsort(scores)[-2:]
+        top_idx = np.argsort(scores)[-1:]
         peaks = [peaks[i] for i in sorted(top_idx)]
 
     # --- Reject detections at quiet-to-loud boundaries ---
