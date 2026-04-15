@@ -21,17 +21,119 @@ OVERLAP_S = 10.0
 
 
 def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
-    """Run CPE (unified), crossfade, and noise floor detectors."""
-    # CPE replaces phase detector (unified amplitude+phase)
-    cpe_hits = _detect_cpe(audio, sr)
+    """Run CPE2 (unified, abruptness) + crossfade detectors."""
+    phase_hits = _detect_phase(audio, sr)
     xfade_hits = _detect_crossfade(audio, sr)
 
-    all_hits = sorted(cpe_hits + xfade_hits)
+    all_hits = sorted(phase_hits + xfade_hits)
     merged = []
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
     return merged
+
+
+# ===== MODE 5: CPE₂ — Complex Prediction Error 2nd derivative =====
+# "How ABRUPTLY does the prediction error change?"
+# Natural transitions: CPE rises/falls gradually → CPE₂ small
+# Splice: CPE spikes in one frame → CPE₂ large
+
+def _detect_cpe2(audio: np.ndarray, sr: int) -> list[float]:
+    """
+    Second derivative of Complex Prediction Error.
+    Unifies amplitude + phase while selecting for ABRUPT changes only.
+    """
+    hop_ms = 10
+    hop_s = hop_ms / 1000.0
+    n_fft = 1024
+    hop_length = max(1, int(sr * hop_ms / 1000))
+
+    duration_s = len(audio) / sr
+    if duration_s <= WINDOW_S + 5:
+        return _analyze_cpe2_segment(audio, sr, n_fft, hop_length, hop_s, offset_s=0.0)
+
+    # Sliding window for long files
+    window_samples = int(WINDOW_S * sr)
+    step_samples = int((WINDOW_S - OVERLAP_S) * sr)
+    all_peaks = []
+    pos = 0
+    while pos < len(audio):
+        end = min(pos + window_samples, len(audio))
+        segment = audio[pos:end]
+        if len(segment) < sr * 10:
+            break
+        peaks = _analyze_cpe2_segment(segment, sr, n_fft, hop_length, hop_s, offset_s=pos / sr)
+        all_peaks.extend(peaks)
+        pos += step_samples
+
+    all_peaks.sort()
+    deduped = []
+    for p in all_peaks:
+        if not deduped or p - deduped[-1] > 1.0:
+            deduped.append(p)
+    return deduped
+
+
+def _analyze_cpe2_segment(audio: np.ndarray, sr: int, n_fft: int,
+                          hop_length: int, hop_s: float,
+                          offset_s: float = 0.0) -> list[float]:
+    # STFT
+    _, _, Zxx = sp_signal.stft(audio, fs=sr, nperseg=n_fft,
+                                noverlap=n_fft - hop_length)
+
+    # Complex prediction error (first order)
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+    phase_advance = np.exp(1j * 2 * np.pi * freqs * (hop_length / sr))[:, np.newaxis]
+    predicted = Zxx[:, :-1] * phase_advance
+    D1 = Zxx[:, 1:] - predicted  # complex prediction error per bin per frame
+
+    # CPE power per frame (first derivative)
+    cpe1 = np.sum(np.abs(D1) ** 2, axis=0)
+
+    # Second derivative: abruptness of CPE change
+    cpe2 = np.abs(np.diff(cpe1))
+
+    cpe2_z = _zscore(cpe2)
+
+    # Silence suppression
+    silence = _silence_mask(audio, sr, hop_ms=10, threshold_db=-45)
+    min_len = min(len(cpe2_z), len(silence))
+    cpe2_z = cpe2_z[:min_len]
+    fused = cpe2_z * silence[:min_len]
+
+    # GPD threshold
+    non_silent = fused[silence[:min_len] > 0.5]
+    n_tests = len(non_silent)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.5)
+
+    peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
+
+    # Cap at 1
+    if len(peaks) > 1:
+        peak_frames = [int(p / hop_s) for p in peaks]
+        scores = [fused[min(f, min_len - 1)] for f in peak_frames]
+        peaks = [peaks[np.argmax(scores)]]
+
+    # Quiet boundary filter
+    filtered = []
+    check_samples = int(0.5 * sr)
+    for p in peaks:
+        center_sample = int(p * sr)
+        left_start = max(0, center_sample - check_samples)
+        right_end = min(len(audio), center_sample + check_samples)
+        if center_sample - left_start < sr // 10 or right_end - center_sample < sr // 10:
+            continue
+        left_rms = np.sqrt(np.mean(audio[left_start:center_sample] ** 2))
+        right_rms = np.sqrt(np.mean(audio[center_sample:right_end] ** 2))
+        if 20 * np.log10(max(left_rms, 1e-10)) > -35 and 20 * np.log10(max(right_rms, 1e-10)) > -35:
+            filtered.append(p)
+
+    # Refine
+    refined = []
+    for p in filtered:
+        r = _refine_splice_point(audio, sr, p, search_radius_s=0.3)
+        refined.append(r + offset_s)
+    return refined
 
 
 # ===== MODE 4: Complex Prediction Error (unified amplitude+phase) =====
