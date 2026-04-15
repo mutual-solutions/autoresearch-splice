@@ -4,40 +4,43 @@
   "stories": [
     {
       "id": "US-010",
-      "title": "Implement CQT + Hotelling T² crossfade detector",
+      "title": "Implement CQT + Hotelling T\u00b2 crossfade detector",
       "priority": 1,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "detector.py contains detect_splices_crossfade(audio, sr) function",
         "Uses CQT decomposition (K=8 constant-Q bands), not octave filterbank",
-        "Uses Hotelling T² test on PSD vectors (5s windows, 1s hop)",
+        "Uses Hotelling T\u00b2 test on PSD vectors (5s windows, 1s hop)",
         "Coarse-to-fine refinement with waveform discontinuity",
         "uv run python detector.py <test_wav> runs without error",
         "No torch/sklearn/neural network imports"
-      ]
+      ],
+      "note": "Legacy stories from early autoresearch. Already achieved by autoresearch loop (combined=0.719)."
     },
     {
       "id": "US-011",
       "title": "Combine phase detector + crossfade detector",
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "detect_splices(audio, sr) runs BOTH phase and crossfade detection",
         "Results are merged and deduplicated (within 1s = same detection)",
         "Each detection tagged with method: 'phase' or 'psd_changepoint'",
         "prepare.py evaluates combined detector and prints splice_f1"
-      ]
+      ],
+      "note": "Legacy stories from early autoresearch. Already achieved by autoresearch loop (combined=0.719)."
     },
     {
       "id": "US-012",
       "title": "Achieve F1 improvement on crossfade test files",
       "priority": 3,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "At least 1 Tier 2 crossfade splice detected (TP > 0 on tier2 files)",
         "Overall F1 >= 0.30 (improvement over phase-only 0.256)",
         "Tier 1 recall does not regress below 4/6"
-      ]
+      ],
+      "note": "Legacy stories from early autoresearch. Already achieved by autoresearch loop (combined=0.719)."
     }
   ]
 }
