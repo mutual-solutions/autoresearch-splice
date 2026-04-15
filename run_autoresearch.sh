@@ -96,6 +96,40 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 if [ $verify_exit -eq 0 ]; then
                     consecutive_discards=0
                     echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported)" >> "$LOG_FILE"
+
+                    # Version management
+                    VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
+                    git tag "detector-v$VERSION"
+                    SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
+                    cp "$PROJECT_DIR/detector.py" "$SNAP"
+
+                    # Update versions.json
+                    python3 -c "
+import json, subprocess, datetime, os
+vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
+try:
+    data = json.load(open(vf))
+except:
+    data = {'versions': [], 'latest': 0, 'production': 0}
+sha = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
+data['versions'].append({
+    'version': $VERSION, 'git_tag': 'detector-v$VERSION', 'git_sha': sha,
+    'detector_snapshot': 'detector_v${VERSION}.py',
+    'classifier': 'classifier_v${VERSION}.joblib',
+    'combined_dsp': float('$reported'), 'combined_full': None,
+    'timestamp': datetime.datetime.now().isoformat()
+})
+data['latest'] = $VERSION
+json.dump(data, open(vf, 'w'), indent=2)
+"
+
+                    # Background: retrain classifier on snapshot
+                    (cd "$PROJECT_DIR" && \
+                     DETECTOR_SNAPSHOT="$SNAP" uv run python .omc/classifier/generate_patches.py && \
+                     uv run python .omc/classifier/train_classifier.py && \
+                     cp .omc/classifier/fp_classifier.joblib ".omc/classifier/classifier_v${VERSION}.joblib" && \
+                     echo "$(date -Iseconds) Classifier v$VERSION trained" >> "$LOG_FILE") &
+                    echo "$(date -Iseconds) Background: training classifier v$VERSION (PID: $!)" >> "$LOG_FILE"
                 else
                     # Verification failed — revert
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
@@ -114,6 +148,40 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 if [ $verify_exit -eq 0 ]; then
                     consecutive_discards=0
                     echo "$(date -Iseconds) VERIFIED KEEP" >> "$LOG_FILE"
+
+                    # Version management
+                    VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
+                    git tag "detector-v$VERSION"
+                    SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
+                    cp "$PROJECT_DIR/detector.py" "$SNAP"
+
+                    # Update versions.json
+                    python3 -c "
+import json, subprocess, datetime, os
+vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
+try:
+    data = json.load(open(vf))
+except:
+    data = {'versions': [], 'latest': 0, 'production': 0}
+sha = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
+data['versions'].append({
+    'version': $VERSION, 'git_tag': 'detector-v$VERSION', 'git_sha': sha,
+    'detector_snapshot': 'detector_v${VERSION}.py',
+    'classifier': 'classifier_v${VERSION}.joblib',
+    'combined_dsp': float('$reported'), 'combined_full': None,
+    'timestamp': datetime.datetime.now().isoformat()
+})
+data['latest'] = $VERSION
+json.dump(data, open(vf, 'w'), indent=2)
+"
+
+                    # Background: retrain classifier on snapshot
+                    (cd "$PROJECT_DIR" && \
+                     DETECTOR_SNAPSHOT="$SNAP" uv run python .omc/classifier/generate_patches.py && \
+                     uv run python .omc/classifier/train_classifier.py && \
+                     cp .omc/classifier/fp_classifier.joblib ".omc/classifier/classifier_v${VERSION}.joblib" && \
+                     echo "$(date -Iseconds) Classifier v$VERSION trained" >> "$LOG_FILE") &
+                    echo "$(date -Iseconds) Background: training classifier v$VERSION (PID: $!)" >> "$LOG_FILE"
                 else
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
                     consecutive_discards=$((consecutive_discards + 1))
@@ -171,6 +239,10 @@ case "${1:-help}" in
             echo "Experiments: $total (keep: $keeps, discard: $discards, verify-fail: $vfails)"
             echo "Last: $(tail -1 "$RESULTS" | cut -f9,10)"
         fi
+        if [ -f "$PROJECT_DIR/.omc/classifier/versions.json" ]; then
+            latest=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/.omc/classifier/versions.json'))['latest'])" 2>/dev/null || echo "?")
+            echo "Version: detector-v$latest"
+        fi
         if [ -f "$LOG_FILE" ]; then
             last_log=$(tail -1 "$LOG_FILE")
             echo "Log: $last_log"
@@ -178,11 +250,24 @@ case "${1:-help}" in
             echo "$last_log" | grep -qi "backoff" && echo "⚠️  Rate limited — backing off"
         fi
         ;;
+    rollback)
+        N="${2:?Usage: $0 rollback <version>}"
+        SNAP="$PROJECT_DIR/.omc/classifier/detector_v${N}.py"
+        CLAS="$PROJECT_DIR/.omc/classifier/classifier_v${N}.joblib"
+        if [ ! -f "$SNAP" ]; then echo "Detector v$N not found"; exit 1; fi
+        cp "$SNAP" "$PROJECT_DIR/detector.py"
+        if [ -f "$CLAS" ]; then
+            cp "$CLAS" "$PROJECT_DIR/.omc/classifier/fp_classifier.joblib"
+            echo "Restored detector v$N + classifier v$N"
+        else
+            echo "Restored detector v$N (no classifier for this version)"
+        fi
+        ;;
     _loop)
         run_loop
         ;;
     *)
-        echo "Usage: $0 {start|stop|status}"
+        echo "Usage: $0 {start|stop|status|rollback <version>}"
         exit 1
         ;;
 esac
