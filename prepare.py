@@ -520,9 +520,9 @@ if __name__ == "__main__":
             ml_result = evaluate_with_classifier(result, args.data_dir)
             if ml_result.get("bound_exceeded"):
                 print(f"combined: 0.000000")
-            elif ml_result.get("classifier_quality") == "LOW":
-                print(f"combined: {result['combined']:.6f}")
-            else:
+            elif ml_result.get("combined_full") is not None:
                 print(f"combined: {ml_result['combined_full']:.6f}")
+            else:
+                print(f"combined: {result['combined']:.6f}")
     elapsed = time.time() - t0
     print(f"elapsed: {elapsed:.1f}s")

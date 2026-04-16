@@ -54,21 +54,8 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
 
-    # Optional: FP filter using trained classifier
-    try:
-        import sys as _sys
-        import os as _os
-        _proj = _os.path.dirname(_os.path.abspath(__file__))
-        _coord = _os.path.join(_proj, ".omc", "coordination")
-        if _coord not in _sys.path:
-            _sys.path.insert(0, _coord)
-        from fp_filter import filter_detections as _fp_filter
-        merged = _fp_filter(audio, sr, merged)
-    except (ImportError, FileNotFoundError):
-        pass  # classifier not installed — graceful degradation
-    except Exception as e:
-        import sys as _sys2
-        print(f"WARNING: FP classifier error (falling back to unfiltered): {e}", file=_sys2.stderr)
+    # FP filtering is handled by ml_eval.py's OOF pipeline (via prepare.py --with-classifier).
+    # Do NOT filter here — it would double-filter and prevent ml_eval from seeing raw DSP output.
 
     return merged
 

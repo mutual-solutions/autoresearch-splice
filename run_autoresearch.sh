@@ -37,12 +37,15 @@ run_loop() {
         iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
 Read program.md for full instructions, then execute exactly ONE experiment iteration:
-1. Check git state and read detector.py and results.tsv
-2. Form a hypothesis (one specific DSP idea to improve combined score)
-3. Edit detector.py with the smallest viable change
+1. Check git state and read detector.py, ml_config.py, and results.tsv
+2. Form a hypothesis to improve combined score. You can:
+   - Tune DSP parameters in detector.py (thresholds, algorithms, features)
+   - Tune ML classifier parameters in ml_config.py (n_estimators, max_depth, OOF_THRESHOLD, etc.)
+   - Combine both DSP and ML changes in one hypothesis
+3. Edit detector.py and/or ml_config.py with the smallest viable change
 4. git commit -m \"hypothesis: <description>\"
 5. Run: uv run python prepare.py --with-classifier
-6. Parse combined score from the LAST 'combined:' line in output
+6. Parse combined score from the LAST 'combined:' line in output (this is combined_full when classifier runs)
 7. If combined > previous best: print RESULT:keep-pending
 8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
 9. Do NOT run verify_agent.py yourself. The shell wrapper handles verification.

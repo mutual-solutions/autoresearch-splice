@@ -9,8 +9,9 @@ The evaluation oracle prints multiple metrics. The LAST line is always:
 - `combined: 0.XXX` — THIS is the metric to optimize. Use it for keep/discard decisions.
 
 When `--with-classifier` is used, `combined` equals the classifier-filtered F1 × clean_score
-(`combined_full`) if the classifier is good enough, or DSP-only F1 × clean_score (`combined_dsp`)
-if the classifier quality is low. Either way, optimize `combined`.
+(`combined_full`). The classifier trains on pre-generated patches (singing + Korean) plus
+eval-set patches with OOF cross-validation. There is no quality gate — `combined_full` is
+always used. If the classifier hurts the score, the experiment is naturally discarded.
 
 **DSP FP bound**: DSP clean_fp must stay ≤ 15. If exceeded, `combined` drops to 0 (guaranteed discard).
 The autoresearch agent can freely adjust DSP threshold values to increase recall, as long as
@@ -45,8 +46,10 @@ Allowed techniques (non-exhaustive):
 
 - **`prepare.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
   computes F1 vs ground truth, prints metrics. **Do NOT modify** (only the human edits this).
-- **`detector.py`** — the single file you edit. Must be importable as a module
+- **`detector.py`** — DSP detector. You edit this for DSP experiments. Must be importable as a module
   (`detect_splices(audio, sr)`) AND runnable as a CLI (`python detector.py file.wav`).
+- **`ml_config.py`** — ML classifier parameters. You edit this for ML experiments (n_estimators,
+  max_depth, learning_rate, OOF_THRESHOLD, PCA_COMPONENTS, etc.). Read by `ml_eval.py` at eval time.
 - **`program.md`** — instructions for the agent (this file). Only the human edits this.
 
 ## Setup
@@ -64,9 +67,10 @@ LOOP FOREVER:
 
 1. Check git state (current branch and commit).
 2. Read `detector.py` and `results.tsv` to understand where you are.
-3. Form a **hypothesis**: a specific classical DSP idea expected to improve F1.
+3. Form a **hypothesis**: a specific idea expected to improve combined score.
+   This can be a DSP change (detector.py), an ML parameter change (ml_config.py), or both.
    Write it as a one-line comment at the top of your planned change.
-4. Edit `detector.py` with the smallest viable change that tests the hypothesis.
+4. Edit `detector.py` and/or `ml_config.py` with the smallest viable change that tests the hypothesis.
 5. `git commit -m "hypothesis: <one line>"`
 6. Run evaluation: `uv run prepare.py --with-classifier > run.log 2>&1`
    - Must finish in <120s. If it hangs past 150s, kill it (treat as crash).

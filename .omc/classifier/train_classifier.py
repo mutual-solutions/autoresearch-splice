@@ -55,16 +55,27 @@ def load_data():
 
 
 def make_pipeline(n_components):
-    """Create a StandardScaler -> PCA -> GradientBoosting pipeline."""
+    """Create a StandardScaler -> PCA -> GradientBoosting pipeline.
+
+    Reads classifier hyperparameters from ml_config.py (agent-editable).
+    Falls back to defaults if ml_config is not importable.
+    """
+    try:
+        from ml_config import (
+            N_ESTIMATORS, MAX_DEPTH, LEARNING_RATE, SUBSAMPLE, RANDOM_STATE,
+        )
+    except ImportError:
+        N_ESTIMATORS, MAX_DEPTH, LEARNING_RATE, SUBSAMPLE, RANDOM_STATE = 200, 5, 0.1, 0.8, 42
+
     return Pipeline([
         ('scaler', StandardScaler()),
-        ('pca', PCA(n_components=n_components, random_state=42)),
+        ('pca', PCA(n_components=n_components, random_state=RANDOM_STATE)),
         ('clf', GradientBoostingClassifier(
-            n_estimators=200,
-            max_depth=5,
-            learning_rate=0.1,
-            subsample=0.8,
-            random_state=42
+            n_estimators=N_ESTIMATORS,
+            max_depth=MAX_DEPTH,
+            learning_rate=LEARNING_RATE,
+            subsample=SUBSAMPLE,
+            random_state=RANDOM_STATE,
         ))
     ])
 
