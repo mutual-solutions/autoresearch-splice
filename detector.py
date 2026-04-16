@@ -411,9 +411,9 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     t2_z = _robust_zscore(t2_arr)
 
     # Silence suppression: suppress detections where audio is silent
-    silence = _silence_mask(audio, sr, hop_ms=500, threshold_db=-45)
+    silence = _silence_mask(audio, sr, hop_ms=100, threshold_db=-45)
     # Resample silence mask to match t2 positions
-    silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.5, silence)
+    silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.1, silence)
     t2_z = t2_z * (silence_at_test > 0.5).astype(float)
 
     # GPD tail-based threshold (same as phase detector) — adaptive to T2 distribution shape
