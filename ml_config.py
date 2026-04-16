@@ -19,7 +19,7 @@ LEARNING_RATE = 0.1       # boosting learning rate
 SUBSAMPLE = 0.5           # fraction of samples per tree (stochastic regularization)
 MAX_FEATURES = "sqrt"     # features per split (stochastic feature regularization)
 PCA_COMPONENTS = 50       # PCA dimensionality reduction (capped by data)
-RANDOM_STATE = 42
+RANDOM_STATE = 7
 
 # --- Evaluation ---
 OOF_THRESHOLD = 0.47      # OOF probability threshold for keeping detections
