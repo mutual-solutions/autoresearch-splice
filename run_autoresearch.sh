@@ -16,6 +16,9 @@ run_loop() {
     consecutive_discards=0
     rate_limit_backoff=300  # start at 5 min, double each time, cap at 5 hours
 
+    # Log crashes — if the process dies unexpectedly, record it
+    trap 'echo "$(date -Iseconds) CRASH: loop terminated unexpectedly (signal $?)" >> "$LOG_FILE"' EXIT HUP INT TERM
+
     echo "$(date -Iseconds) Autoresearch loop started" >> "$LOG_FILE"
 
     while true; do
@@ -94,11 +97,15 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 # Extract reported combined from Claude's output
                 reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
 
-                verify_output=$(uv run python .omc/coordination/verify_agent.py \
+                verify_output=$(timeout 300 uv run python .omc/coordination/verify_agent.py \
                     --agent-name autoresearch \
-                    --reported-combined "$reported" 2>&1)
+                    --reported-combined "$reported" 2>&1) || true
                 verify_exit=$?
 
+                if [ $verify_exit -eq 124 ]; then
+                    echo "$(date -Iseconds) VERIFY-TIMEOUT: verification took >300s, treating as fail" >> "$LOG_FILE"
+                    verify_exit=1
+                fi
                 echo "$verify_output" >> "$LOG_FILE"
 
                 if [ $verify_exit -eq 0 ]; then
@@ -198,7 +205,21 @@ json.dump(data, open(vf, 'w'), indent=2)
         sleep 2
     done
 
+    trap - EXIT HUP INT TERM  # clear trap on clean exit
     echo "$(date -Iseconds) Autoresearch loop ended" >> "$LOG_FILE"
+}
+
+run_loop_with_restart() {
+    # Auto-restart on crash unless stop signal exists
+    while true; do
+        run_loop
+        if [ -f "$STOP_FILE" ]; then
+            echo "$(date -Iseconds) Clean shutdown (stop signal)." >> "$LOG_FILE"
+            break
+        fi
+        echo "$(date -Iseconds) Loop exited unexpectedly. Restarting in 60s..." >> "$LOG_FILE"
+        sleep 60
+    done
 }
 
 case "${1:-help}" in
@@ -208,7 +229,7 @@ case "${1:-help}" in
             exit 1
         fi
         rm -f "$STOP_FILE"
-        tmux new-session -d -s "$SESSION" "bash $0 _loop"
+        tmux new-session -d -s "$SESSION" "bash $0 _loop_restart"
         echo "Autoresearch started in tmux session '$SESSION'."
         echo "  View:   tmux attach -t $SESSION"
         echo "  Stop:   $0 stop"
@@ -267,6 +288,9 @@ case "${1:-help}" in
         ;;
     _loop)
         run_loop
+        ;;
+    _loop_restart)
+        run_loop_with_restart
         ;;
     *)
         echo "Usage: $0 {start|stop|status|rollback <version>}"
