@@ -432,7 +432,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     # GPD tail-based threshold (same as phase detector) — adaptive to T2 distribution shape
     non_silent_t2 = t2_z[silence_at_test > 0.5]
     n_tests_xf = len(non_silent_t2)
-    threshold = _gpd_threshold(non_silent_t2, n_tests=max(n_tests_xf, 1), alpha=0.02)
+    threshold = _gpd_threshold(non_silent_t2, n_tests=max(n_tests_xf, 1), alpha=0.05)
     threshold = max(threshold, 4.5)  # safety floor
 
     # Peak pick
