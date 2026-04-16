@@ -134,15 +134,11 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 # Extract reported combined from Claude's output
                 reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
 
-                verify_output=$(timeout 300 uv run python .omc/coordination/verify_agent.py \
+                # verify_agent.py has its own 120s timeout for evaluate.py internally
+                verify_output=$(uv run python .omc/coordination/verify_agent.py \
                     --agent-name autoresearch \
                     --reported-combined "$reported" 2>&1) || true
                 verify_exit=$?
-
-                if [ $verify_exit -eq 124 ]; then
-                    echo "$(date -Iseconds) VERIFY-TIMEOUT: verification took >300s, treating as fail" >> "$LOG_FILE"
-                    verify_exit=1
-                fi
                 echo "$verify_output" >> "$LOG_FILE"
 
                 if [ $verify_exit -eq 0 ]; then
