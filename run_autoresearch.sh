@@ -37,6 +37,13 @@ run_loop() {
         # Run one iteration via claude
         echo "$(date -Iseconds) Starting iteration (consecutive discards: $consecutive_discards)" >> "$LOG_FILE"
 
+        # Build "recent failed hypotheses" summary from results.tsv last 30 discards.
+        # Injected into prompt so agent doesn't repeat experiments that already failed.
+        recent_failures=""
+        if [ -f "$RESULTS" ]; then
+            recent_failures=$(awk -F'\t' '$9 == "discard" || $9 == "verify-fail" {printf "  - combined=%s: %s\n", $2, $10}' "$RESULTS" | tail -30)
+        fi
+
         iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
 Read program.md for full instructions, then execute exactly ONE experiment iteration:
@@ -45,13 +52,20 @@ Read program.md for full instructions, then execute exactly ONE experiment itera
    - Tune DSP parameters in detector.py (thresholds, algorithms, features)
    - Tune ML classifier parameters in ml_config.py (n_estimators, max_depth, OOF_THRESHOLD, etc.)
    - Combine both DSP and ML changes in one hypothesis
+
+   CRITICAL: Do NOT repeat hypotheses that have already been tried and failed.
+   RECENT FAILED HYPOTHESES (last 30):
+${recent_failures:-  (none yet)}
+
+   If your idea matches any of the above, pick a DIFFERENT one. Do not re-test failures.
 3. Edit detector.py and/or ml_config.py with the smallest viable change
-4. git commit -m \"hypothesis: <description>\"
+4. git commit -m \"hypothesis: <one-line description of the change>\"
 5. Run: uv run python evaluate.py --with-classifier
 6. Parse combined score from the LAST 'combined:' line in output (this is combined_full when classifier runs)
 7. If combined > previous best: print RESULT:keep-pending
 8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
 9. Do NOT run verify_agent.py yourself. The shell wrapper handles verification.
+10. The shell wrapper logs to results.tsv automatically — do NOT write to results.tsv yourself.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
@@ -89,6 +103,29 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         # Parse result from claude output
         last_status=$(echo "$last_output" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
 
+        # Auto-log every iteration to results.tsv (agent-independent reliability).
+        # Called by each case handler with status + optional commit override (for discards).
+        log_to_results_tsv() {
+            local status="$1"
+            local commit="${2:-$(git log -1 --format=%h 2>/dev/null)}"
+            local subject="${3:-$(git log -1 --format=%s 2>/dev/null | sed 's/^hypothesis: //' | tr '\t' ' ')}"
+            local combined=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local splice_f1=$(echo "$last_output" | grep -oE 'splice_f1:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local clean_score=$(echo "$last_output" | grep -oE 'clean_score:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local precision=$(echo "$last_output" | grep -oE 'precision:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local recall=$(echo "$last_output" | grep -oE 'recall:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local fp_rate=$(echo "$last_output" | grep -oE 'fp_rate:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+            local clean_fp=$(echo "$last_output" | grep -oE 'dsp_clean_fp:\s*[0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "0")
+
+            if [ ! -s "$RESULTS" ]; then
+                printf 'commit\tcombined\tsplice_f1\tclean_score\tprecision\trecall\tfp_rate\tclean_fp\tstatus\tdescription\n' > "$RESULTS"
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$commit" "$combined" "$splice_f1" "$clean_score" "$precision" "$recall" "$fp_rate" "$clean_fp" "$status" "$subject" \
+                >> "$RESULTS"
+        }
+
         case "$last_status" in
             keep-pending)
                 # STRUCTURAL VERIFICATION: shell runs verify_agent.py directly (not Claude)
@@ -111,6 +148,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 if [ $verify_exit -eq 0 ]; then
                     consecutive_discards=0
                     echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported)" >> "$LOG_FILE"
+                    log_to_results_tsv "keep"
 
                     # Version management
                     VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
@@ -140,7 +178,8 @@ json.dump(data, open(vf, 'w'), indent=2)
 
                     # Classifier training now happens in-loop via evaluate.py --with-classifier
                 else
-                    # Verification failed — revert
+                    # Verification failed — log BEFORE reverting (otherwise git HEAD changes)
+                    log_to_results_tsv "verify-fail"
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
                     consecutive_discards=$((consecutive_discards + 1))
                     echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
@@ -194,6 +233,10 @@ json.dump(data, open(vf, 'w'), indent=2)
             discard)
                 consecutive_discards=$((consecutive_discards + 1))
                 echo "$(date -Iseconds) Iteration: discard (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+                # Recover reverted hypothesis from reflog (agent already did git reset)
+                discard_commit=$(git rev-parse --short "HEAD@{1}" 2>/dev/null || echo "")
+                discard_subject=$(git log -1 --format=%s "HEAD@{1}" 2>/dev/null | sed 's/^hypothesis: //' | tr '\t' ' ' || echo "")
+                log_to_results_tsv "discard" "$discard_commit" "$discard_subject"
                 ;;
             unknown)
                 echo "$(date -Iseconds) Iteration: unknown output (not counting toward circuit breaker)" >> "$LOG_FILE"
