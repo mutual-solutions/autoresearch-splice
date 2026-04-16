@@ -35,8 +35,8 @@ _TP_RE = re.compile(r"TP=(\d+)")
 
 
 def run_evaluate():
-    """Run prepare.evaluate(), capture output, return (result_dict, t1_tp, t2_tp)."""
-    from prepare import evaluate
+    """Run evaluate.evaluate(), capture output, return (result_dict, t1_tp, t2_tp)."""
+    from evaluate import evaluate
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
@@ -61,8 +61,8 @@ def run_evaluate():
 
 
 def run_evaluate_codec():
-    """Run prepare.evaluate_codec(), capture output, return result dict."""
-    from prepare import evaluate_codec
+    """Run evaluate.evaluate_codec(), capture output, return result dict."""
+    from evaluate import evaluate_codec
 
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

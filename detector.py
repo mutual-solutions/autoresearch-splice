@@ -54,7 +54,7 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
 
-    # FP filtering is handled by ml_eval.py's OOF pipeline (via prepare.py --with-classifier).
+    # FP filtering is handled by ml_eval.py's OOF pipeline (via evaluate.py --with-classifier).
     # Do NOT filter here — it would double-filter and prevent ml_eval from seeing raw DSP output.
 
     return merged

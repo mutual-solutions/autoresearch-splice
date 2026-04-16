@@ -1,5 +1,5 @@
 """
-ML evaluation helper for prepare.py --with-classifier.
+ML evaluation helper for evaluate.py --with-classifier.
 
 Runs GradientBoosting classifier pipeline in-loop:
 1. Load pre-generated patches (singing + Korean) as base training data
@@ -12,6 +12,7 @@ Runs GradientBoosting classifier pipeline in-loop:
 import json
 import os
 import sys
+
 import numpy as np
 import soundfile as sf
 
@@ -23,7 +24,7 @@ for p in [_classifier_dir, _coord_dir]:
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from prepare import match_detections, TOLERANCE_S
+from evaluate import match_detections, TOLERANCE_S
 from generate_patches import extract_mel_patch, is_tp
 from train_classifier import make_pipeline
 from sklearn.model_selection import GroupKFold
@@ -32,10 +33,17 @@ from sklearn.metrics import f1_score
 import joblib
 
 # Import tunable params from ml_config (agent-editable)
+import hashlib as _hashlib
+
 from ml_config import (
     DSP_FP_BOUND, N_FOLDS, OOF_THRESHOLD, PCA_COMPONENTS,
-    USE_PREGENERATED_PATCHES, PATCH_HALF_S,
+    USE_PREGENERATED_PATCHES, PATCH_HALF_S, RANDOM_STATE,
 )
+
+
+def _stable_hash(s: str) -> int:
+    """Deterministic hash across Python processes (hash() is randomized)."""
+    return int(_hashlib.md5(s.encode()).hexdigest(), 16) % (2**31)
 
 
 def _load_pregenerated_patches():
@@ -61,6 +69,110 @@ def _load_pregenerated_patches():
     file_ids = np.array([file_to_id[name] for name in filenames])
 
     print(f"pregenerated_patches: {len(patches)} ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
+    return patches, labels, file_ids
+
+
+# Korean-splice dataset path (relative to project root)
+_KOREAN_SPLICE_DIR = os.path.join(
+    os.path.dirname(_proj), "audio-splice-detector", "data", "korean-splice"
+)
+
+
+def _load_korean_splice_patches():
+    """Generate patches from korean-splice dataset as additional training data.
+
+    Runs detector on 60 korean-splice files, extracts mel patches from
+    detections and GT positions. Cached to .omc/classifier/patches_korean_splice.npz.
+    """
+    cache_path = os.path.join(_classifier_dir, "patches_korean_splice.npz")
+    gt_path = os.path.join(_KOREAN_SPLICE_DIR, "ground_truth.json")
+
+    if not os.path.exists(gt_path):
+        print("korean_splice_patches: NOT_FOUND (no ground_truth.json)")
+        return None, None, None
+
+    # Use cached patches if available
+    if os.path.exists(cache_path):
+        data = np.load(cache_path, allow_pickle=True)
+        patches = data["patches"]
+        labels = data["labels"]
+        file_ids = data["file_ids"]
+        print(f"korean_splice_patches: {len(patches)} cached ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
+        return patches, labels, file_ids
+
+    # Generate patches from korean-splice dataset
+    from detector import detect_splices
+
+    with open(gt_path) as f:
+        gt = json.load(f)
+
+    all_patches = []
+    all_labels = []
+    all_file_ids = []
+    file_to_id = {}
+    next_id = 0
+
+    for name, info in sorted(gt.items()):
+        fpath = os.path.join(_KOREAN_SPLICE_DIR, info["path"])
+        if not os.path.exists(fpath):
+            continue
+
+        if name not in file_to_id:
+            file_to_id[name] = next_id
+            next_id += 1
+        fid = file_to_id[name]
+
+        audio, sr = sf.read(fpath, dtype="float32", always_2d=False)
+        if audio.ndim == 2:
+            audio = audio.mean(axis=1)
+        duration = len(audio) / sr
+
+        gt_time = info.get("splice_time_sec")
+        gt_times = [gt_time] if gt_time else []
+        det_times = detect_splices(audio, sr)
+
+        # Patches from detections
+        for det_t in det_times:
+            patch = extract_mel_patch(audio, sr, det_t)
+            if patch is None:
+                continue
+            label = 1 if is_tp(det_t, gt_times) else 0
+            all_patches.append(patch)
+            all_labels.append(label)
+            all_file_ids.append(fid)
+
+        # GT positions missed by detector
+        if info.get("spliced") and gt_time:
+            already_covered = any(abs(gt_time - d) < TOLERANCE_S for d in det_times)
+            if not already_covered:
+                patch = extract_mel_patch(audio, sr, gt_time)
+                if patch is not None:
+                    all_patches.append(patch)
+                    all_labels.append(1)
+                    all_file_ids.append(fid)
+
+        # Random negatives
+        rng = np.random.RandomState(_stable_hash(name) + 100)
+        if not info.get("spliced"):
+            for _ in range(3):
+                t = rng.uniform(PATCH_HALF_S, max(PATCH_HALF_S + 0.1, duration - PATCH_HALF_S))
+                patch = extract_mel_patch(audio, sr, t)
+                if patch is not None:
+                    all_patches.append(patch)
+                    all_labels.append(0)
+                    all_file_ids.append(fid)
+
+    if not all_patches:
+        print("korean_splice_patches: NO_PATCHES")
+        return None, None, None
+
+    patches = np.array(all_patches)
+    labels = np.array(all_labels, dtype=int)
+    file_ids = np.array(all_file_ids)
+
+    # Cache for next run
+    np.savez(cache_path, patches=patches, labels=labels, file_ids=file_ids)
+    print(f"korean_splice_patches: {len(patches)} generated ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
     return patches, labels, file_ids
 
 
@@ -120,7 +232,7 @@ def evaluate_with_classifier(dsp_results, data_dir):
 
         # Random negatives from clean files
         if not pf["spliced"]:
-            rng = np.random.RandomState(hash(name) % (2**31))
+            rng = np.random.RandomState(_stable_hash(name))
             for _ in range(3):
                 t = rng.uniform(PATCH_HALF_S, duration - PATCH_HALF_S)
                 patch = extract_mel_patch(audio, sr, t)
@@ -143,7 +255,7 @@ def evaluate_with_classifier(dsp_results, data_dir):
                         eval_sources.append(("gt_missed", name, gt_t))
 
             # Random non-splice negatives from spliced files
-            rng = np.random.RandomState(hash(name) % (2**31) + 1)
+            rng = np.random.RandomState(_stable_hash(name) + 1)
             for _ in range(2):
                 t = rng.uniform(PATCH_HALF_S, duration - PATCH_HALF_S)
                 if not any(abs(t - gt) < 3.0 for gt in gt_times):
@@ -164,12 +276,30 @@ def evaluate_with_classifier(dsp_results, data_dir):
     # --- Load pre-generated patches as extra training data ---
     pregen_X, pregen_y, pregen_fids = None, None, None
     if USE_PREGENERATED_PATCHES:
+        all_pregen_patches = []
+        all_pregen_labels = []
+        all_pregen_fids = []
+        fid_offset = next_file_id
+
+        # 1. Singing + Korean pre-generated patches
         pregen_patches, pregen_labels, pregen_fids_raw = _load_pregenerated_patches()
         if pregen_patches is not None:
-            pregen_X = pregen_patches.reshape(len(pregen_patches), -1)
-            pregen_y = pregen_labels.astype(int)
-            # Offset pre-generated file IDs to avoid collision with eval file IDs
-            pregen_fids = pregen_fids_raw + next_file_id
+            all_pregen_patches.append(pregen_patches.reshape(len(pregen_patches), -1))
+            all_pregen_labels.append(pregen_labels.astype(int))
+            all_pregen_fids.append(pregen_fids_raw + fid_offset)
+            fid_offset += int(pregen_fids_raw.max()) + 1
+
+        # 2. Korean-splice dataset patches (cached after first run)
+        ks_patches, ks_labels, ks_fids_raw = _load_korean_splice_patches()
+        if ks_patches is not None:
+            all_pregen_patches.append(ks_patches.reshape(len(ks_patches), -1))
+            all_pregen_labels.append(ks_labels.astype(int))
+            all_pregen_fids.append(ks_fids_raw + fid_offset)
+
+        if all_pregen_patches:
+            pregen_X = np.vstack(all_pregen_patches)
+            pregen_y = np.concatenate(all_pregen_labels)
+            pregen_fids = np.concatenate(all_pregen_fids)
 
     # --- Build eval arrays ---
     X_eval = np.array(eval_patches).reshape(n_eval, -1)

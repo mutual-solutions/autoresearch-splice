@@ -47,7 +47,7 @@ Read program.md for full instructions, then execute exactly ONE experiment itera
    - Combine both DSP and ML changes in one hypothesis
 3. Edit detector.py and/or ml_config.py with the smallest viable change
 4. git commit -m \"hypothesis: <description>\"
-5. Run: uv run python prepare.py --with-classifier
+5. Run: uv run python evaluate.py --with-classifier
 6. Parse combined score from the LAST 'combined:' line in output (this is combined_full when classifier runs)
 7. If combined > previous best: print RESULT:keep-pending
 8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
@@ -138,7 +138,7 @@ data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
 
-                    # Classifier training now happens in-loop via prepare.py --with-classifier
+                    # Classifier training now happens in-loop via evaluate.py --with-classifier
                 else
                     # Verification failed — revert
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
@@ -184,7 +184,7 @@ data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
 
-                    # Classifier training now happens in-loop via prepare.py --with-classifier
+                    # Classifier training now happens in-loop via evaluate.py --with-classifier
                 else
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
                     consecutive_discards=$((consecutive_discards + 1))
@@ -240,7 +240,7 @@ case "${1:-help}" in
         echo "Stop signal sent. Loop will exit after current iteration."
         ;;
     status)
-        # Fast — no subprocesses, no prepare.py, just file reads
+        # Fast — no subprocesses, no evaluate.py, just file reads
         if tmux has-session -t "$SESSION" 2>/dev/null; then
             echo "🟢 RUNNING"
         else
@@ -248,7 +248,7 @@ case "${1:-help}" in
             [ -f "$STOP_FILE" ] && echo "⏸  Stop signal pending (will be cleared on next start)"
             # Warn if loop stopped after recent code changes
             last_loop_end=$(grep "Autoresearch loop ended" "$LOG_FILE" 2>/dev/null | tail -1 | cut -dT -f1-2 | head -c19)
-            last_commit=$(git log -1 --format=%ci -- detector.py prepare.py ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
+            last_commit=$(git log -1 --format=%ci -- detector.py evaluate.py ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
             if [ -n "$last_loop_end" ] && [ -n "$last_commit" ] && [[ "$last_commit" > "$last_loop_end" ]]; then
                 echo "⚠️  Code changed after loop stopped — run '$0 start' to pick up changes"
             fi

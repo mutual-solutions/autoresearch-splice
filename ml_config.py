@@ -13,15 +13,15 @@ N_FFT = 2048              # STFT window size
 TARGET_FRAMES = 200       # time frames per patch
 
 # --- Classifier pipeline ---
-N_ESTIMATORS = 400        # GradientBoosting trees (more trees with slower LR)
+N_ESTIMATORS = 200        # GradientBoosting trees
 MAX_DEPTH = 3             # max tree depth (shallower for better generalization on small data)
-LEARNING_RATE = 0.05      # boosting learning rate (slower for better OOF generalization)
-SUBSAMPLE = 0.8           # fraction of samples per tree
+LEARNING_RATE = 0.1       # boosting learning rate
+SUBSAMPLE = 0.8           # fraction of samples per tree (stochastic regularization)
 PCA_COMPONENTS = 100      # PCA dimensionality reduction (capped by data)
 RANDOM_STATE = 42
 
 # --- Evaluation ---
-OOF_THRESHOLD = 0.45      # OOF probability threshold for keeping detections (lowered to recover borderline TPs)
+OOF_THRESHOLD = 0.45      # OOF probability threshold for keeping detections
 N_FOLDS = 5               # GroupKFold CV splits
 DSP_FP_BOUND = 15         # max DSP false positives on clean files (0 = combined)
 

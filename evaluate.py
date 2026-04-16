@@ -3,10 +3,10 @@ Audio splice detection evaluation oracle.
 Protected from autoresearch agent modification — only the human edits this.
 
 Usage:
-    uv run python prepare.py
-    uv run python prepare.py --with-classifier   # DSP + ML pipeline
-    uv run python prepare.py --data-dir /path/to/spliced
-    uv run python prepare.py --codec             # also test Opus 32k roundtrip
+    uv run python evaluate.py
+    uv run python evaluate.py --with-classifier   # DSP + ML pipeline
+    uv run python evaluate.py --data-dir /path/to/spliced
+    uv run python evaluate.py --codec             # also test Opus 32k roundtrip
 """
 
 import json

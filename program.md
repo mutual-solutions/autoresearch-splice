@@ -44,7 +44,7 @@ Allowed techniques (non-exhaustive):
 
 ## Files
 
-- **`prepare.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
+- **`evaluate.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
   computes F1 vs ground truth, prints metrics. **Do NOT modify** (only the human edits this).
 - **`detector.py`** — DSP detector. You edit this for DSP experiments. Must be importable as a module
   (`detect_splices(audio, sr)`) AND runnable as a CLI (`python detector.py file.wav`).
@@ -56,7 +56,7 @@ Allowed techniques (non-exhaustive):
 
 1. Agree on a run tag (e.g. `apr15`). Branch `autoresearch/<tag>` must not exist.
 2. `git checkout -b autoresearch/<tag>` from main.
-3. Read `README.md`, `prepare.py`, and `detector.py` in full.
+3. Read `README.md`, `evaluate.py`, and `detector.py` in full.
 4. Verify `data/spliced/` contains WAV files and `ground_truth.json`.
 5. Initialize `results.tsv` with just the header row.
 6. Confirm and begin.
@@ -72,7 +72,7 @@ LOOP FOREVER:
    Write it as a one-line comment at the top of your planned change.
 4. Edit `detector.py` and/or `ml_config.py` with the smallest viable change that tests the hypothesis.
 5. `git commit -m "hypothesis: <one line>"`
-6. Run evaluation: `uv run prepare.py --with-classifier > run.log 2>&1`
+6. Run evaluation: `uv run evaluate.py --with-classifier > run.log 2>&1`
    - Must finish in <120s. If it hangs past 150s, kill it (treat as crash).
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
@@ -103,7 +103,7 @@ Deleting code and matching or beating prior F1 is always a win.
 
 ## Crash handling
 
-If `prepare.py` crashes (import error, shape mismatch, etc.):
+If `evaluate.py` crashes (import error, shape mismatch, etc.):
 - If it's a trivial fix (typo, wrong axis), fix and re-run.
 - If the idea is fundamentally broken, log as `crash` and reset.
 

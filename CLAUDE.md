@@ -22,13 +22,13 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 - NO neural networks, NO GPU. scipy/librosa/numpy only.
 - Every detection must be explainable (statistical test or spectral anomaly).
 - Full evaluation must complete in under 120 seconds.
-- `prepare.py` and `program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
+- `evaluate.py` and `program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
 - `detector.py` (DSP) and `ml_config.py` (ML params) are edited for experiments.
 
 ## Protected Files
 
 The verification system guards these from modification:
-`prepare.py`, `data/spliced/*`, `.omc/coordination/manifest.json`, `.omc/coordination/preflight.py`
+`evaluate.py`, `data/spliced/*`, `.omc/coordination/manifest.json`, `.omc/coordination/preflight.py`
 
 ## Preflight
 

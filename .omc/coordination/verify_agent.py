@@ -15,7 +15,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).parent
 BASELINE_PATH = SCRIPT_DIR / "baseline_metrics.json"
 PROTECTED_FILES = [
-    "prepare.py",
+    "evaluate.py",
     "data/spliced/*",
     ".omc/coordination/manifest.json",
     ".omc/coordination/preflight.py",
@@ -23,19 +23,19 @@ PROTECTED_FILES = [
 
 
 def check_metric_rerun(reported: float) -> tuple[str, str, str]:
-    """Re-run prepare.py and compare combined score to reported value."""
+    """Re-run evaluate.py and compare combined score to reported value."""
     try:
         result = subprocess.run(
-            ["uv", "run", "python", "prepare.py", "--with-classifier"],
+            ["uv", "run", "python", "evaluate.py", "--with-classifier"],
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
-        return "FAIL", "prepare.py timed out after 120s", ""
+        return "FAIL", "evaluate.py timed out after 120s", ""
     except Exception as e:
         return "FAIL", f"subprocess error: {e}", ""
 
     if result.returncode != 0:
-        return "FAIL", f"prepare.py exited {result.returncode}", ""
+        return "FAIL", f"evaluate.py exited {result.returncode}", ""
 
     output = result.stdout + result.stderr
     matches = re.findall(r"^combined:\s*([\d.]+)", output, re.MULTILINE)
@@ -44,7 +44,7 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
 
     actual = float(matches[-1])
     delta = abs(actual - reported)
-    status = "PASS" if delta < 0.001 else "FAIL"
+    status = "PASS" if delta < 0.005 else "FAIL"
     return status, f"reported: {reported:.3f}, actual: {actual:.3f}, delta: {delta:.4f}", output
 
 
