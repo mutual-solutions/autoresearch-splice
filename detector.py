@@ -490,6 +490,30 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     else:
         filtered_times = [t for t, _ in filtered]
 
+    # Wide-context consistency gate: re-test with 15s windows.
+    # Real splices (different sources) show elevated T² at wide scale too.
+    # Natural transitions (same source) have low wide-context T².
+    wide_window_s = 15.0
+    wide_frames = max(1, int(wide_window_s / 0.020))
+    if n_frames >= 2 * wide_frames + 1:
+        consistent = []
+        for t in filtered_times:
+            t_frame = int(t / 0.020)
+            if t_frame - wide_frames < 0 or t_frame + wide_frames > n_frames:
+                consistent.append(t)  # can't test — keep
+                continue
+            w_left = band_powers[:, t_frame - wide_frames: t_frame].T
+            w_right = band_powers[:, t_frame: t_frame + wide_frames].T
+            wide_t2 = _hotelling_t2(w_left, w_right)
+            # Compare to narrow T² at same point: if wide/narrow ratio is very low,
+            # the spectral change is only local → likely natural transition
+            narrow_frame_idx = np.argmin(np.abs(times_arr - t))
+            narrow_t2 = t2_arr[narrow_frame_idx] if narrow_frame_idx < len(t2_arr) else 1.0
+            if narrow_t2 > 0 and wide_t2 / narrow_t2 < 0.3:
+                continue  # suppress: wide-context doesn't confirm splice
+            consistent.append(t)
+        filtered_times = consistent
+
     results = []
     for t in filtered_times:
         refined_t = _refine_splice_point(audio, sr, t, search_radius_s=1.0)
