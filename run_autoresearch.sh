@@ -41,8 +41,8 @@ Read program.md for full instructions, then execute exactly ONE experiment itera
 2. Form a hypothesis (one specific DSP idea to improve combined score)
 3. Edit detector.py with the smallest viable change
 4. git commit -m \"hypothesis: <description>\"
-5. Run: uv run python prepare.py
-6. Parse combined score from output
+5. Run: uv run python prepare.py --with-classifier
+6. Parse combined score from the LAST 'combined:' line in output
 7. If combined > previous best: print RESULT:keep-pending
 8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
 9. Do NOT run verify_agent.py yourself. The shell wrapper handles verification.
@@ -123,13 +123,7 @@ data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
 
-                    # Background: retrain classifier on snapshot
-                    (cd "$PROJECT_DIR" && \
-                     DETECTOR_SNAPSHOT="$SNAP" uv run python .omc/classifier/generate_patches.py && \
-                     uv run python .omc/classifier/train_classifier.py && \
-                     cp .omc/classifier/fp_classifier.joblib ".omc/classifier/classifier_v${VERSION}.joblib" && \
-                     echo "$(date -Iseconds) Classifier v$VERSION trained" >> "$LOG_FILE") &
-                    echo "$(date -Iseconds) Background: training classifier v$VERSION (PID: $!)" >> "$LOG_FILE"
+                    # Classifier training now happens in-loop via prepare.py --with-classifier
                 else
                     # Verification failed — revert
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
@@ -175,13 +169,7 @@ data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
 
-                    # Background: retrain classifier on snapshot
-                    (cd "$PROJECT_DIR" && \
-                     DETECTOR_SNAPSHOT="$SNAP" uv run python .omc/classifier/generate_patches.py && \
-                     uv run python .omc/classifier/train_classifier.py && \
-                     cp .omc/classifier/fp_classifier.joblib ".omc/classifier/classifier_v${VERSION}.joblib" && \
-                     echo "$(date -Iseconds) Classifier v$VERSION trained" >> "$LOG_FILE") &
-                    echo "$(date -Iseconds) Background: training classifier v$VERSION (PID: $!)" >> "$LOG_FILE"
+                    # Classifier training now happens in-loop via prepare.py --with-classifier
                 else
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
                     consecutive_discards=$((consecutive_discards + 1))

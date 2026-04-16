@@ -1,11 +1,12 @@
 """
 Audio splice detection evaluation oracle.
-IMMUTABLE — do not modify. The autoresearch loop reads this metric.
+Protected from autoresearch agent modification — only the human edits this.
 
 Usage:
     uv run python prepare.py
+    uv run python prepare.py --with-classifier   # DSP + ML pipeline
     uv run python prepare.py --data-dir /path/to/spliced
-    uv run python prepare.py --codec          # also test Opus 32k roundtrip
+    uv run python prepare.py --codec             # also test Opus 32k roundtrip
 """
 
 import json
@@ -131,6 +132,7 @@ def evaluate(data_dir):
     clean_files = 0
     clean_fp = 0
     errors = 0
+    per_file_results = []
     fp_per_file = {}   # name -> fp count
     xfade_results = {}  # crossfade_ms -> {"tp": int, "total": int}
     all_loc_distances = []  # distances between TP detections and ground truth
@@ -174,6 +176,16 @@ def evaluate(data_dir):
 
         # Track per-file FP
         fp_per_file[name] = fp
+
+        # Collect per-file results for ML pipeline
+        per_file_results.append({
+            "name": name,
+            "path": wav_path,
+            "gt_times": case["gt_times"],
+            "det_times": det_times,
+            "spliced": case["spliced"],
+            "tier": case["tier"],
+        })
 
         # Track T2 crossfade breakdown
         if case["tier"] == 2 and case["spliced"] and case.get("crossfade_ms") is not None:
@@ -285,6 +297,8 @@ def evaluate(data_dir):
         "loc_distances": all_loc_distances,
         "loc_mean": loc_mean,
         "loc_median": loc_median,
+        "per_file": per_file_results,
+        "clean_files": clean_files,
     }
 
 
@@ -477,6 +491,10 @@ if __name__ == "__main__":
         "--codec", action="store_true",
         help="Also evaluate after Opus 32k codec roundtrip (KakaoTalk standard)",
     )
+    parser.add_argument(
+        "--with-classifier", action="store_true",
+        help="Run DSP + ML classifier pipeline (train + OOF filter + combined_full)",
+    )
     args = parser.parse_args()
 
     t0 = time.time()
@@ -494,8 +512,17 @@ if __name__ == "__main__":
                 evaluate_codec(d)
             evaluate_multi_codec(dirs)
     else:
-        evaluate(args.data_dir)
+        result = evaluate(args.data_dir)
         if args.codec:
             evaluate_codec(args.data_dir)
+        if args.with_classifier:
+            from ml_eval import evaluate_with_classifier
+            ml_result = evaluate_with_classifier(result, args.data_dir)
+            if ml_result.get("bound_exceeded"):
+                print(f"combined: 0.000000")
+            elif ml_result.get("classifier_quality") == "LOW":
+                print(f"combined: {result['combined']:.6f}")
+            else:
+                print(f"combined: {ml_result['combined_full']:.6f}")
     elapsed = time.time() - t0
     print(f"elapsed: {elapsed:.1f}s")

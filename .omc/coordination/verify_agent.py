@@ -22,30 +22,30 @@ PROTECTED_FILES = [
 ]
 
 
-def check_metric_rerun(reported: float) -> tuple[str, str]:
+def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     """Re-run prepare.py and compare combined score to reported value."""
     try:
         result = subprocess.run(
-            ["uv", "run", "python", "prepare.py"],
+            ["uv", "run", "python", "prepare.py", "--with-classifier"],
             capture_output=True, text=True, timeout=120,
         )
     except subprocess.TimeoutExpired:
-        return "FAIL", "prepare.py timed out after 120s"
+        return "FAIL", "prepare.py timed out after 120s", ""
     except Exception as e:
-        return "FAIL", f"subprocess error: {e}"
+        return "FAIL", f"subprocess error: {e}", ""
 
     if result.returncode != 0:
-        return "FAIL", f"prepare.py exited {result.returncode}"
+        return "FAIL", f"prepare.py exited {result.returncode}", ""
 
     output = result.stdout + result.stderr
-    match = re.search(r"combined:\s*([\d.]+)", output)
-    if not match:
-        return "FAIL", "could not parse combined score from output"
+    matches = re.findall(r"^combined:\s*([\d.]+)", output, re.MULTILINE)
+    if not matches:
+        return "FAIL", "could not parse combined score from output", output
 
-    actual = float(match.group(1))
+    actual = float(matches[-1])
     delta = abs(actual - reported)
     status = "PASS" if delta < 0.001 else "FAIL"
-    return status, f"reported: {reported:.3f}, actual: {actual:.3f}, delta: {delta:.4f}"
+    return status, f"reported: {reported:.3f}, actual: {actual:.3f}, delta: {delta:.4f}", output
 
 
 def check_git_diff_audit() -> tuple[str, str]:
@@ -119,6 +119,17 @@ def check_preflight() -> tuple[str, str]:
     return "FAIL", f"preflight exited {result.returncode}: {result.stdout.strip()}"
 
 
+def check_dsp_fp_bound(output: str) -> tuple[str, str]:
+    """Check that DSP clean_fp is within bound."""
+    match = re.search(r"dsp_clean_fp:\s*(\d+)", output)
+    if not match:
+        return "WARN", "dsp_clean_fp not found in output (may be running without --with-classifier)"
+    dsp_fp = int(match.group(1))
+    if dsp_fp > 15:
+        return "FAIL", f"dsp_clean_fp={dsp_fp} exceeds bound of 15"
+    return "PASS", f"dsp_clean_fp={dsp_fp} (bound: 15)"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Verify agent work")
     parser.add_argument("--agent-name", required=True, help="Name of the agent being verified")
@@ -128,7 +139,7 @@ def main():
     print(f"\nVERIFICATION REPORT for agent [{args.agent_name}]:")
 
     # 1. Metric re-run
-    metric_status, metric_detail = check_metric_rerun(args.reported_combined)
+    metric_status, metric_detail, metric_output = check_metric_rerun(args.reported_combined)
     print(f"  Metric re-run:    {metric_status} ({metric_detail})")
 
     # Parse actual combined for anomaly check
@@ -147,8 +158,12 @@ def main():
     preflight_status, preflight_detail = check_preflight()
     print(f"  Preflight:        {preflight_status} ({preflight_detail})")
 
+    # 5. DSP FP bound
+    fp_bound_status, fp_bound_detail = check_dsp_fp_bound(metric_output)
+    print(f"  DSP FP bound:     {fp_bound_status} ({fp_bound_detail})")
+
     # Determine confidence
-    all_statuses = [metric_status, diff_status, anomaly_status, preflight_status]
+    all_statuses = [metric_status, diff_status, anomaly_status, preflight_status, fp_bound_status]
     if any(s == "FAIL" for s in all_statuses):
         confidence = "LOW"
     elif any(s == "WARN" for s in all_statuses):

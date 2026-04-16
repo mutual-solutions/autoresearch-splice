@@ -1,9 +1,12 @@
 {
-  "timestamp": "2026-04-15T16:51:58Z",
+  "timestamp": "2026-04-16T18:00:00Z",
   "git_sha": "f130baa64e52a2e3209936f7cf763dd3c176a011",
-  "combined": 0.475676,
-  "splice_f1": 0.540541,
-  "clean_score": 0.880000,
-  "precision": 0.59,
-  "recall": 0.50
+  "combined": 0.723692,
+  "combined_dsp": 0.723692,
+  "splice_f1": 0.738462,
+  "clean_score": 0.980000,
+  "precision": 0.96,
+  "recall": 0.60,
+  "dsp_clean_fp": 1,
+  "classifier_cv_f1": 0.0
 }

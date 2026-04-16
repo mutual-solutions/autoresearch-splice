@@ -4,21 +4,31 @@ Autonomous research for **audio splice detection using classical signal processi
 
 ## Research goal
 
-Maximize **combined score** = F1 × clean_score on a labeled test set.
-Three metrics reported by the evaluation oracle:
-- `splice_f1: 0.XXX` — F1 score on splice detection (higher is better)
-- `clean_score: 0.XXX` — 1.0 if zero FP on clean files, penalized per clean FP (higher is better)
-- `combined: 0.XXX` — F1 × clean_score. THIS is the metric to optimize. Both must be high.
+Maximize **combined score** on a labeled test set.
+The evaluation oracle prints multiple metrics. The LAST line is always:
+- `combined: 0.XXX` — THIS is the metric to optimize. Use it for keep/discard decisions.
 
-Use `combined` for keep/discard decisions. An improvement in F1 that adds clean FPs is NOT an improvement.
+When `--with-classifier` is used, `combined` equals the classifier-filtered F1 × clean_score
+(`combined_full`) if the classifier is good enough, or DSP-only F1 × clean_score (`combined_dsp`)
+if the classifier quality is low. Either way, optimize `combined`.
+
+**DSP FP bound**: DSP clean_fp must stay ≤ 15. If exceeded, `combined` drops to 0 (guaranteed discard).
+The autoresearch agent can freely adjust DSP threshold values to increase recall, as long as
+DSP FP stays within this bound. The classifier handles FP suppression after DSP.
 
 ## Constraints — NON-NEGOTIABLE
 
 - **NO neural networks**. No torch, no tensorflow, no sklearn MLPs, no gradient descent.
+  Explainable tree-based ML (GradientBoosting) is used automatically by the eval oracle —
+  do NOT add ML code to detector.py.
 - **NO GPU**. CPU-only. scipy, librosa, numpy only.
 - **Every detection must be explainable**: each splice point returned by `detector.py`
   must be attributable to a specific statistical test or spectral anomaly.
-- **Each full evaluation run must complete in under 60 seconds** on a laptop CPU.
+- **Each full evaluation run must complete in under 120 seconds** on a laptop CPU.
+- **DSP clean_fp ≤ 15**: If DSP alone produces more than 15 FP on clean files,
+  combined drops to 0 and the iteration is discarded.
+- **Adjusting DSP threshold values** (GPD_ALPHA, CPE_CONFIRM_SIGMA, T2_ALPHA, etc.)
+  is a valid hypothesis type.
 
 Allowed techniques (non-exhaustive):
 - Spectral flux, spectral centroid, spectral rolloff, MFCC discontinuities
@@ -33,8 +43,8 @@ Allowed techniques (non-exhaustive):
 
 ## Files
 
-- **`prepare.py`** — immutable evaluation oracle. Runs `detector.py` on test data,
-  computes F1 vs ground truth, prints metrics. **Do NOT modify.**
+- **`prepare.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
+  computes F1 vs ground truth, prints metrics. **Do NOT modify** (only the human edits this).
 - **`detector.py`** — the single file you edit. Must be importable as a module
   (`detect_splices(audio, sr)`) AND runnable as a CLI (`python detector.py file.wav`).
 - **`program.md`** — instructions for the agent (this file). Only the human edits this.
@@ -58,8 +68,8 @@ LOOP FOREVER:
    Write it as a one-line comment at the top of your planned change.
 4. Edit `detector.py` with the smallest viable change that tests the hypothesis.
 5. `git commit -m "hypothesis: <one line>"`
-6. Run evaluation: `uv run prepare.py > run.log 2>&1`
-   - Must finish in <60s. If it hangs past 90s, kill it (treat as crash).
+6. Run evaluation: `uv run prepare.py --with-classifier > run.log 2>&1`
+   - Must finish in <120s. If it hangs past 150s, kill it (treat as crash).
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
    `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`

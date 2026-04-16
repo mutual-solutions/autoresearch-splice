@@ -127,6 +127,7 @@ def main():
     failures += 0 if check("Precision", r["precision"], EXPECTED["precision_min"]) else 1
     failures += 0 if check("Recall", r["recall"], EXPECTED["recall_min"]) else 1
     failures += 0 if check("Clean FP", r["clean_fp"], EXPECTED["clean_fp_max"], op="<=") else 1
+    failures += 0 if check("DSP FP bound", r["clean_fp"], 15, op="<=") else 1
     failures += 0 if check("T1 recall", r["t1_tp"] / T1_COUNT, EXPECTED["t1_recall_min"]) else 1
     failures += 0 if check("T2 recall", r["t2_tp"] / T2_COUNT, EXPECTED["t2_recall_min"]) else 1
     failures += 0 if check("Loc mean", r["loc_mean"], EXPECTED["loc_mean_max"], op="<=") else 1
@@ -139,6 +140,22 @@ def main():
                                EXPECTED["opus32k_combined_min"]) else 1
     else:
         print("\n  Opus32k: SKIP (ffmpeg not found)")
+
+    # --- ML classifier integration (optional) ---
+    try:
+        from ml_eval import evaluate_with_classifier
+        print("\nRunning ML classifier check...")
+        ml_result = evaluate_with_classifier(r, DATA_DIR)
+        if ml_result.get("bound_exceeded"):
+            print("  ML eval: FAIL (DSP FP bound exceeded)")
+            failures += 1
+        elif ml_result.get("classifier_quality") == "LOW":
+            print(f"  ML eval: SKIP (classifier quality LOW, cv_f1={ml_result.get('cv_f1', 0):.3f})")
+        else:
+            combined_full = ml_result["combined_full"]
+            failures += 0 if check("Combined full", combined_full, 0.40) else 1
+    except ImportError:
+        print("\n  ML eval: SKIP (sklearn not available)")
 
     print()
     if failures == 0:
