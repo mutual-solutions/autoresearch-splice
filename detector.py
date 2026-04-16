@@ -426,7 +426,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     min_dist_idx = max(1, int(5.0 / hop_s))
     peaks_idx, props = sp_signal.find_peaks(t2_z, height=threshold,
                                              distance=min_dist_idx,
-                                             prominence=threshold * 0.2)
+                                             prominence=threshold * 0.5)
     if len(peaks_idx) == 0:
         return []
 
