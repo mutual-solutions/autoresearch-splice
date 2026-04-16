@@ -131,14 +131,18 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 # STRUCTURAL VERIFICATION: shell runs verify_agent.py directly (not Claude)
                 echo "$(date -Iseconds) Keep pending — running structural verification..." >> "$LOG_FILE"
 
-                # Extract reported combined from Claude's output
-                reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+                # Extract reported combined from Claude's output.
+                # Match "combined: 0.X", "combined=0.X", "Combined dropped to 0.X", "combined score of 0.X", etc.
+                reported=$(echo "$last_output" | grep -oiE '\bcombined[^0-9\n]{0,30}[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
 
-                # verify_agent.py has its own 120s timeout for evaluate.py internally
+                # verify_agent.py has its own 120s timeout for evaluate.py internally.
+                # Capture exit code separately — `|| true` would mask LOW confidence failures.
+                set +e
                 verify_output=$(uv run python .omc/coordination/verify_agent.py \
                     --agent-name autoresearch \
-                    --reported-combined "$reported" 2>&1) || true
+                    --reported-combined "$reported" 2>&1)
                 verify_exit=$?
+                set -e
                 echo "$verify_output" >> "$LOG_FILE"
 
                 if [ $verify_exit -eq 0 ]; then
