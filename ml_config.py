@@ -14,7 +14,7 @@ TARGET_FRAMES = 200       # time frames per patch
 
 # --- Classifier pipeline ---
 N_ESTIMATORS = 200        # GradientBoosting trees
-MAX_DEPTH = 5             # max tree depth
+MAX_DEPTH = 3             # max tree depth (shallower for better generalization on small data)
 LEARNING_RATE = 0.1       # boosting learning rate
 SUBSAMPLE = 0.8           # fraction of samples per tree
 PCA_COMPONENTS = 100      # PCA dimensionality reduction (capped by data)
