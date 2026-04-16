@@ -164,7 +164,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     hop_length = max(1, int(sr * hop_ms / 1000))
 
     # AGC: normalize amplitude so quiet sections are amplified
-    agc_window = max(1, int(sr * 0.200))
+    agc_window = max(1, int(sr * 0.300))
     sq = audio ** 2
     local_power = uniform_filter1d(sq, size=agc_window, mode='constant')
     local_rms = np.sqrt(np.maximum(local_power, 1e-10))
