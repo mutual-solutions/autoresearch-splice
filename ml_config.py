@@ -22,7 +22,7 @@ PCA_COMPONENTS = 50       # PCA dimensionality reduction (capped by data)
 RANDOM_STATE = 42
 
 # --- Evaluation ---
-OOF_THRESHOLD = 0.45      # OOF probability threshold for keeping detections
+OOF_THRESHOLD = 0.47      # OOF probability threshold for keeping detections
 N_FOLDS = 5               # GroupKFold CV splits
 DSP_FP_BOUND = 15         # max DSP false positives on clean files (0 = combined)
 
