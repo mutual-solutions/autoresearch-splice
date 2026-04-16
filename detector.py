@@ -496,7 +496,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
             # the spectral change is only local → likely natural transition
             narrow_frame_idx = np.argmin(np.abs(times_arr - t))
             narrow_t2 = t2_arr[narrow_frame_idx] if narrow_frame_idx < len(t2_arr) else 1.0
-            if narrow_t2 > 0 and wide_t2 / narrow_t2 < 0.3:
+            if narrow_t2 > 0 and wide_t2 / narrow_t2 < 0.4:
                 continue  # suppress: wide-context doesn't confirm splice
             consistent.append(t)
         filtered_times = consistent
