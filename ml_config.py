@@ -13,9 +13,9 @@ N_FFT = 2048              # STFT window size
 TARGET_FRAMES = 200       # time frames per patch
 
 # --- Classifier pipeline ---
-N_ESTIMATORS = 200        # GradientBoosting trees
+N_ESTIMATORS = 400        # GradientBoosting trees (more trees with slower LR)
 MAX_DEPTH = 3             # max tree depth (shallower for better generalization on small data)
-LEARNING_RATE = 0.1       # boosting learning rate
+LEARNING_RATE = 0.05      # boosting learning rate (slower for better OOF generalization)
 SUBSAMPLE = 0.8           # fraction of samples per tree
 PCA_COMPONENTS = 100      # PCA dimensionality reduction (capped by data)
 RANDOM_STATE = 42
