@@ -21,3 +21,7 @@ dev/
 
 # Results file
 results.tsv
+
+# Runtime state (must not be git-tracked — git reset --hard wipes tracked files)
+.omc/autoresearch.log
+.omc/autoresearch-stop
