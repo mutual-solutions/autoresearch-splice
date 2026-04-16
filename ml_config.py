@@ -16,7 +16,7 @@ TARGET_FRAMES = 200       # time frames per patch
 N_ESTIMATORS = 200        # GradientBoosting trees
 MAX_DEPTH = 3             # max tree depth (shallower for better generalization on small data)
 LEARNING_RATE = 0.1       # boosting learning rate
-SUBSAMPLE = 0.8           # fraction of samples per tree (stochastic regularization)
+SUBSAMPLE = 0.5           # fraction of samples per tree (stochastic regularization)
 PCA_COMPONENTS = 100      # PCA dimensionality reduction (capped by data)
 RANDOM_STATE = 42
 
