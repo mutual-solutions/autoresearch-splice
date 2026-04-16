@@ -34,7 +34,7 @@ run_loop() {
         # Run one iteration via claude
         echo "$(date -Iseconds) Starting iteration (consecutive discards: $consecutive_discards)" >> "$LOG_FILE"
 
-        claude -p "You are running autoresearch on the audio splice detection project.
+        iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
 Read program.md for full instructions, then execute exactly ONE experiment iteration:
 1. Check git state and read detector.py and results.tsv
@@ -50,11 +50,16 @@ Read program.md for full instructions, then execute exactly ONE experiment itera
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
             --add-dir "$PROJECT_DIR" \
-            2>&1 | tee -a "$LOG_FILE" | tail -5
+            2>&1)
 
         # Check if claude itself failed (rate limit, token exhausted, crash)
         claude_exit=$?
-        last_output=$(tail -50 "$LOG_FILE")
+
+        # Append iteration output to log AFTER claude finishes (immune to git reset)
+        echo "$iteration_output" >> "$LOG_FILE"
+        echo "$iteration_output" | tail -5
+
+        last_output="$iteration_output"
 
         if echo "$last_output" | grep -qiE "rate.limit|usage.limit|credit|quota|429|overloaded|capacity"; then
             minutes=$((rate_limit_backoff / 60))
@@ -216,8 +221,14 @@ case "${1:-help}" in
             echo "🟢 RUNNING"
         else
             echo "🔴 STOPPED"
+            [ -f "$STOP_FILE" ] && echo "⏸  Stop signal pending (will be cleared on next start)"
+            # Warn if loop stopped after recent code changes
+            last_loop_end=$(grep "Autoresearch loop ended" "$LOG_FILE" 2>/dev/null | tail -1 | cut -dT -f1-2 | head -c19)
+            last_commit=$(git log -1 --format=%ci -- detector.py prepare.py ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
+            if [ -n "$last_loop_end" ] && [ -n "$last_commit" ] && [[ "$last_commit" > "$last_loop_end" ]]; then
+                echo "⚠️  Code changed after loop stopped — run '$0 start' to pick up changes"
+            fi
         fi
-        [ -f "$STOP_FILE" ] && echo "⏸  Stop signal pending"
         if [ -f "$RESULTS" ]; then
             total=$(($(wc -l < "$RESULTS") - 1))
             keeps=$(grep -c $'	keep\t' "$RESULTS" 2>/dev/null || true)
