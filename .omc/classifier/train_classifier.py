@@ -66,6 +66,10 @@ def make_pipeline(n_components):
         )
     except ImportError:
         N_ESTIMATORS, MAX_DEPTH, LEARNING_RATE, SUBSAMPLE, RANDOM_STATE = 200, 5, 0.1, 0.8, 42
+    try:
+        from ml_config import MAX_FEATURES
+    except ImportError:
+        MAX_FEATURES = None
 
     return Pipeline([
         ('scaler', StandardScaler()),
@@ -75,6 +79,7 @@ def make_pipeline(n_components):
             max_depth=MAX_DEPTH,
             learning_rate=LEARNING_RATE,
             subsample=SUBSAMPLE,
+            max_features=MAX_FEATURES,
             random_state=RANDOM_STATE,
         ))
     ])
