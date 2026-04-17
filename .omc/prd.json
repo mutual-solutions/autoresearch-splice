@@ -95,7 +95,7 @@
       "id": "US-302",
       "title": "Regenerate singing dataset with boundary_energy regime split",
       "priority": 32,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "corpora/data/generate_splices.py (singing, 44.1kHz) imports from splice_boundary and picks 10 random + 10 quiet_matched per tier (matching Korean/English structure)",
         "Regenerated data/spliced/ground_truth.json has boundary_energy field on every tier1/tier2 entry; at least 10 entries per regime per tier",
@@ -150,7 +150,7 @@
       "id": "US-306",
       "title": "evaluate.py integration patch for new metric",
       "priority": 36,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         ".omc/evaluate_integration.md updated with the exact block to replace in evaluate.py — iterating DATASETS × regimes × tiers, computing forensic_combined, printing combined_<cell>, combined_mean, combined_min, combined (last)",
         "Includes updated baseline_metrics.json proposal with new combined value pinned once current code runs end-to-end",

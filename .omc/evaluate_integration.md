@@ -117,6 +117,88 @@ Notes on the diff:
 - **`combined_speech` renamed to `combined_<id>`** — the fixed "speech" label
   goes away in favor of the registry id.
 
+---
+
+## Phase-1 metric update (forensic_combined, 15-cell + FP multiplier)
+
+Once the Phase-1 implementation lands (spec:
+`deep-interview-gbm-main-forensic-metric.md`), the aggregate line should
+switch from `aggregate_combined` (3-cell GM over per-dataset combined) to
+`forensic_combined` (15-cell GM × smooth FP multiplier). The rest of the
+evaluate.py block is unchanged; just swap the final aggregator.
+
+```python
+from dataset_registry import DATASETS, forensic_combined
+
+# per_dataset_results is produced by iterating DATASETS and calling
+# evaluate(ds.path) — same as above — but now we capture per-regime / per-tier
+# F1 from each dataset's ground_truth breakdown (boundary_energy + tier).
+# eval_by_regime.py already does this breakdown; migrate its logic into
+# evaluate.py inline so the per-cell numbers land in per_cell_results.
+
+per_cell_results: dict[str, float] = {}
+
+for ds in DATASETS:
+    if ds.eval_weight <= 0:
+        continue
+    ds_result = evaluate(str(ds.path))      # existing
+    by_regime = ds_result.get("by_regime", {})   # NEW: evaluate.py must emit this
+    # by_regime shape: {"t1_random": {"tp":..,"fp":..,"fn":..}, "t1_quiet_matched": {...}, ...}
+    for regime_key, counts in by_regime.items():
+        f1 = _f1_from_counts(counts)
+        per_cell_results[f"{ds.id}_{regime_key}"] = f1   # 4 cells per dataset
+    per_cell_results[f"{ds.id}_clean_score"] = ds_result["clean_score"]   # 1 cell per dataset
+
+total_clean_fp = sum(r["clean_fp"] for r in per_dataset_results.values())
+agg = forensic_combined(per_cell_results, clean_fp=total_clean_fp, max_allowed=15)
+
+# Print per-cell diagnostics
+for name, val in per_cell_results.items():
+    print(f"combined_{name}: {val:.6f}")
+print(f"combined_gm_cells: {agg['combined_gm_cells']:.6f}")
+print(f"fp_multiplier:     {agg['fp_multiplier']:.6f}")
+print(f"total_clean_fp:    {total_clean_fp}")
+print(f"n_cells_included:  {agg['n_cells_included']}")
+print(f"combined: {agg['combined']:.6f}")
+```
+
+**Assumptions this block depends on:**
+
+1. Every eligible dataset's `ground_truth.json` has `boundary_energy` populated
+   on all spliced entries (korean + english already done; singing regen scheduled
+   under PRD story US-302).
+2. `evaluate()` emits a `by_regime` key in its result dict with counts broken
+   down by `(tier, boundary_energy)`. If `evaluate()` is not extended, the
+   per-regime breakdown can be computed inline using `eval_by_regime.py` logic.
+3. `max_allowed=15` matches the existing DSP FP bound. Tighten when forensic
+   acceptance requires it.
+
+## baseline_metrics.json update (Phase-1)
+
+Two baselines will coexist:
+
+1. `combined` — old 3-cell aggregate (legacy baseline, kept for verify_agent
+   continuity during the transition)
+2. `combined_forensic` — new 15-cell × FP aggregate (the Phase-1 target)
+
+Proposal — add a new JSON field rather than replacing:
+
+```json
+{
+  "timestamp": "2026-04-17T<apply>",
+  "git_sha": "REPLACE_AFTER_COMMIT",
+  "combined": 0.704,
+  "combined_forensic": <recorded at Phase-1 completion>,
+  "combined_gm_cells": <recorded>,
+  "fp_multiplier": <recorded>,
+  "per_cell": { ... 15 cell values ... },
+  "notes": "Phase-1 (gbm-main-forensic-metric) implementation-done baseline. Phase-2 target combined_forensic ≥ 0.65 via autoresearch."
+}
+```
+
+This way `verify_agent.py`'s existing check continues unchanged while the
+richer `combined_forensic` joins it as a diagnostic.
+
 ## baseline_metrics.json update
 
 The new `combined` is a geometric mean, not a singing-only number. Today's
