@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-04-17T20:15:00Z",
-  "git_sha": "51dc74d",
+  "timestamp": "2026-04-17T23:53:16Z",
+  "git_sha": "fe5e111",
   "phase": "phase2_cross_dataset_gm",
-  "combined": 0.376691,
+  "combined": 0.421021,
   "combined_dsp": 0.785316,
   "splice_f1": 0.835443,
   "clean_score": 0.94,
@@ -13,21 +13,21 @@
   "classifier_oof_f1_macro": 0.5071,
   "gbm_threshold": 0.985,
   "analysis_stride_s": 0.3,
-  "note": "Post unification + train/eval/test split + duration/codec mix. Cross-dataset GM is the primary metric (last combined: line). Singing is now the weakest domain post-regen (was strongest pre).",
+  "note": "Post-parser-fix. Orphan hypothesis 4014531 (GBM_THRESHOLD 0.983) verified HIGH manually; baseline advanced to reflect its measured combined.",
   "gbm_min_sep_s": 2.5,
-  "combined_mean": 0.425352,
-  "combined_min": 0.204286,
+  "combined_mean": 0.461717,
+  "combined_min": 0.234722,
   "per_dataset_combined": {
-    "singing": 0.204286,
-    "korean": 0.376119,
-    "english": 0.695652
+    "singing": 0.234722,
+    "korean": 0.461538,
+    "english": 0.688889
   },
   "per_dataset_clean_fp": {
     "singing": 7,
-    "korean": 2,
+    "korean": 0,
     "english": 0
   },
-  "clean_fp_total": 9,
+  "clean_fp_total": 7,
   "n_datasets": 3,
   "eval_seconds_observed": 243,
   "eval_seconds_budget": 300

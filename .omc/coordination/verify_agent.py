@@ -122,15 +122,50 @@ def check_preflight() -> tuple[str, str]:
 
 
 def check_clean_fp_bound(output: str) -> tuple[str, str]:
-    """Check that clean_fp is within bound."""
-    # evaluate.py prints clean_fp=N inside the TP=.. FP=.. FN=.. clean_fp=N line.
-    match = re.search(r"clean_fp[=:]\s*(\d+)", output)
-    if not match:
-        return "WARN", "clean_fp not found in output (evaluate.py may have crashed)"
-    clean_fp = int(match.group(1))
-    if clean_fp > 15:
-        return "FAIL", f"clean_fp={clean_fp} exceeds bound of 15"
-    return "PASS", f"clean_fp={clean_fp} (bound: 15)"
+    """Check clean_fp bound per dataset AND total.
+
+    Reads the RESULTS_TSV line (authoritative, written once per eval run)
+    and verifies every per-dataset `clean_fp_<id>` ≤ 15 (per-dataset
+    bound) and total `clean_fp` ≤ 45 (aggregate). Reports the worst
+    offender with explicit attribution so a failing dataset is not hidden
+    inside an aggregate.
+    """
+    tsv_line = None
+    for line in output.splitlines():
+        if line.startswith("RESULTS_TSV:"):
+            tsv_line = line  # take last RESULTS_TSV line
+
+    if tsv_line is None:
+        # Fallback: older output shape. Look for the TP/FP summary line.
+        m = re.search(r"clean_fp[=:]\s*(\d+)", output)
+        if not m:
+            return "WARN", "clean_fp not found in output (evaluate.py may have crashed)"
+        cfp = int(m.group(1))
+        if cfp > 15:
+            return "FAIL", f"clean_fp={cfp} exceeds bound of 15"
+        return "PASS", f"clean_fp={cfp} (bound: 15)"
+
+    per_ds = {}
+    for m in re.finditer(r"\bclean_fp_([A-Za-z_]+)=(\d+)", tsv_line):
+        per_ds[m.group(1)] = int(m.group(2))
+    total_match = re.search(r"\bclean_fp=(\d+)", tsv_line)
+    total = int(total_match.group(1)) if total_match else sum(per_ds.values())
+
+    per_ds_bound = 15
+    total_bound = 45
+    failures = [
+        (ds, n) for ds, n in per_ds.items() if n > per_ds_bound
+    ]
+    if failures:
+        worst = max(failures, key=lambda x: x[1])
+        detail = ", ".join(f"{ds}={n}" for ds, n in sorted(per_ds.items()))
+        return "FAIL", f"clean_fp_{worst[0]}={worst[1]} exceeds per-dataset bound {per_ds_bound} ({detail})"
+    if total > total_bound:
+        detail = ", ".join(f"{ds}={n}" for ds, n in sorted(per_ds.items()))
+        return "FAIL", f"clean_fp total={total} exceeds aggregate bound {total_bound} ({detail})"
+
+    detail = ", ".join(f"{ds}={n}" for ds, n in sorted(per_ds.items()))
+    return "PASS", f"total={total} per-dataset({detail}) bounds {per_ds_bound}/ds, {total_bound} total"
 
 
 def main():

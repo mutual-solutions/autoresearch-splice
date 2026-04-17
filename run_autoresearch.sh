@@ -21,6 +21,19 @@ run_loop() {
 
     echo "$(date -Iseconds) Autoresearch loop started" >> "$LOG_FILE"
 
+    # Orphan-hypothesis detection. If a prior run crashed mid-iteration,
+    # HEAD can be an unverified `hypothesis: ...` commit sitting on top of
+    # the last verified keep. Its effect is implicitly baked into whatever
+    # future iterations build on. Either verify it or reset — we reset
+    # because the wrapper can't retroactively re-run verify_agent against
+    # a mutated baseline. A human can `git cherry-pick` the orphan back
+    # if they want to revisit it.
+    orphan_subject=$(git log -1 --format=%s 2>/dev/null)
+    if echo "$orphan_subject" | grep -q "^hypothesis:"; then
+        echo "$(date -Iseconds) ORPHAN hypothesis detected at HEAD: $(git log -1 --format=%h). Resetting to HEAD~1 for clean baseline." >> "$LOG_FILE"
+        git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
+    fi
+
     while true; do
         # Stop signal check
         if [ -f "$STOP_FILE" ]; then
@@ -242,22 +255,80 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                     SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
                     cp "$PROJECT_DIR/detector.py" "$SNAP"
 
-                    # Update baseline_metrics.json so the NEXT iteration sees the
-                    # new current_best. Without this, claude would compare against
-                    # a stale baseline and accept no-op commits as "improvements".
-                    python3 -c "
-import json, os
-bf = os.path.join('$PROJECT_DIR', '.omc/coordination/baseline_metrics.json')
+                    # Update baseline_metrics.json so the NEXT iteration sees
+                    # the new current_best. Written from RESULTS_TSV on disk
+                    # (the authoritative source) so per-dataset fields are
+                    # captured too — not just the aggregate `combined`.
+                    python3 - "$PROJECT_DIR" <<'PYEOF'
+import json, os, subprocess, sys, re, datetime
+proj = sys.argv[1]
+bf = os.path.join(proj, '.omc/coordination/baseline_metrics.json')
+eval_log = os.path.join(proj, '.omc/last_eval.log')
 try:
     data = json.load(open(bf))
 except Exception:
     data = {}
-data['combined'] = float('$reported')
-data['git_sha'] = __import__('subprocess').run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
-data['timestamp'] = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-data.setdefault('note', '')
-json.dump(data, open(bf, 'w'), indent=2)
-"
+
+tsv = ""
+try:
+    with open(eval_log) as f:
+        for line in f:
+            if line.startswith("RESULTS_TSV:"):
+                tsv = line.strip()
+except FileNotFoundError:
+    pass
+
+def pull(key: str):
+    m = re.search(rf"\b{re.escape(key)}=([^\s]+)", tsv)
+    return m.group(1) if m else None
+
+combined = pull("combined")
+if combined is not None:
+    data["combined"] = float(combined)
+for k in ("combined_mean", "combined_min"):
+    v = pull(k)
+    if v is not None:
+        data[k] = float(v)
+
+per_ds = {}
+for k in list(re.findall(r"\bcombined_([A-Za-z_]+)=", tsv)):
+    if k in ("mean", "min"): continue
+    v = pull(f"combined_{k}")
+    if v is not None:
+        per_ds[k] = float(v)
+if per_ds:
+    data["per_dataset_combined"] = per_ds
+
+per_ds_fp = {}
+for k in list(re.findall(r"\bclean_fp_([A-Za-z_]+)=", tsv)):
+    v = pull(f"clean_fp_{k}")
+    if v is not None:
+        per_ds_fp[k] = int(v)
+if per_ds_fp:
+    data["per_dataset_clean_fp"] = per_ds_fp
+total_fp = pull("clean_fp")
+if total_fp is not None:
+    data["clean_fp_total"] = int(total_fp)
+
+data["git_sha"] = subprocess.check_output(
+    ["git", "rev-parse", "--short", "HEAD"], cwd=proj, text=True
+).strip()
+data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+    "%Y-%m-%dT%H:%M:%SZ"
+)
+json.dump(data, open(bf, "w"), indent=2)
+PYEOF
+
+                    # Durability: commit the baseline update as its own
+                    # commit so subsequent `git reset --hard HEAD~1` on a
+                    # discard reverts only the failed hypothesis, not the
+                    # latest keep's baseline. Without this commit step the
+                    # wrapper's baseline write lives as an unstaged change
+                    # and gets wiped by the next discard's reset.
+                    if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
+                        git add .omc/coordination/baseline_metrics.json
+                        git commit -m "baseline: combined=$reported after keep $(git log -1 --format=%h)" >> "$LOG_FILE" 2>&1
+                    fi
 
                     # Update versions.json
                     python3 -c "
