@@ -27,10 +27,10 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     try:
         result = subprocess.run(
             ["uv", "run", "python", "evaluate.py", "--with-classifier"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, text=True, timeout=240,
         )
     except subprocess.TimeoutExpired:
-        return "FAIL", "evaluate.py timed out after 120s", ""
+        return "FAIL", "evaluate.py timed out after 240s", ""
     except Exception as e:
         return "FAIL", f"subprocess error: {e}", ""
 

@@ -25,7 +25,7 @@ DSP FP stays within this bound. The classifier handles FP suppression after DSP.
 - **NO GPU**. CPU-only. scipy, librosa, numpy only.
 - **Every detection must be explainable**: each splice point returned by `detector.py`
   must be attributable to a specific statistical test or spectral anomaly.
-- **Each full evaluation run must complete in under 120 seconds** on a laptop CPU.
+- **Each full evaluation run must complete in under 240 seconds** on a laptop CPU. (Raised from 120s to accommodate cross-domain eval: singing + korean-splice DSP + classifier always regenerates korean-splice patches from current detector.)
 - **DSP clean_fp ≤ 15**: If DSP alone produces more than 15 FP on clean files,
   combined drops to 0 and the iteration is discarded.
 - **Adjusting DSP threshold values** (GPD_ALPHA, CPE_CONFIRM_SIGMA, T2_ALPHA, etc.)
@@ -73,7 +73,7 @@ LOOP FOREVER:
 4. Edit `detector.py` and/or `ml_config.py` with the smallest viable change that tests the hypothesis.
 5. `git commit -m "hypothesis: <one line>"`
 6. Run evaluation: `uv run evaluate.py --with-classifier > run.log 2>&1`
-   - Must finish in <120s. If it hangs past 150s, kill it (treat as crash).
+   - Must finish in <240s. If it hangs past 270s, kill it (treat as crash).
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
    `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`

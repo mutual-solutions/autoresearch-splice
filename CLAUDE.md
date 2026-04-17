@@ -21,7 +21,7 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 
 - NO neural networks, NO GPU. scipy/librosa/numpy only.
 - Every detection must be explainable (statistical test or spectral anomaly).
-- Full evaluation must complete in under 120 seconds.
+- Full evaluation must complete in under 240 seconds.
 - `evaluate.py` and `program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
 - `detector.py` (DSP) and `ml_config.py` (ML params) are edited for experiments.
 
