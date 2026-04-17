@@ -199,7 +199,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     # GPD threshold
     non_silent = fused[silence > 0.5]
     n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.1)
+    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.1, context="cpe")
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -423,7 +423,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     # GPD tail-based threshold (same as phase detector) — adaptive to T2 distribution shape
     non_silent_t2 = t2_z[silence_at_test > 0.5]
     n_tests_xf = len(non_silent_t2)
-    threshold = _gpd_threshold(non_silent_t2, n_tests=max(n_tests_xf, 1), alpha=0.05)
+    threshold = _gpd_threshold(non_silent_t2, n_tests=max(n_tests_xf, 1), alpha=0.05, context="crossfade")
     threshold = max(threshold, 4.5)  # safety floor
 
     # Peak pick
@@ -618,7 +618,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
 
     # --- GPD tail-based threshold with Bonferroni correction ---
     n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.02)
+    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.02, context="phase")
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -737,7 +737,25 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
 # GPD tail threshold
 # ---------------------------------------------------------------------------
 
-def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> float:
+import os as _os
+import sys as _sys
+
+_GPD_WARN = _os.environ.get("GPD_WARN", "1") != "0"
+
+
+def _gpd_warn(context: str, reason: str) -> None:
+    """Emit a diagnostic warning when GPD can't estimate the tail reliably.
+
+    Silence by exporting GPD_WARN=0. Warnings go to stderr so they don't
+    pollute the stdout metric parsers in evaluate.py.
+    """
+    if _GPD_WARN:
+        tag = f"[{context}]" if context else ""
+        print(f"WARN gpd{tag}: {reason}", file=_sys.stderr)
+
+
+def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05,
+                   context: str = "") -> float:
     """
     Compute detection threshold using GPD method-of-moments estimator.
 
@@ -748,9 +766,14 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> flo
     1. Fit GPD to the upper tail (top 5%) via method of moments
     2. Apply Bonferroni correction: per-test alpha = alpha / n_tests
     3. Return the score value where the tail probability = corrected alpha
+
+    Emits stderr warnings via `context` label when the fit falls back to
+    non-GPD behavior (too few samples, degenerate tail, etc.).
     """
-    if len(scores) < 50:
-        return float(np.max(scores) + 1) if len(scores) > 0 else 10.0
+    n = len(scores)
+    if n < 50:
+        _gpd_warn(context, f"short_fallback n={n}<50 → threshold=max(scores)+1")
+        return float(np.max(scores) + 1) if n > 0 else 10.0
 
     # Use top 5% as the tail
     tail_quantile = 0.95
@@ -758,6 +781,7 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> flo
     exceedances = scores[scores > u] - u
 
     if len(exceedances) < 10:
+        _gpd_warn(context, f"sparse_tail exc={len(exceedances)}<10 → percentile fallback")
         corrected_q = 1.0 - alpha / max(n_tests, 1)
         return float(np.percentile(scores, min(corrected_q, 1.0 - 1e-5) * 100))
 
@@ -766,17 +790,20 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> flo
     var_exc = float(np.var(exceedances, ddof=1))
 
     if mean_exc < 1e-10:
+        _gpd_warn(context, f"degenerate_mean mean_exc={mean_exc:.2e} → threshold=u")
         return u
 
     # GPD moments: E[X] = scale/(1-shape), Var[X] = scale^2/((1-shape)^2*(1-2*shape))
     # Solving: shape = 0.5*(1 - mean^2/var), scale = mean*(1-shape)
     ratio = mean_exc ** 2 / max(var_exc, 1e-10)
-    shape = 0.5 * (1.0 - ratio)
-    scale = mean_exc * (1.0 - shape)
+    shape_raw = 0.5 * (1.0 - ratio)
+    scale_raw = mean_exc * (1.0 - shape_raw)
 
     # Clamp shape to valid range for threshold computation
-    shape = max(min(shape, 0.5), -0.5)
-    scale = max(scale, 1e-10)
+    shape = max(min(shape_raw, 0.5), -0.5)
+    if shape != shape_raw:
+        _gpd_warn(context, f"clamped_shape raw={shape_raw:.2f} → {shape:+.2f} (heavy/light tail)")
+    scale = max(scale_raw, 1e-10)
 
     # Bonferroni-corrected per-test significance
     p_per_test = alpha / max(n_tests, 1)
@@ -788,6 +815,7 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> flo
     target_survival = p_per_test / p_tail
 
     if target_survival >= 1.0:
+        _gpd_warn(context, f"alpha_too_loose n_tests={n_tests} alpha={alpha} → threshold=u (no extrapolation)")
         return u
 
     # GPD quantile: x = (scale/shape) * (survival^(-shape) - 1) for shape != 0
