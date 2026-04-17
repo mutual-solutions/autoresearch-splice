@@ -11,6 +11,9 @@ v11: Dual-mode detection.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
+
 import numpy as np
 from scipy import signal as sp_signal
 from scipy.ndimage import uniform_filter1d
@@ -221,12 +224,7 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     # GPD tail threshold with explicit fallback on degenerate fit
     non_silent = fused[silence > 0.5]
     n_tests = max(len(non_silent), 1)
-    try:
-        threshold = _gpd_threshold(non_silent, n_tests=n_tests, alpha=0.1)
-    except _FitError as e:
-        _diag("WARN", "cpe", "gpd_unfit",
-              fallback="conservative_percentile", cause=e.reason, **e.context)
-        threshold = _conservative_threshold(non_silent, n_tests=n_tests, alpha=0.1)
+    threshold = _gpd_or_conservative(non_silent, n_tests, 0.1, "cpe")
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -469,12 +467,7 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     # GPD tail threshold with explicit fallback on degenerate fit
     non_silent_t2 = t2_z[silence_at_test > 0.5]
     n_tests_xf = max(len(non_silent_t2), 1)
-    try:
-        threshold = _gpd_threshold(non_silent_t2, n_tests=n_tests_xf, alpha=0.05)
-    except _FitError as e:
-        _diag("WARN", "crossfade", "gpd_unfit",
-              fallback="conservative_percentile", cause=e.reason, **e.context)
-        threshold = _conservative_threshold(non_silent_t2, n_tests=n_tests_xf, alpha=0.05)
+    threshold = _gpd_or_conservative(non_silent_t2, n_tests_xf, 0.05, "crossfade")
     threshold = max(threshold, 4.5)  # safety floor
 
     # Peak pick
@@ -687,12 +680,7 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
     # --- GPD tail threshold with Bonferroni correction + explicit fallback ---
     n_tests = max(int(np.sum(silence > 0.5)), 1)
     phase_non_silent = fused[silence > 0.5]
-    try:
-        threshold = _gpd_threshold(phase_non_silent, n_tests=n_tests, alpha=0.02)
-    except _FitError as e:
-        _diag("WARN", "phase", "gpd_unfit",
-              fallback="conservative_percentile", cause=e.reason, **e.context)
-        threshold = _conservative_threshold(phase_non_silent, n_tests=n_tests, alpha=0.02)
+    threshold = _gpd_or_conservative(phase_non_silent, n_tests, 0.02, "phase")
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -813,10 +801,6 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
 # GPD tail threshold
 # ---------------------------------------------------------------------------
 
-import os as _os
-import sys as _sys
-
-
 # ===== Diagnostic infrastructure =====
 #
 # All degradation paths (fallback thresholds, singular covariance, degenerate
@@ -831,7 +815,7 @@ import sys as _sys
 
 _DIAG_ORDER = {"OFF": 0, "ERROR": 1, "WARN": 2, "INFO": 3}
 _DIAG_LEVEL = _DIAG_ORDER.get(
-    _os.environ.get("OMC_DIAG_LEVEL", "WARN").upper(), _DIAG_ORDER["WARN"]
+    os.environ.get("OMC_DIAG_LEVEL", "WARN").upper(), _DIAG_ORDER["WARN"]
 )
 
 
@@ -846,7 +830,7 @@ def _diag(level: str, component: str, reason: str, **context) -> None:
         return
     ctx = " ".join(f"{k}={v}" for k, v in context.items())
     tail = f" {ctx}" if ctx else ""
-    print(f"DIAG {level}.{component}.{reason}{tail}", file=_sys.stderr)
+    print(f"DIAG {level}.{component}.{reason}{tail}", file=sys.stderr)
 
 
 class _FitError(Exception):
@@ -938,6 +922,22 @@ def _conservative_threshold(scores: np.ndarray, n_tests: int,
     corrected_q = 1.0 - alpha / max(n_tests, 1)
     q = min(max(corrected_q, 0.0), 1.0 - 1e-5)
     return float(np.percentile(scores, q * 100))
+
+
+def _gpd_or_conservative(scores: np.ndarray, n_tests: int, alpha: float,
+                         component: str) -> float:
+    """Try GPD; on _FitError emit DIAG WARN and fall back to Bonferroni percentile.
+
+    Thin caller-side wrapper so _gpd_threshold stays free of I/O and each
+    detector doesn't repeat the same 5-line try/except. The DIAG is still
+    emitted at the call-site layer (via this helper), not inside the fit.
+    """
+    try:
+        return _gpd_threshold(scores, n_tests=n_tests, alpha=alpha)
+    except _FitError as e:
+        _diag("WARN", component, "gpd_unfit",
+              fallback="conservative_percentile", cause=e.reason, **e.context)
+        return _conservative_threshold(scores, n_tests=n_tests, alpha=alpha)
 
 
 # ---------------------------------------------------------------------------
