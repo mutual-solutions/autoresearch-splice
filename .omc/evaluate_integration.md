@@ -18,6 +18,13 @@ further edits anywhere else.
 
 ## Before
 
+**NOTE (2026-04-17): The speech corpora moved.** The hardcoded path in
+`evaluate.py:522` points to the old location (`audio-splice-detector/`);
+the new location is the `corpora/` submodule inside this repo. Until
+this patch is applied, the Korean secondary eval is SILENTLY SKIPPED
+because `os.path.isdir(_speech_dir)` is False. Apply this patch to
+restore the Korean eval (and add English) via `dataset_registry.DATASETS`.
+
 Current block at `evaluate.py:518-542` (roughly):
 
 ```python

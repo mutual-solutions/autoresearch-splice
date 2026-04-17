@@ -18,7 +18,9 @@ from pathlib import Path
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
-_SIBLING_DATA = _PROJECT_ROOT.parent / "audio-splice-detector" / "data"
+# Speech corpora live in the `corpora/` submodule (formerly the sibling
+# audio-splice-detector repo, relocated 2026-04-17).
+_CORPORA_DATA = _PROJECT_ROOT / "corpora" / "data"
 
 
 @dataclass(frozen=True)
@@ -38,13 +40,13 @@ DATASETS: list[Dataset] = [
     ),
     Dataset(
         id="korean",
-        path=_SIBLING_DATA / "korean-splice",
+        path=_CORPORA_DATA / "korean-splice",
         eval_weight=1.0,
         train_weight=1.0,
     ),
     Dataset(
         id="english",
-        path=_SIBLING_DATA / "english-splice",
+        path=_CORPORA_DATA / "english-splice",
         eval_weight=1.0,
         train_weight=1.0,
     ),
