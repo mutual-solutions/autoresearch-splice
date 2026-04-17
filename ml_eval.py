@@ -91,14 +91,11 @@ def _load_korean_splice_patches():
         print("korean_splice_patches: NOT_FOUND (no ground_truth.json)")
         return None, None, None
 
-    # Use cached patches if available
-    if os.path.exists(cache_path):
-        data = np.load(cache_path, allow_pickle=True)
-        patches = data["patches"]
-        labels = data["labels"]
-        file_ids = data["file_ids"]
-        print(f"korean_splice_patches: {len(patches)} cached ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
-        return patches, labels, file_ids
+    # NOTE: caching disabled — patches must reflect CURRENT detector output so
+    # the classifier learns to filter current-detector FPs, not stale ones.
+    # Staleness caused measurement drift: cache generated under one detector
+    # state poisoned classifier training under a later detector state.
+    # See tracer analysis 2026-04-17. Cost of regen: ~15s per eval.
 
     # Generate patches from korean-splice dataset
     from detector import detect_splices
@@ -170,8 +167,7 @@ def _load_korean_splice_patches():
     labels = np.array(all_labels, dtype=int)
     file_ids = np.array(all_file_ids)
 
-    # Cache for next run
-    np.savez(cache_path, patches=patches, labels=labels, file_ids=file_ids)
+    # No caching — see note above. Every eval regenerates from current detector.
     print(f"korean_splice_patches: {len(patches)} generated ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
     return patches, labels, file_ids
 

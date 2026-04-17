@@ -25,3 +25,6 @@ results.tsv
 # Runtime state (must not be git-tracked — git reset --hard wipes tracked files)
 .omc/autoresearch.log
 .omc/autoresearch-stop
+
+# Stale cache (see ml_eval.py note — no longer written, but guard against reappearance)
+.omc/classifier/patches_korean_splice.npz
