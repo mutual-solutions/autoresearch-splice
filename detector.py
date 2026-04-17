@@ -58,7 +58,7 @@ GBM_MIN_SEP_S = 2.5
 # So any OR of these above p99-of-clean lets ≈95% of TPs through while
 # blocking the easiest clean-audio false positives.
 GATE_PHASE_Z_MIN = 1.0
-GATE_T2_Z_MIN = 2.0
+GATE_T2_Z_MIN = 3.0
 GATE_CPE_Z_MIN = 1.0
 GATE_PAIRWISE_MIN = 1.0
 # Enable the gate unless explicitly turned off (evaluate.py --with-gating
