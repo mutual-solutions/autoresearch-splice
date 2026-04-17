@@ -29,74 +29,367 @@ ANALYSIS_WINDOW_S = 60.0
 ANALYSIS_STEP_S = 50.0  # ~17% overlap — W-S=10s still > 5s crossfade margin
 
 
-_DETECT_CACHE: dict = {}  # (bytes-fingerprint, sr, nsamples) -> list[float]
+_DETECT_CACHE: dict = {}
 _DETECT_CACHE_MAX = 512
+
+ANALYSIS_STRIDE_S = 0.2
+# Training class ratio (~45/55 splice/not_splice) is far denser than the
+# ~1:300 splice-per-candidate ratio in real audio, so proba skews high.
+# An aggressive decision threshold compensates for the prior-probability
+# mismatch without retraining.
+GBM_THRESHOLD = 0.985
+# Must exceed evaluate.py's 1.0s tolerance so one real splice cannot inflate
+# into multiple detections when a high-probability plateau spans several
+# adjacent candidates.
+GBM_MIN_SEP_S = 2.5
+
+# --- DSP gating (optional second-stage filter on GBM candidates) ---
+# When enabled, every GBM-accepted candidate t must additionally show at
+# least one elevated DSP score at t. This re-purposes the old DSP
+# detectors (phase, T2, CPE, pairwise) as cheap-to-compute gates — they
+# run for free once `_build_chunk_context` has already populated the
+# curves. Thresholds are loose by design: the GBM has already decided
+# "splice-like", so the gate only needs to reject positions with *no*
+# DSP signal at all (typical of clean-audio false positives).
+#
+# Calibration (measured 2026-04-18):
+#   TP positions:  t2_z median 8.3, pairwise median 5.3
+#   Clean-random:  t2_z p90 1.4,   pairwise p90 0.07
+# So any OR of these above p99-of-clean lets ≈95% of TPs through while
+# blocking the easiest clean-audio false positives.
+GATE_PHASE_Z_MIN = 1.0
+GATE_T2_Z_MIN = 2.0
+GATE_CPE_Z_MIN = 1.0
+GATE_PAIRWISE_MIN = 1.0
+# Enable the gate unless explicitly turned off (evaluate.py --with-gating
+# path). Toggle via env var so we can A/B without editing the protected
+# evaluate.py: OMC_SPLICE_GATING="0" disables, "1" enables, anything else
+# falls back to the default.
+GATING_DEFAULT = True
+_GATING_ENV = os.environ.get("OMC_SPLICE_GATING")
+if _GATING_ENV in ("0", "false", "no"):
+    GATING_ENABLED = False
+elif _GATING_ENV in ("1", "true", "yes"):
+    GATING_ENABLED = True
+else:
+    GATING_ENABLED = GATING_DEFAULT
+
+_GBM_MODEL_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    ".omc", "classifier", "fp_classifier.joblib",
+)
+
+_GBM_BUNDLE: dict | None = None
+_GBM_BUNDLE_UNAVAILABLE = False
+
+# Per-file SHAP-sidecar inputs, keyed by _cache_key.
+_DETECT_META: dict = {}
 
 
 def _cache_key(audio: np.ndarray, sr: int):
-    """Cheap fingerprint: first + last 4KB of raw bytes, plus length and sr.
-    Distinct audios can't collide given differing length or content at edges;
-    identical audios hit every time.
+    """Audio fingerprint + classifier mtime. The mtime clause makes retrains
+    invalidate the cache automatically.
     """
     b = audio.tobytes()
     head = b[:4096]
     tail = b[-4096:] if len(b) > 4096 else b""
-    return (hash(head), hash(tail), int(sr), len(audio))
+    try:
+        model_mtime = int(os.path.getmtime(_GBM_MODEL_PATH) * 1000)
+    except OSError:
+        model_mtime = 0
+    return (hash(head), hash(tail), int(sr), len(audio), model_mtime)
+
+
+def _chunk_starts(n: int, sr: int) -> list[int]:
+    """Sliding-window start samples. Always includes a tail chunk that
+    reaches the end of the audio when the file doesn't divide evenly.
+    """
+    W = int(ANALYSIS_WINDOW_S * sr)
+    S = int(ANALYSIS_STEP_S * sr)
+    if n <= W:
+        return [0]
+    starts = list(range(0, n - W + 1, S))
+    if starts[-1] + W < n:
+        starts.append(n - W)
+    return starts
+
+
+def _load_gbm_bundle() -> dict | None:
+    """Load the multi-class GBM bundle once per process.
+
+    Accepts either the current on-disk format — a raw sklearn Pipeline
+    alongside fp_classifier.meta.json — or the historical dict bundle.
+    Binary / legacy classifiers (classes != multi-class) are rejected so
+    the detector cleanly falls back to the DSP path.
+    """
+    global _GBM_BUNDLE, _GBM_BUNDLE_UNAVAILABLE
+    if _GBM_BUNDLE is not None:
+        return _GBM_BUNDLE
+    if _GBM_BUNDLE_UNAVAILABLE:
+        return None
+    if not os.path.exists(_GBM_MODEL_PATH):
+        _diag("INFO", "gbm", "model_missing", path=_GBM_MODEL_PATH)
+        _GBM_BUNDLE_UNAVAILABLE = True
+        return None
+
+    import json as _json
+    try:
+        import joblib
+        model = joblib.load(_GBM_MODEL_PATH)
+    except Exception as e:
+        _diag("WARN", "gbm", "load_failed",
+              path=_GBM_MODEL_PATH, error=str(e))
+        _GBM_BUNDLE_UNAVAILABLE = True
+        return None
+
+    if isinstance(model, dict):
+        model = model.get("model")
+        if model is None:
+            _diag("INFO", "gbm", "legacy_dict_missing_model",
+                  path=_GBM_MODEL_PATH)
+            _GBM_BUNDLE_UNAVAILABLE = True
+            return None
+
+    meta_path = os.path.splitext(_GBM_MODEL_PATH)[0] + ".meta.json"
+    meta: dict = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path) as f:
+                meta = _json.load(f)
+        except Exception as e:
+            _diag("WARN", "gbm", "meta_load_failed",
+                  path=meta_path, error=str(e))
+
+    try:
+        clf = model.named_steps["clf"] if hasattr(model, "named_steps") else model
+        classes = [int(c) for c in clf.classes_]
+    except Exception:
+        classes = []
+    if not classes or 0 not in classes or not any(c in classes for c in (1, 2)):
+        _diag("INFO", "gbm", "legacy_bundle_ignored",
+              path=_GBM_MODEL_PATH, classes=str(classes),
+              hint="retrain via .omc/classifier/train_classifier.py for 3-class")
+        _GBM_BUNDLE_UNAVAILABLE = True
+        return None
+
+    _GBM_BUNDLE = {
+        "model": model,
+        "feature_names": meta.get("feature_names"),
+        "label_names": meta.get("label_names",
+                                ["not_splice", "hard_cut", "crossfade"]),
+        "classes_": meta.get("classes_", classes),
+    }
+    return _GBM_BUNDLE
 
 
 def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     """Length-agnostic splice detector.
 
-    Slides a fixed W=ANALYSIS_WINDOW_S chunk across the audio at step
-    ANALYSIS_STEP_S, runs all detectors inside each chunk, and merges
-    detections with chunk-relative times offset to file-level times.
-    Dedupe within 1s over the union keeps boundary splices from
-    double-counting.
-
-    Results are memoized by audio fingerprint so that evaluate.py's
-    secondary eval and ml_eval.py's classifier-patch extraction don't
-    re-run the detector on the same underlying file.
+    Runs a dense GBM scan at ANALYSIS_STRIDE_S when a multi-class classifier
+    is loaded; otherwise falls back to the legacy DSP pipeline so this entry
+    point keeps working for `eval_by_regime.py` and when the classifier has
+    not been trained yet. Results are memoized by audio fingerprint.
     """
     key = _cache_key(audio, sr)
     if key in _DETECT_CACHE:
         return list(_DETECT_CACHE[key])
 
-    W = int(ANALYSIS_WINDOW_S * sr)
-    S = int(ANALYSIS_STEP_S * sr)
-    n = len(audio)
-
-    if n <= W:
-        starts = [0]
+    bundle = _load_gbm_bundle()
+    if bundle is None:
+        merged = _dsp_detect_splices(audio, sr)
     else:
-        starts = list(range(0, n - W + 1, S))
-        # Tail window: make sure the last chunk reaches the end of the file.
-        if starts[-1] + W < n:
-            starts.append(n - W)
+        merged = _gbm_detect_splices(audio, sr, bundle, key=key)
 
-    all_hits: list[float] = []
-    min_chunk = int(5 * sr)  # below this, no detector can fit a window
-    for start in starts:
+    if len(_DETECT_CACHE) < _DETECT_CACHE_MAX:
+        _DETECT_CACHE[key] = list(merged)
+    return merged
+
+
+def _iter_chunks(audio: np.ndarray, sr: int):
+    """Yield (start_samples, offset_s, chunk) for each sliding window; skips
+    chunks shorter than 5s with a DIAG INFO.
+    """
+    min_chunk = int(5 * sr)
+    W = int(ANALYSIS_WINDOW_S * sr)
+    for start in _chunk_starts(len(audio), sr):
         chunk = audio[start:start + W]
         if len(chunk) < min_chunk:
             _diag("INFO", "slider", "chunk_too_small",
                   start=f"{start/sr:.1f}", samples=len(chunk), min=min_chunk)
             continue
-        offset_s = start / sr
+        yield start, start / sr, chunk
+
+
+def _gbm_detect_splices(
+    audio: np.ndarray, sr: int, bundle: dict, key: tuple,
+) -> list[float]:
+    """Dense GBM scan at ANALYSIS_STRIDE_S; see `detect_splices`."""
+    import time as _time
+    from features import FEATURE_NAMES as _FN, extract_features
+
+    model = bundle["model"]
+    feature_names = bundle.get("feature_names") or _FN
+    label_names = bundle.get("label_names") or ["not_splice", "hard_cut", "crossfade"]
+
+    def _label(i: int) -> str:
+        return label_names[i] if 0 <= i < len(label_names) else f"class_{i}"
+
+    scan_total = 0
+    all_emits: list[tuple[float, int, float, list[float]]] = []
+    n_chunks = 0
+    t_ctx_sum = 0.0
+    t_feat_sum = 0.0
+    t_pred_sum = 0.0
+    t_gate_sum = 0.0
+    gate_rej_total = 0
+    gbm_emit_total = 0
+
+    file_t0 = _time.perf_counter()
+
+    for _start, offset_s, chunk in _iter_chunks(audio, sr):
+        n_chunks += 1
+        t0 = _time.perf_counter()
+        try:
+            ctx = _build_chunk_context(chunk, sr)
+        except Exception as e:
+            _diag("WARN", "gbm", "ctx_build_failed",
+                  start=f"{offset_s:.2f}", error=str(e))
+            continue
+        t_ctx = _time.perf_counter() - t0
+        t_ctx_sum += t_ctx
+
+        chunk_dur_s = len(chunk) / sr
+        t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S, dtype=np.float64)
+        if len(t_grid) == 0:
+            continue
+
+        t0 = _time.perf_counter()
+        rows: list[list[float]] = []
+        for t_local in t_grid:
+            feats = extract_features(chunk, sr, float(t_local), chunk_ctx=ctx)
+            rows.append([feats[k] for k in feature_names])
+        X = np.asarray(rows, dtype=np.float64)
+        t_feat = _time.perf_counter() - t0
+        t_feat_sum += t_feat
+
+        t0 = _time.perf_counter()
+        try:
+            proba = model.predict_proba(X)
+        except Exception as e:
+            _diag("WARN", "gbm", "predict_failed",
+                  start=f"{offset_s:.2f}", error=str(e))
+            continue
+        t_pred = _time.perf_counter() - t0
+        t_pred_sum += t_pred
+
+        clf = model.named_steps["clf"] if hasattr(model, "named_steps") else model
+        col_for = {int(c): i for i, c in enumerate(clf.classes_)}
+        splice_cols = [(c, col_for[c]) for c in (1, 2) if c in col_for]
+        if not splice_cols:
+            continue
+        p_splice = 1.0 - proba[:, col_for.get(0, 0)]
+        scan_total += len(t_grid)
+
+        hit_mask = p_splice > GBM_THRESHOLD
+        gbm_emit_count = int(hit_mask.sum())
+        gbm_emit_total += gbm_emit_count
+
+        t0 = _time.perf_counter()
+        gated_out = 0
+        for i in np.flatnonzero(hit_mask):
+            t_local = float(t_grid[i])
+            if GATING_ENABLED and not _dsp_gate_pass(ctx, t_local):
+                gated_out += 1
+                _diag("INFO", "gate", "rejected",
+                      t=f"{offset_s + t_local:.2f}",
+                      p_splice=f"{p_splice[i]:.3f}",
+                      phase=f"{phase_z_at(ctx, t_local):.2f}",
+                      t2=f"{t2_z_at(ctx, t_local):.2f}",
+                      cpe=f"{cpe_z_at(ctx, t_local):.2f}",
+                      pw=f"{pairwise_proximity_at(ctx, t_local):.2f}")
+                continue
+            label_id, _col = max(splice_cols, key=lambda sc: proba[i, sc[1]])
+            all_emits.append((
+                float(offset_s + t_local),
+                int(label_id),
+                float(p_splice[i]),
+                X[i].tolist(),
+            ))
+        t_gate_sum += _time.perf_counter() - t0
+        gate_rej_total += gated_out
+
+        _diag("INFO", "gbm", "chunk_scan_done",
+              start=f"{offset_s:.2f}",
+              scan_count=len(t_grid),
+              gbm_emit=gbm_emit_count,
+              gated_out=gated_out,
+              post_gate=gbm_emit_count - gated_out,
+              gating=("on" if GATING_ENABLED else "off"),
+              t_ctx_ms=int(t_ctx * 1000),
+              t_feat_ms=int(t_feat * 1000),
+              t_pred_ms=int(t_pred * 1000))
+
+    _diag("INFO", "gbm", "file_summary",
+          chunks=n_chunks,
+          scan_total=scan_total,
+          gbm_emit_total=gbm_emit_total,
+          gate_rej_total=gate_rej_total,
+          post_gate=gbm_emit_total - gate_rej_total,
+          t_ctx_total_ms=int(t_ctx_sum * 1000),
+          t_feat_total_ms=int(t_feat_sum * 1000),
+          t_pred_total_ms=int(t_pred_sum * 1000),
+          t_gate_total_ms=int(t_gate_sum * 1000),
+          t_wall_ms=int((_time.perf_counter() - file_t0) * 1000))
+
+    _diag("INFO", "gbm", "scan_summary",
+          scan_total=scan_total, emit_total=len(all_emits), chunks=n_chunks)
+
+    # Greedy dedupe: pick highest-probability emissions first, suppress any
+    # other emission within GBM_MIN_SEP_S.
+    all_emits.sort(key=lambda e: -e[2])
+    selected: list[tuple[float, int, float, list[float]]] = []
+    for emit in all_emits:
+        if all(abs(emit[0] - s[0]) >= GBM_MIN_SEP_S for s in selected):
+            selected.append(emit)
+    selected.sort(key=lambda e: e[0])
+
+    _DETECT_META[key] = [
+        {
+            "time_sec": t,
+            "label_id": label_id,
+            "label": _label(label_id),
+            "probability": p,
+            "feature_vector": feats_vec,
+            "feature_names": list(feature_names),
+        }
+        for (t, label_id, p, feats_vec) in selected
+    ]
+
+    return [t for (t, _, _, _) in selected]
+
+
+def _dsp_detect_splices(audio: np.ndarray, sr: int) -> list[float]:
+    """Legacy DSP pipeline — fallback when the GBM bundle is unavailable
+    and regression path used by `eval_by_regime.py`.
+    """
+    all_hits: list[float] = []
+    for _start, offset_s, chunk in _iter_chunks(audio, sr):
         for t in _detect_in_chunk(chunk, sr):
             all_hits.append(offset_s + t)
 
-    # Dedupe within 1s
     all_hits.sort()
     merged: list[float] = []
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
-
-    # FP filtering is handled by ml_eval.py's OOF pipeline (via evaluate.py --with-classifier).
-    # Do NOT filter here — it would double-filter and prevent ml_eval from seeing raw DSP output.
-    if len(_DETECT_CACHE) < _DETECT_CACHE_MAX:
-        _DETECT_CACHE[key] = list(merged)
     return merged
+
+
+def get_detection_meta(audio: np.ndarray, sr: int) -> list[dict]:
+    """Per-detection SHAP-sidecar payload from the most recent GBM scan of
+    this audio. Empty list when the detector ran in DSP-fallback mode.
+    """
+    return list(_DETECT_META.get(_cache_key(audio, sr), []))
 
 
 def _detect_in_chunk(chunk: np.ndarray, sr: int) -> list[float]:
@@ -858,18 +1151,49 @@ _DIAG_LEVEL = _DIAG_ORDER.get(
 )
 
 
-def _diag(level: str, component: str, reason: str, **context) -> None:
-    """Emit a structured diagnostic line to stderr.
+_DEBUG_LOG_PATH = os.environ.get(
+    "OMC_DIAG_FILE",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                 ".omc", "autoresearch-debug.log"),
+)
+_DEBUG_LOG_FP = None  # lazy-opened on first emit
 
-    Silenced when this call's level exceeds OMC_DIAG_LEVEL (default WARN).
-    Stderr keeps stdout clean for evaluate.py's metric parsers.
+
+def _debug_log_write(line: str) -> None:
+    """Append a DIAG line to the forensic debug log (best-effort).
+
+    The forensic sink captures every DIAG regardless of OMC_DIAG_LEVEL so
+    autoresearch iterations can be diffed later. Stderr filtering still
+    applies to the user-visible stream so evaluate.py output stays clean.
+    Set OMC_DIAG_FILE="" to disable the sink entirely.
     """
-    # Unknown levels (typos) fall through as ERROR-visible so bugs surface.
-    if _DIAG_ORDER.get(level, _DIAG_ORDER["ERROR"]) > _DIAG_LEVEL:
+    global _DEBUG_LOG_FP
+    if not _DEBUG_LOG_PATH:
         return
+    try:
+        if _DEBUG_LOG_FP is None:
+            os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
+            _DEBUG_LOG_FP = open(_DEBUG_LOG_PATH, "a", buffering=1)
+        _DEBUG_LOG_FP.write(line + "\n")
+    except OSError:
+        # If disk write fails (read-only fs, quota), silently skip; don't
+        # break the detector over a log file.
+        pass
+
+
+def _diag(level: str, component: str, reason: str, **context) -> None:
+    """Emit a structured diagnostic line to stderr (level-filtered) and,
+    unconditionally, to `.omc/autoresearch-debug.log` for post-hoc forensics.
+    """
     ctx = " ".join(f"{k}={v}" for k, v in context.items())
     tail = f" {ctx}" if ctx else ""
-    print(f"DIAG {level}.{component}.{reason}{tail}", file=sys.stderr)
+    line = f"DIAG {level}.{component}.{reason}{tail}"
+    # Forensic sink: record every DIAG regardless of OMC_DIAG_LEVEL.
+    _debug_log_write(line)
+    # Stderr: respect the filter so the evaluate.py output stays clean.
+    if _DIAG_ORDER.get(level, _DIAG_ORDER["ERROR"]) > _DIAG_LEVEL:
+        return
+    print(line, file=sys.stderr)
 
 
 class _FitError(Exception):
@@ -1226,6 +1550,24 @@ def pairwise_proximity_at(ctx: dict, t_sec: float) -> float:
         return 0.0
     sigma_s = 2.5
     return float(pw_score * np.exp(-0.5 * ((t_sec - pw_time) / sigma_s) ** 2))
+
+
+def _dsp_gate_pass(ctx: dict, t_sec: float) -> bool:
+    """OR-gate: any elevated DSP score at t_sec confirms the GBM candidate.
+
+    Using OR (not AND) because no single DSP signal is reliable across all
+    splice types — phase discontinuity fires for hard cuts, T² fires for
+    crossfades, pairwise fires for block-structure changes, CPE for
+    amplitude+phase joint events. Requiring even one of them to exceed a
+    loose threshold rejects positions with zero acoustic discontinuity
+    signal (typical clean-audio false positives) while preserving recall.
+    """
+    return (
+        phase_z_at(ctx, t_sec) >= GATE_PHASE_Z_MIN
+        or t2_z_at(ctx, t_sec) >= GATE_T2_Z_MIN
+        or cpe_z_at(ctx, t_sec) >= GATE_CPE_Z_MIN
+        or pairwise_proximity_at(ctx, t_sec) >= GATE_PAIRWISE_MIN
+    )
 
 
 def _load_wav(path: str) -> tuple[np.ndarray, int]:

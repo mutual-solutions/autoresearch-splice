@@ -46,26 +46,45 @@ run_loop() {
 
         iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
-Read program.md for full instructions, then execute exactly ONE experiment iteration:
-1. Check git state and read detector.py, ml_config.py, and results.tsv
-2. Form a hypothesis to improve combined score. You can:
-   - Tune DSP parameters in detector.py (thresholds, algorithms, features)
-   - Tune ML classifier parameters in ml_config.py (n_estimators, max_depth, OOF_THRESHOLD, etc.)
-   - Combine both DSP and ML changes in one hypothesis
+ARCHITECTURE NOTE (2026-04-18): detect_splices now runs GBM-first dense scan.
+  - PRIMARY tunables (instant, no retrain) — all live in detector.py:
+      GBM_THRESHOLD         current 0.985  — P(splice)>thr is an emit; higher = fewer FP
+      GBM_MIN_SEP_S         current 2.5    — dedupe distance for adjacent emits
+      ANALYSIS_STRIDE_S     current 0.2    — dense-scan stride (smaller = denser, slower)
+      GATE_PHASE_Z_MIN      current 1.0    — OR-gate on phase z-score
+      GATE_T2_Z_MIN         current 2.0    — OR-gate on T² z-score
+      GATE_CPE_Z_MIN        current 1.0    — OR-gate on CPE z-score
+      GATE_PAIRWISE_MIN     current 1.0    — OR-gate on pairwise proximity
+      GATING_DEFAULT        current True   — master gating switch
+  - RETRAIN-required tunables (slower, ~3-5 min each) — .omc/classifier/train_classifier.py:
+      make_pipeline() GradientBoostingClassifier hyperparams (n_estimators, max_depth,
+      learning_rate, subsample). After edits run: uv run python .omc/classifier/train_classifier.py
+  - Feature engineering: edit features.py (extend FEATURE_NAMES). Requires retrain.
+  - DO NOT tune ml_config.py — its params only drive the LEGACY binary OOF path
+    which is DEAD when the multi-class bundle is loaded. Edits have ZERO effect on combined.
+  - DO NOT tune the _detect_phase / _detect_crossfade / _detect_cpe / _detect_pairwise
+    internal thresholds — those functions are only called in the DSP-fallback path
+    (classifier missing) which is not exercised by evaluate.py on this machine.
+
+Read program.md for the overall goal, then execute exactly ONE experiment iteration:
+1. Check git state and read results.tsv to see recent history.
+2. Form a hypothesis to improve combined. Prefer PRIMARY tunables (instant loop).
+   Touch RETRAIN tunables only when the primary knob space feels exhausted.
 
    CRITICAL: Do NOT repeat hypotheses that have already been tried and failed.
    RECENT FAILED HYPOTHESES (last 30):
 ${recent_failures:-  (none yet)}
 
-   If your idea matches any of the above, pick a DIFFERENT one. Do not re-test failures.
-3. Edit detector.py and/or ml_config.py with the smallest viable change
-4. git commit -m \"hypothesis: <one-line description of the change>\"
+   If your idea matches any of the above, pick a DIFFERENT one.
+3. Edit detector.py (or features.py / train_classifier.py if retraining) with the
+   smallest viable change. If retraining, also run train_classifier.py in this step.
+4. git commit -m \"hypothesis: <one-line description>\"
 5. Run: uv run python evaluate.py --with-classifier
-6. Parse combined score from the LAST 'combined:' line in output (this is combined_full when classifier runs)
-7. If combined > previous best: print RESULT:keep-pending
-8. If combined <= previous best: git reset --hard HEAD~1, print RESULT:discard
-9. Do NOT run verify_agent.py yourself. The shell wrapper handles verification.
-10. The shell wrapper logs to results.tsv automatically — do NOT write to results.tsv yourself.
+6. Parse combined score from the LAST 'combined:' line in the output.
+7. If combined > previous best (strictly):      print RESULT:keep-pending
+   If combined <= previous best:                 git reset --hard HEAD~1 ; print RESULT:discard
+8. Do NOT run verify_agent.py yourself — the wrapper handles it.
+9. Do NOT write to results.tsv — the wrapper handles it.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \

@@ -1,12 +1,9 @@
-"""
-ML evaluation helper for evaluate.py --with-classifier.
+"""ML evaluation helper for evaluate.py --with-classifier.
 
-Runs GradientBoosting classifier pipeline in-loop:
-1. Load pre-generated patches (singing + Korean) as base training data
-2. Generate eval-set patches on-the-fly from DSP detections
-3. Train with pre-generated + eval-set patches, OOF predictions for eval-set only
-4. Filter detections using OOF predictions (no train-on-test)
-5. Compute combined_full from filtered results (always — no quality gate)
+Two modes: GBM-in-detector (just writes SHAP sidecars and echoes combined),
+and legacy binary OOF (patches_combined/ + eval-set patches → GroupKFold
+OOF filter over DSP detections). The mode is picked by whether
+detector._load_gbm_bundle() returns a multi-class bundle.
 """
 
 import json
@@ -183,12 +180,56 @@ def _load_speech_splice_patches(splice_dir: str, tag: str):
     return patches, labels, file_ids
 
 
+def _gbm_mode_reports(dsp_results, data_dir, bundle):
+    """SHAP sidecar mode. The detector already filtered via predict_proba,
+    so combined_full == dsp_combined; we just write one report per detection.
+    """
+    from detector import get_detection_meta
+    from shap_report import write_reports
+
+    model = bundle["model"]
+    feature_names = bundle.get("feature_names")
+    reports_root = os.path.join(_proj, "reports",
+                                os.path.basename(os.path.normpath(data_dir)))
+    os.makedirs(reports_root, exist_ok=True)
+
+    total_reports = 0
+    for pf in dsp_results["per_file"]:
+        audio, sr = sf.read(pf["path"], dtype="float32", always_2d=False)
+        if audio.ndim == 2:
+            audio = audio.mean(axis=1)
+        meta = get_detection_meta(audio, sr)
+        if not meta:
+            continue
+        total_reports += write_reports(
+            meta, reports_root, pf["name"], model, feature_names,
+        )
+
+    combined_full = dsp_results["combined"]
+    print("classifier_quality: OK_GBM")
+    print("classifier_mode: gbm_in_detector")
+    print(f"reports_written: {total_reports}")
+    print(f"combined_full: {combined_full:.6f}")
+
+    return {
+        "classifier_quality": "OK_GBM",
+        "combined_full": combined_full,
+        "reports_written": total_reports,
+        "classifier_mode": "gbm_in_detector",
+    }
+
+
 def evaluate_with_classifier(dsp_results, data_dir):
     """Run classifier pipeline on DSP results, return ML-augmented metrics.
 
-    Training data = pre-generated patches (training-only) + eval-set patches (OOF).
-    Pre-generated patches are always in the training fold (never tested on).
-    Eval-set patches get OOF predictions via GroupKFold.
+    Two modes:
+      - GBM mode (US-305/307): when a multi-class bundle is loaded by
+        `detector._load_gbm_bundle()`, the detections in `dsp_results`
+        are already GBM-filtered. This function writes per-detection
+        SHAP reports and reports combined_full = combined (no re-filter).
+      - Legacy OOF mode: when the bundle is missing or the old binary
+        Pipeline is present, fall back to the original OOF binary filter
+        over pre-generated + eval-set patches.
     """
     dsp_clean_fp = dsp_results["clean_fp"]
     dsp_combined = dsp_results["combined"]
@@ -197,6 +238,12 @@ def evaluate_with_classifier(dsp_results, data_dir):
 
     print(f"combined_dsp: {dsp_combined:.6f}")
     print(f"dsp_clean_fp: {dsp_clean_fp}")
+
+    # --- GBM short-circuit: detector already filtered via predict_proba ---
+    from detector import _load_gbm_bundle, get_detection_meta
+    bundle = _load_gbm_bundle()
+    if bundle is not None:
+        return _gbm_mode_reports(dsp_results, data_dir, bundle)
 
     # --- FP bound check ---
     if dsp_clean_fp > DSP_FP_BOUND:

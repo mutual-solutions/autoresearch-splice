@@ -41,3 +41,34 @@ crossfade T²; its effective threshold is the conservative Bonferroni
 percentile from _conservative_threshold on short files. If crossfade
 T² performance is ever to improve, the fix is to increase test-point
 density (smaller hop_s or smaller compare_window_s), not to tune GPD α.
+
+## Phase 1 GBM-first detector (2026-04-17)
+US-300..US-308 complete. detect_splices now runs a dense GBM scan at
+0.2s stride inside each analysis chunk and keeps the DSP-first pipeline
+as a fallback when the classifier is missing. End-to-end metrics:
+
+- combined: 0.785316  (+0.066 over binary baseline 0.719)
+- splice_f1: 0.835, clean_score: 0.940, precision 0.85, recall 0.82
+- dsp_clean_fp: 3 (bound 15)
+- elapsed: 149s / 240s budget
+- classifier OOF weighted F1: 0.7045 (US-304 ≥0.70 target met)
+
+Key design choices worth remembering for Phase 2:
+
+- features.py swapped librosa.pyin → librosa.yin + rms-derived voicing.
+  pyin dominated at 8.4s / 60s chunk; yin is 0.25s. Full warm-up now
+  ~1.7s so a 300-candidate dense scan runs well under the budget.
+- Training class ratio is ~55/45 not_splice/splice, but the eval-time
+  candidate density at 0.2s stride makes the effective ratio ~300:1.
+  Decision threshold 0.985 compensates without retraining; next phase
+  should rebalance via sample_weight and recalibrate.
+- Model bundle stored as raw sklearn Pipeline in fp_classifier.joblib
+  plus a sibling fp_classifier.meta.json holding FEATURE_NAMES /
+  label_names / classes_, so callers can do
+  `joblib.load(...).predict_proba(X)` per the US-304 contract and still
+  read metadata when needed.
+- Cache key now includes classifier file mtime so retrains invalidate
+  the per-file detection cache automatically.
+- SHAP sidecars land under reports/<data_dir_basename>/; the top_features
+  list always includes the 4 DSP scores even when they aren't in the
+  top-k by |shap|, so the forensic context is preserved.

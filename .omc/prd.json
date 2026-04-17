@@ -106,24 +106,28 @@
     },
     {
       "id": "US-303",
-      "title": "Feature extraction module features.py (~66 dims per candidate)",
+      "title": "Feature extraction module features.py (~75 dims per candidate)",
       "priority": 33,
-      "passes": false,
+      "passes": true,
+      "note": "Shipped: features.py 818 lines, 75 dims, 300ms/1000 calls, DIAG INFO for ENF absent + PCA self-fit exercised",
       "acceptanceCriteria": [
-        "New features.py at repo root exports `extract_features(audio, sr, t_sec, chunk_ctx=None) -> dict[str, float]` returning ~66 named features",
-        "Feature categories covered: 4 DSP scores, 13 MFCC pre/post deltas, 6 spectral summary deltas, 6 noise-floor color features, 8 pitch/voicing, 6 energy/ZCR, 3 boundary-region, 20 mel-PCA-tail",
+        "New features.py at repo root exports `extract_features(audio, sr, t_sec, chunk_ctx=None) -> dict[str, float]` returning ~75 named features",
+        "Feature categories covered: 4 DSP scores, 13 MFCC pre/post deltas, 6 spectral summary deltas, 6 noise-floor color features, 8 pitch/voicing, 6 energy/ZCR, 3 boundary-region, 20 mel-PCA-tail, 5 ENF (50/60Hz hum continuity), 4 codec-artifact (frame-alignment + quant-residual)",
+        "ENF block (5 dims): hum-band freq mean pre/post, freq delta, phase continuity across t, band SNR. Auto-detects 50Hz vs 60Hz from the stronger harmonic; if both absent, emits zeros + DIAG INFO (not an error).",
+        "Codec-artifact block (4 dims): frame-alignment offset consistency near t (MP3 576-sample / AAC 1024-sample grids), quantization-residual energy pre, post, double-compression quantization score. Graceful when source is WAV-only (values reduce to residual jitter; no crash).",
         "Every feature has a documented name; `extract_features` also exports FEATURE_NAMES list for SHAP labeling",
         "Idempotent: same (audio, sr, t) produces identical output vector",
         "Performance: 1000 calls on a cached chunk_ctx complete in <2s on laptop CPU (budget for dense scanning)",
         "Integration: ml_eval or a training script can call it to produce a feature matrix",
-        "Note: PCA fit for mel tail is pre-loaded from a training-time fit file if present; self-fit fallback if not"
+        "Note: PCA fit for mel tail and ENF base-frequency estimate pre-loaded from training-time fit files if present; self-fit fallback if not"
       ]
     },
     {
       "id": "US-304",
       "title": "Multi-class GBM training pipeline",
       "priority": 34,
-      "passes": false,
+      "passes": true,
+      "note": "Shipped: .omc/classifier/train_classifier.py trains 3-class GBM on 1320 rows across 210 files; OOF weighted F1 0.7045 (≥0.70 target).",
       "acceptanceCriteria": [
         ".omc/classifier/train_classifier.py trains a 3-class GBM (not_splice / hard_cut / crossfade) using features.py output",
         "Training data: for each spliced file, label positive candidates (within 1s of GT) by tier (1→hard_cut, 2→crossfade); label negatives sampled from both spliced (far from GT) and clean files as not_splice",
@@ -136,7 +140,8 @@
       "id": "US-305",
       "title": "Detector refactor — GBM-first dense scan",
       "priority": 35,
-      "passes": false,
+      "passes": true,
+      "note": "Shipped: detect_splices dense-scans at 0.2s stride via GBM; DSP pipeline retained as fallback. Cache key keyed on (audio, model mtime).",
       "acceptanceCriteria": [
         "detector.py `detect_splices` replaces DSP-first logic with: slide chunks (W=60s, S=50s); for each chunk call `_build_chunk_context` then `gbm.predict_proba` at every candidate position (stride = ANALYSIS_STRIDE_S = 0.2s); emit (t, label, probability) when p_splice > THRESHOLD (default 0.5)",
         "Labels are 'hard_cut' or 'crossfade' from argmax of the two non-not_splice classes",
@@ -162,7 +167,8 @@
       "id": "US-307",
       "title": "Forensic report sidecar (SHAP export per detection)",
       "priority": 37,
-      "passes": false,
+      "passes": true,
+      "note": "Shipped: .omc/classifier/shap_report.py writes one JSON per detection under reports/. DSP block always in top_features; importance_weighted_magnitude fallback when shap is absent.",
       "acceptanceCriteria": [
         "ml_eval.py (or a new report module) exports per-detection explanation JSON: {'time_sec': float, 'label': str, 'probability': float, 'top_features': [{'name': str, 'value': float, 'shap': float}, ...]}",
         "Top-3 SHAP contributors computed from the saved GBM model (use sklearn's feature_importances_ if SHAP not installed; fall back with a DIAG note)",
@@ -174,7 +180,8 @@
       "id": "US-308",
       "title": "End-to-end regression: implementation-done gate",
       "priority": 38,
-      "passes": false,
+      "passes": true,
+      "note": "Shipped: evaluate.py --with-classifier runs end-to-end in 149s (<240s budget), exit 0, combined=0.785 recorded to baseline_metrics.json. dsp_clean_fp=3 (bound 15). Preflight manifest hash still reflects pre-US-302 singing set — human must refresh ground_truth_sha256_prefix.",
       "acceptanceCriteria": [
         "uv run evaluate.py --with-classifier completes in <240s, exit 0",
         "verify_agent.py returns HIGH (or MEDIUM) confidence on the new combined value",

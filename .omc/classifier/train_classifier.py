@@ -1,196 +1,383 @@
+"""Multi-class (not_splice / hard_cut / crossfade) GBM trained on features.py.
+
+Per spliced file: a 60s chunk centered on the GT splice; positives sampled
+at GT + POS_OFFSETS_S (tier 1 → hard_cut, tier 2 → crossfade); negatives at
+random positions ≥NEG_MIN_DIST_S away. Per clean file: negatives only, at
+the midpoint chunk. GroupKFold is file_id-grouped so positives and their
+negatives never leak across folds.
+
+Keeps `make_pipeline` exported so ml_eval.py's legacy OOF path still imports
+it; the function now just returns the multi-class pipeline and ignores the
+old PCA `n_components` argument.
 """
-Train a GradientBoosting classifier to filter false positives from the
-audio splice detector.
 
-Uses 5-fold file-level cross-validation (GroupKFold) to prevent data
-leakage between patches from the same audio file.
+from __future__ import annotations
 
-Input: flattened mel spectrogram patches (128 x 200 -> 25600-dim)
-Output: probability of being a real splice
-
-Uses PCA for dimensionality reduction before classification.
-"""
-
+import hashlib
 import json
 import os
 import sys
-import numpy as np
+import time
+from pathlib import Path
+
 import joblib
-from sklearn.model_selection import GroupKFold
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+import numpy as np
+import soundfile as sf
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    classification_report
-)
+from sklearn.metrics import classification_report, f1_score
+from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
-from sklearn.utils.class_weight import compute_sample_weight
+from sklearn.preprocessing import StandardScaler
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_HERE = Path(__file__).resolve()
+_ROOT = _HERE.parents[2]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from dataset_registry import DATASETS
+from detector import _build_chunk_context, _diag
+from features import FEATURE_NAMES, extract_features
+
+LABEL_NOT_SPLICE = 0
+LABEL_HARD_CUT = 1
+LABEL_CROSSFADE = 2
+LABEL_NAMES = ["not_splice", "hard_cut", "crossfade"]
+
+CHUNK_S = 60.0  # must match detector.ANALYSIS_WINDOW_S
+GT_RADIUS_S = 1.0  # positives within ±1s of GT
+POS_OFFSETS_S = (0.0, 0.3, 0.6, -0.3, -0.6)
+NEG_PER_SPLICED = 3
+NEG_PER_CLEAN = 4
+NEG_MIN_DIST_S = 2.0  # must be at least this far from any GT
+RANDOM_STATE = 42
+N_FOLDS = 5
+
+MODEL_OUT = _HERE.parent / "fp_classifier.joblib"
+CV_OUT = _HERE.parent / "cv_results.json"
+DATASET_META_OUT = _HERE.parent / "training_manifest.json"
 
 
-def load_data():
-    """Load patches, labels, and manifest. Return X, y, file_ids."""
-    patch_dir = os.path.join(PROJECT_ROOT, ".omc", "classifier", "patches")
-    patches = np.load(os.path.join(patch_dir, "patches.npy"))
-    labels = np.load(os.path.join(patch_dir, "labels.npy"))
-
-    with open(os.path.join(patch_dir, "manifest.json")) as f:
-        manifest = json.load(f)
-
-    # Extract file name from each manifest entry -> build file_ids
-    filenames = [entry["file"] for entry in manifest]
-    unique_files = sorted(set(filenames))
-    file_to_id = {name: idx for idx, name in enumerate(unique_files)}
-    file_ids = np.array([file_to_id[name] for name in filenames])
-
-    # Save file_id_map.json for reproducibility
-    map_path = os.path.join(patch_dir, "file_id_map.json")
-    with open(map_path, "w") as f:
-        json.dump(file_to_id, f, indent=2)
-    print(f"Saved file_id_map.json ({len(unique_files)} unique files)")
-
-    return patches, labels, file_ids
+# ---------------------------------------------------------------------------
+# Sklearn pipeline
+# ---------------------------------------------------------------------------
 
 
-def make_pipeline(n_components):
-    """Create a StandardScaler -> PCA -> GradientBoosting pipeline.
-
-    Reads classifier hyperparameters from ml_config.py (agent-editable).
-    Falls back to defaults if ml_config is not importable.
+def make_pipeline(n_components=None):
+    """Multi-class GBM pipeline. `n_components` is accepted but ignored —
+    retained so ml_eval.py's legacy binary-patch OOF path keeps importing.
     """
-    try:
-        from ml_config import (
-            N_ESTIMATORS, MAX_DEPTH, LEARNING_RATE, SUBSAMPLE, RANDOM_STATE,
-        )
-    except ImportError:
-        N_ESTIMATORS, MAX_DEPTH, LEARNING_RATE, SUBSAMPLE, RANDOM_STATE = 200, 5, 0.1, 0.8, 42
-    try:
-        from ml_config import MAX_FEATURES
-    except ImportError:
-        MAX_FEATURES = None
-
     return Pipeline([
-        ('scaler', StandardScaler()),
-        ('pca', PCA(n_components=n_components, random_state=RANDOM_STATE)),
-        ('clf', GradientBoostingClassifier(
-            n_estimators=N_ESTIMATORS,
-            max_depth=MAX_DEPTH,
-            learning_rate=LEARNING_RATE,
-            subsample=SUBSAMPLE,
-            max_features=MAX_FEATURES,
+        ("scaler", StandardScaler()),
+        ("clf", GradientBoostingClassifier(
+            n_estimators=200,
+            max_depth=3,
+            learning_rate=0.07,
+            subsample=0.9,
             random_state=RANDOM_STATE,
-        ))
+        )),
     ])
 
 
-def train():
-    patches, labels, file_ids = load_data()
-    print(f"Loaded {len(patches)} patches, shape={patches.shape}")
-    print(f"  TP (label=1): {int(labels.sum())}")
-    print(f"  FP/neg (label=0): {int(len(labels) - labels.sum())}")
+# ---------------------------------------------------------------------------
+# Training-set construction
+# ---------------------------------------------------------------------------
 
-    # Flatten patches: (N, 128, 200) -> (N, 25600)
-    X = patches.reshape(len(patches), -1)
-    y = labels.astype(int)
 
-    # Compute sample weights based on inverse class frequency
-    sample_weights = compute_sample_weight("balanced", y)
+def _rng(name: str, salt: int = 0) -> np.random.RandomState:
+    h = int(hashlib.md5(f"{name}:{salt}".encode()).hexdigest(), 16)
+    return np.random.RandomState(h % (2**31))
 
-    n_components = min(100, len(X) - 1, X.shape[1])
 
-    # === 5-fold file-level cross-validation ===
-    gkf = GroupKFold(n_splits=5)
-    fold_metrics = []
+def _anchor_chunk(audio: np.ndarray, sr: int, center_s: float | None) -> tuple[np.ndarray, float]:
+    """Return (chunk, chunk_start_s) of length CHUNK_S centered on center_s
+    (or at the file midpoint if center_s is None). Clamped to file bounds.
+    """
+    W = int(CHUNK_S * sr)
+    n = len(audio)
+    if center_s is None:
+        start = max(0, (n - W) // 2)
+    else:
+        start = int(center_s * sr) - W // 2
+        start = max(0, min(start, max(0, n - W)))
+    chunk = audio[start: start + W]
+    if len(chunk) < W:
+        chunk = np.pad(chunk, (0, W - len(chunk)))
+    return chunk, start / sr
 
-    print(f"\n=== 5-Fold File-Level Cross-Validation ===")
-    print(f"  PCA components: {n_components}")
 
-    for fold_idx, (train_idx, test_idx) in enumerate(gkf.split(X, y, groups=file_ids)):
-        X_train, X_test = X[train_idx], X[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-        sw_train = sample_weights[train_idx]
+def _gt_times_for(info: dict) -> list[float]:
+    if not info.get("spliced", False):
+        return []
+    st = info.get("splice_time_sec")
+    if isinstance(st, list):
+        return [float(t) for t in st]
+    if st is not None:
+        return [float(st)]
+    return []
 
-        pipe = make_pipeline(n_components)
 
-        # Fit with sample_weight passed to the classifier step
-        pipe.fit(X_train, y_train, clf__sample_weight=sw_train)
+def _tier_label(tier: int) -> int:
+    if tier == 1:
+        return LABEL_HARD_CUT
+    if tier == 2:
+        return LABEL_CROSSFADE
+    return LABEL_NOT_SPLICE
 
-        y_pred = pipe.predict(X_test)
 
-        acc = accuracy_score(y_test, y_pred)
-        prec = precision_score(y_test, y_pred, zero_division=0)
-        rec = recall_score(y_test, y_pred, zero_division=0)
-        f1 = f1_score(y_test, y_pred, zero_division=0)
+def _iter_training_files():
+    for ds in DATASETS:
+        gt_path = ds.path / "ground_truth.json"
+        if not gt_path.exists():
+            _diag("WARN", "train", "gt_missing",
+                  dataset=ds.id, path=str(gt_path))
+            continue
+        with open(gt_path) as f:
+            gt = json.load(f)
+        for name, info in sorted(gt.items()):
+            audio_path = ds.path / info["path"]
+            if not audio_path.exists():
+                _diag("INFO", "train", "audio_missing",
+                      dataset=ds.id, name=name)
+                continue
+            yield ds.id, name, str(audio_path), info
 
-        fold_metrics.append({
+
+def _load_mono(audio_path: str) -> tuple[np.ndarray, int]:
+    audio, sr = sf.read(audio_path, dtype="float32", always_2d=False)
+    if audio.ndim == 2:
+        audio = audio.mean(axis=1)
+    return audio, int(sr)
+
+
+def _sample_candidates(
+    name: str,
+    info: dict,
+    chunk_start_s: float,
+    chunk_dur_s: float,
+) -> list[tuple[float, int]]:
+    """Return [(t_local, label), ...] — times in chunk-local coordinates.
+
+    For spliced files: positives at GT + POS_OFFSETS_S, negatives at random
+    positions ≥ NEG_MIN_DIST_S from any GT. For clean files: only random
+    negatives.
+    """
+    gt_file_times = _gt_times_for(info)
+    tier = int(info.get("tier", 0))
+    candidates: list[tuple[float, int]] = []
+
+    # Positives
+    for gt_t in gt_file_times:
+        gt_local = gt_t - chunk_start_s
+        if gt_local < 0 or gt_local > chunk_dur_s:
+            continue
+        for off in POS_OFFSETS_S:
+            t_local = gt_local + off
+            if 0.5 <= t_local <= chunk_dur_s - 0.5:
+                candidates.append((t_local, _tier_label(tier)))
+
+    # Negatives
+    n_neg = NEG_PER_SPLICED if info.get("spliced", False) else NEG_PER_CLEAN
+    rng = _rng(name)
+    gt_local_list = [g - chunk_start_s for g in gt_file_times]
+    tries = 0
+    collected = 0
+    while collected < n_neg and tries < n_neg * 20:
+        tries += 1
+        t_local = float(rng.uniform(0.8, chunk_dur_s - 0.8))
+        if all(abs(t_local - g) >= NEG_MIN_DIST_S for g in gt_local_list):
+            candidates.append((t_local, LABEL_NOT_SPLICE))
+            collected += 1
+
+    return candidates
+
+
+def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
+    """Construct (X, y, groups, manifest) where X is (N, 75).
+
+    `groups` is a file-level id (shared across all candidates from one file)
+    so GroupKFold splits whole files into train/test.
+    """
+    X_rows: list[list[float]] = []
+    y: list[int] = []
+    groups: list[int] = []
+    manifest: list[dict] = []
+
+    file_keys: dict[str, int] = {}
+    next_fid = 0
+
+    t0 = time.time()
+    n_files = 0
+    n_skip_short = 0
+
+    for ds_id, name, audio_path, info in _iter_training_files():
+        key = f"{ds_id}/{name}"
+        if key not in file_keys:
+            file_keys[key] = next_fid
+            next_fid += 1
+        fid = file_keys[key]
+
+        try:
+            audio, sr = _load_mono(audio_path)
+        except Exception as e:
+            _diag("WARN", "train", "load_failed",
+                  dataset=ds_id, name=name, error=str(e))
+            continue
+
+        if len(audio) < int(CHUNK_S * sr * 0.5):
+            n_skip_short += 1
+            _diag("INFO", "train", "audio_too_short",
+                  dataset=ds_id, name=name, dur=f"{len(audio)/sr:.1f}")
+            continue
+
+        gt_times = _gt_times_for(info)
+        center = gt_times[0] if gt_times else None
+        chunk, chunk_start_s = _anchor_chunk(audio, sr, center)
+        chunk_dur_s = len(chunk) / sr
+
+        candidates = _sample_candidates(name, info, chunk_start_s, chunk_dur_s)
+        if not candidates:
+            continue
+
+        ctx = _build_chunk_context(chunk, sr)
+
+        for t_local, label in candidates:
+            feats = extract_features(chunk, sr, t_local, chunk_ctx=ctx)
+            X_rows.append([feats[k] for k in FEATURE_NAMES])
+            y.append(label)
+            groups.append(fid)
+            manifest.append({
+                "dataset": ds_id,
+                "file": name,
+                "t_local": round(t_local, 3),
+                "chunk_start_s": round(chunk_start_s, 3),
+                "label": int(label),
+                "tier": int(info.get("tier", 0)),
+                "file_id": fid,
+            })
+
+        n_files += 1
+        if n_files % 25 == 0:
+            elapsed = time.time() - t0
+            print(f"  [{n_files} files] rows={len(X_rows)} elapsed={elapsed:.1f}s",
+                  flush=True)
+
+    elapsed = time.time() - t0
+    print(f"Training-set built: files={n_files} skipped_short={n_skip_short} "
+          f"rows={len(X_rows)} elapsed={elapsed:.1f}s")
+    X = np.asarray(X_rows, dtype=np.float64)
+    y_arr = np.asarray(y, dtype=np.int64)
+    g_arr = np.asarray(groups, dtype=np.int64)
+    return X, y_arr, g_arr, manifest
+
+
+# ---------------------------------------------------------------------------
+# Training driver
+# ---------------------------------------------------------------------------
+
+
+def _class_counts(y: np.ndarray) -> dict:
+    return {str(int(c)): int(n) for c, n in zip(*np.unique(y, return_counts=True))}
+
+
+def train() -> dict:
+    print("=== Building training set ===", flush=True)
+    X, y, groups, manifest = build_dataset()
+    counts = _class_counts(y)
+    print(f"X.shape={X.shape} class counts: {counts}")
+    if len(X) == 0:
+        raise RuntimeError("Training set is empty — check dataset paths.")
+
+    with open(DATASET_META_OUT, "w") as f:
+        json.dump({
+            "n_samples": int(len(X)),
+            "n_features": int(X.shape[1]),
+            "feature_names": FEATURE_NAMES,
+            "label_names": LABEL_NAMES,
+            "class_counts": counts,
+            "rows": manifest,
+        }, f, indent=2)
+
+    n_groups = len(set(groups.tolist()))
+    if n_groups < 2:
+        raise RuntimeError(f"Need at least 2 groups for CV, got {n_groups}.")
+    n_splits = min(N_FOLDS, n_groups)
+
+    oof_pred = np.full(len(y), -1, dtype=int)
+    fold_results = []
+    gkf = GroupKFold(n_splits=n_splits)
+
+    print(f"\n=== GroupKFold n_splits={n_splits} ===", flush=True)
+    for fold_idx, (tr, te) in enumerate(gkf.split(X, y, groups=groups)):
+        pipe = make_pipeline()
+        pipe.fit(X[tr], y[tr])
+        pred = pipe.predict(X[te])
+        oof_pred[te] = pred
+        f1_w = float(f1_score(y[te], pred, average="weighted", zero_division=0))
+        f1_m = float(f1_score(y[te], pred, average="macro", zero_division=0))
+        fold_results.append({
             "fold": fold_idx + 1,
-            "accuracy": float(acc),
-            "precision": float(prec),
-            "recall": float(rec),
-            "f1": float(f1),
-            "train_size": len(train_idx),
-            "test_size": len(test_idx),
-            "train_tp": int(y_train.sum()),
-            "test_tp": int(y_test.sum()),
+            "n_train": int(len(tr)),
+            "n_test": int(len(te)),
+            "f1_weighted": f1_w,
+            "f1_macro": f1_m,
+            "classes_test": sorted(set(int(v) for v in y[te])),
         })
+        print(f"  Fold {fold_idx+1}: n_train={len(tr)} n_test={len(te)} "
+              f"f1_w={f1_w:.4f} f1_m={f1_m:.4f}")
 
-        n_test_files = len(set(file_ids[test_idx]))
-        print(f"\n  Fold {fold_idx + 1}: {n_test_files} test files, "
-              f"{len(test_idx)} patches (TP={int(y_test.sum())})")
-        print(f"    Accuracy:  {acc:.4f}")
-        print(f"    Precision: {prec:.4f}")
-        print(f"    Recall:    {rec:.4f}")
-        print(f"    F1:        {f1:.4f}")
+    valid = oof_pred >= 0
+    y_valid = y[valid]
+    pred_valid = oof_pred[valid]
+    oof_labels = sorted(set(int(v) for v in y_valid))
+    oof_f1_w = float(f1_score(y_valid, pred_valid, average="weighted", zero_division=0))
+    oof_f1_m = float(f1_score(y_valid, pred_valid, average="macro", zero_division=0))
+    per_class = f1_score(y_valid, pred_valid, labels=oof_labels,
+                         average=None, zero_division=0).tolist()
+    oof_f1_per = {int(c): float(v) for c, v in zip(oof_labels, per_class)}
 
-    # Mean +/- std across folds
-    accs = [m["accuracy"] for m in fold_metrics]
-    precs = [m["precision"] for m in fold_metrics]
-    recs = [m["recall"] for m in fold_metrics]
-    f1s = [m["f1"] for m in fold_metrics]
+    print("\n=== OOF metrics ===")
+    print(f"  weighted F1: {oof_f1_w:.4f}")
+    print(f"  macro F1:    {oof_f1_m:.4f}")
+    print(f"  per-class F1: {oof_f1_per}")
+    print(classification_report(
+        y_valid, pred_valid, zero_division=0,
+        target_names=[LABEL_NAMES[c] for c in oof_labels],
+    ))
 
-    print(f"\n=== Mean +/- Std Across 5 Folds ===")
-    print(f"  Accuracy:  {np.mean(accs):.4f} +/- {np.std(accs):.4f}")
-    print(f"  Precision: {np.mean(precs):.4f} +/- {np.std(precs):.4f}")
-    print(f"  Recall:    {np.mean(recs):.4f} +/- {np.std(recs):.4f}")
-    print(f"  F1:        {np.mean(f1s):.4f} +/- {np.std(f1s):.4f}")
-
-    # Save CV results
     cv_results = {
-        "n_splits": 5,
-        "split_method": "GroupKFold (file-level)",
-        "n_samples": len(X),
-        "n_features_pca": n_components,
-        "folds": fold_metrics,
-        "mean": {
-            "accuracy": float(np.mean(accs)),
-            "precision": float(np.mean(precs)),
-            "recall": float(np.mean(recs)),
-            "f1": float(np.mean(f1s)),
-        },
-        "std": {
-            "accuracy": float(np.std(accs)),
-            "precision": float(np.std(precs)),
-            "recall": float(np.std(recs)),
-            "f1": float(np.std(f1s)),
-        },
+        "n_splits": n_splits,
+        "n_groups": n_groups,
+        "n_samples": int(len(y)),
+        "class_counts": counts,
+        "folds": fold_results,
+        "oof_f1_weighted": oof_f1_w,
+        "oof_f1_macro": oof_f1_m,
+        "oof_f1_per_class": oof_f1_per,
     }
-    cv_path = os.path.join(PROJECT_ROOT, ".omc", "classifier", "cv_results.json")
-    with open(cv_path, "w") as f:
+    with open(CV_OUT, "w") as f:
         json.dump(cv_results, f, indent=2)
-    print(f"\nCV results saved to {cv_path}")
+    print(f"Wrote {CV_OUT}")
 
-    # === Train final model on ALL data ===
-    print(f"\n=== Training Final Model on All Data ===")
-    final_pipe = make_pipeline(n_components)
-    final_pipe.fit(X, y, clf__sample_weight=sample_weights)
+    print("\n=== Final fit on all data ===", flush=True)
+    final = make_pipeline()
+    final.fit(X, y)
+    joblib.dump(final, MODEL_OUT)
+    meta_out = MODEL_OUT.with_suffix(".meta.json")
+    with open(meta_out, "w") as f:
+        json.dump({
+            "feature_names": FEATURE_NAMES,
+            "label_names": LABEL_NAMES,
+            "classes_": [int(c) for c in final.named_steps["clf"].classes_.tolist()],
+            "trained_on": {
+                "datasets": [ds.id for ds in DATASETS],
+                "n_samples": int(len(y)),
+                "class_counts": counts,
+            },
+        }, f, indent=2)
+    print(f"Saved model → {MODEL_OUT}")
+    print(f"Saved metadata → {meta_out}")
 
-    model_path = os.path.join(PROJECT_ROOT, ".omc", "classifier", "fp_classifier.joblib")
-    joblib.dump(final_pipe, model_path)
-    print(f"Final model saved to {model_path}")
-
-    return final_pipe
+    return cv_results
 
 
 if __name__ == "__main__":
