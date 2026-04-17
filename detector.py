@@ -42,8 +42,12 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     # Merge phase (hard cuts) + crossfade (smooth edits)
     all_hits = sorted(phase_hits + xfade_hits)
 
-    # Pairwise as additional signal when block structure is clear
-    if pw_score >= 50.0 and pw_time is not None:
+    # Pairwise as additional signal when block structure is clear.
+    # Gate is sample-rate adaptive: speech (sr < 32k) has lower block-ratio
+    # magnitudes due to phonetic variety, so a lower gate is needed there.
+    # Singing at 44.1kHz keeps the original autoresearch-tuned gate of 50.
+    pw_gate = 5.0 if sr < 32000 else 50.0
+    if pw_score >= pw_gate and pw_time is not None:
         if not any(abs(pw_time - h) < 5.0 for h in all_hits):
             all_hits.append(pw_time)
             all_hits.sort()
