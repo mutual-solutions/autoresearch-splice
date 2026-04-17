@@ -28,7 +28,7 @@
       "id": "US-100",
       "title": "Diagnostic infrastructure: structured DIAG emitter and _FitError",
       "priority": 10,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "detector.py defines _diag(level, component, reason, **context) that emits 'DIAG <LEVEL>.<component>.<reason> key=value ...' to stderr",
         "Levels: ERROR > WARN > INFO. Env var OMC_DIAG_LEVEL filters (default WARN). OMC_DIAG_LEVEL=OFF silences everything.",
@@ -40,7 +40,7 @@
       "id": "US-101",
       "title": "Remove GPD silent fallbacks; explicit caller-side policy",
       "priority": 11,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "_gpd_threshold(scores, n_tests, alpha, context) RAISES _FitError for each of: n<50, exc<10, mean\u22480, alpha_too_loose, shape clamped out of range. No stub-value returns.",
         "_gpd_threshold no longer prints internally; all logging happens at call sites.",
@@ -53,7 +53,7 @@
       "id": "US-102",
       "title": "Remove non-GPD silent fallbacks in detector.py",
       "priority": 12,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "_hotelling_t2 on LinAlgError: raises _FitError. Loop caller (_detect_crossfade / _detect_pairwise) catches per-window, replaces that test\u2019s T\u00b2 with NaN, emits _diag INFO 'hotelling_singular' with window index, and filters NaN before downstream stats.",
         "_hotelling_t2 for n1==1 or n2==1: raises _FitError 'degenerate_sample'. Callers skip.",
@@ -67,7 +67,7 @@
       "id": "US-103",
       "title": "Instrument silent paths in ml_eval.py",
       "priority": 13,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "ml_eval.py imports _diag from detector. Every early-return silent path (_load_patches None, _load_korean_splice_patches None, bound_exceeded, NO_DATA, LOW classifier_quality, continue statements inside patch-extraction loops) emits a DIAG line with reason and useful context (file id, patch count, etc.).",
         "Continue statements inside loops emit _diag INFO with a count-not-stall warning when fraction skipped exceeds 10%",
@@ -78,7 +78,7 @@
       "id": "US-104",
       "title": "End-to-end transparency + regression verification",
       "priority": 14,
-      "passes": false,
+      "passes": true,
       "acceptanceCriteria": [
         "Full eval completes: uv run evaluate.py --with-classifier in <240s, exit 0",
         "combined (primary) within [0.70, 0.74] of baseline 0.719",

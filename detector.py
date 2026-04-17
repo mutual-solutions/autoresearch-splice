@@ -378,6 +378,8 @@ def _step_detector_noise(curve: np.ndarray, half_win: int = 50) -> np.ndarray:
     """Step detector optimized for noise floor: absolute diff of left/right means."""
     n = len(curve)
     if n < 2 * half_win + 1:
+        _diag("WARN", "step_detector", "curve_too_short",
+              n=n, required=2 * half_win + 1)
         return np.zeros(n)
     cs = np.concatenate([[0], np.cumsum(curve)])
     idx = np.arange(n)

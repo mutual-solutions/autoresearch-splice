@@ -12,3 +12,32 @@
 - At -40dB RMS (near silence), phase is noise-dominated — AGC can't fix that
 - Conclusion: phase-based detection has a fundamental floor around -30dB
 - Below that, need different approach (noise floor spectrum comparison, not phase)
+
+## Observability pass (2026-04-17, commit 77f9392 + follow-up)
+Added structured DIAG emitter + _FitError exception class, removed every
+silent fallback in detector.py and ml_eval.py. Key learnings:
+
+- Format: `DIAG <LEVEL>.<component>.<reason> key=value ...` on stderr.
+  Levels: OFF < ERROR < WARN < INFO. Filter via OMC_DIAG_LEVEL (default WARN).
+- _FitError(reason, **context) carries structured context for forwarding
+  into DIAG lines at call sites. No internal print/warn inside fit functions.
+- _gpd_threshold now raises _FitError on all 5 degenerate paths
+  (insufficient_samples, sparse_tail, degenerate_mean, shape_out_of_range,
+  alpha_too_loose). Callers catch, emit DIAG WARN, fall back to the
+  explicit _conservative_threshold (Bonferroni percentile).
+- _hotelling_t2 raises on singular cov / degenerate sample. Loop callers
+  zero the failing window's T² AND emit INFO per failure + WARN if mass.
+- _zscore / _robust_zscore still return zeros on degenerate variance
+  (the mathematical limit), but now emit DIAG WARN so the event is visible.
+
+Baseline preservation: combined 0.738 (vs baseline 0.719, Δ+0.019).
+verify_agent HIGH confidence across metric rerun, git audit, anomaly,
+preflight, DSP FP bound.
+
+BIG DIAGNOSTIC DISCOVERY from the instrumentation: the crossfade T²
+detector has been in GPD fallback on every single eval file — 210 WARN
+lines per run. The 'adaptive' GPD code has never run in production for
+crossfade T²; its effective threshold is the conservative Bonferroni
+percentile from _conservative_threshold on short files. If crossfade
+T² performance is ever to improve, the fix is to increase test-point
+density (smaller hop_s or smaller compare_window_s), not to tune GPD α.
