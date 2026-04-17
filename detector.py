@@ -38,7 +38,7 @@ ANALYSIS_STEP_S = 50.0  # ~17% overlap — W-S=10s still > 5s crossfade margin
 _DETECT_CACHE: dict = {}
 _DETECT_CACHE_MAX = 512
 
-ANALYSIS_STRIDE_S = 0.2
+ANALYSIS_STRIDE_S = 0.15
 # Training class ratio (~45/55 splice/not_splice) is far denser than the
 # ~1:300 splice-per-candidate ratio in real audio, so proba skews high.
 # An aggressive decision threshold compensates for the prior-probability
