@@ -81,25 +81,47 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
     duration_s = len(audio) / sr
     N = int(duration_s / segment_s)
     if N < 4:
+        _diag("INFO", "pairwise", "audio_too_short",
+              duration_s=f"{duration_s:.2f}", n_segments=N, required=4)
         return 0.0, None
 
-    # Compute CQT band powers for each segment
+    # Compute CQT band powers for each segment. A segment that can't be
+    # analyzed (too short) is skipped with an explicit DIAG and excluded
+    # from the pairwise matrix by collapsing it to zero variance.
     segment_samples = int(segment_s * sr)
     segment_features = []
     for i in range(N):
         start = i * segment_samples
         end = start + segment_samples
         seg = audio[start:end]
-        bp = _cqt_band_powers(seg, sr, K, frame_s=0.050, hop_s=0.020)
+        try:
+            bp = _cqt_band_powers(seg, sr, K, frame_s=0.050, hop_s=0.020)
+        except _FitError as e:
+            _diag("WARN", "pairwise", "cqt_skipped", segment=i,
+                  cause=e.reason, **e.context)
+            bp = np.zeros((K, 2))  # 2 frames so _hotelling_t2 n_min==2 holds
         segment_features.append(bp.T)  # (n_frames, K)
 
-    # Compute N×N distance matrix using Hotelling T²
+    # Compute N×N distance matrix using Hotelling T². Individual pair
+    # failures become 0.0 (no evidence of difference) with a DIAG line so
+    # the silence isn't hidden.
     dist_matrix = np.zeros((N, N))
+    n_failed = 0
     for i in range(N):
         for j in range(i + 1, N):
-            t2 = _hotelling_t2(segment_features[i], segment_features[j])
+            try:
+                t2 = _hotelling_t2(segment_features[i], segment_features[j])
+            except _FitError as e:
+                _diag("INFO", "pairwise", "t2_failed", i=i, j=j,
+                      cause=e.reason, **e.context)
+                t2 = 0.0
+                n_failed += 1
             dist_matrix[i, j] = t2
             dist_matrix[j, i] = t2
+    total_pairs = N * (N - 1) // 2
+    if n_failed and n_failed / total_pairs > 0.1:
+        _diag("WARN", "pairwise", "t2_mass_failure",
+              n_failed=n_failed, n_total=total_pairs)
 
     # Find best split point via block structure score
     best_score = -1.0
@@ -196,10 +218,15 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
     # Quiet-boundary filter: suppress detections at silence edges
     fused = cpe_z * silence
 
-    # GPD threshold
+    # GPD tail threshold with explicit fallback on degenerate fit
     non_silent = fused[silence > 0.5]
-    n_tests = len(non_silent)
-    threshold = _gpd_threshold(non_silent, n_tests=max(n_tests, 1), alpha=0.1, context="cpe")
+    n_tests = max(len(non_silent), 1)
+    try:
+        threshold = _gpd_threshold(non_silent, n_tests=n_tests, alpha=0.1)
+    except _FitError as e:
+        _diag("WARN", "cpe", "gpd_unfit",
+              fallback="conservative_percentile", cause=e.reason, **e.context)
+        threshold = _conservative_threshold(non_silent, n_tests=n_tests, alpha=0.1)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -375,7 +402,12 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     hop_s = 0.5  # step between test points
 
     # --- CQT-like subband decomposition ---
-    band_powers = _cqt_band_powers(audio, sr, K, frame_s=0.050, hop_s=0.020)
+    try:
+        band_powers = _cqt_band_powers(audio, sr, K, frame_s=0.050, hop_s=0.020)
+    except _FitError as e:
+        _diag("WARN", "crossfade", "cqt_unavailable",
+              cause=e.reason, **e.context)
+        return []
     # band_powers: (K, n_frames), each frame = 20ms
 
     # --- Append spectral flux as (K+1)th feature dimension ---
@@ -391,19 +423,31 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     n_frames = band_powers.shape[1]
 
     if n_frames < 2 * frames_per_window + 1:
+        _diag("INFO", "crossfade", "audio_too_short",
+              n_frames=n_frames, required=2 * frames_per_window + 1)
         return []
 
     # --- Sliding Hotelling T² test ---
     t2_scores = []
     test_times = []
+    n_failed = 0
 
     for center in range(frames_per_window, n_frames - frames_per_window, hop_frames):
         left = band_powers[:, center - frames_per_window: center].T   # (W, K)
         right = band_powers[:, center: center + frames_per_window].T  # (W, K)
-
-        t2 = _hotelling_t2(left, right)
+        try:
+            t2 = _hotelling_t2(left, right)
+        except _FitError as e:
+            _diag("INFO", "crossfade", "t2_failed",
+                  at_sec=f"{center * 0.020:.2f}", cause=e.reason, **e.context)
+            t2 = 0.0
+            n_failed += 1
         t2_scores.append(t2)
         test_times.append(center * 0.020)
+
+    if n_failed and len(t2_scores) and n_failed / len(t2_scores) > 0.1:
+        _diag("WARN", "crossfade", "t2_mass_failure",
+              n_failed=n_failed, n_total=len(t2_scores))
 
     if not t2_scores:
         return []
@@ -420,10 +464,15 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
     silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.1, silence)
     t2_z = t2_z * (silence_at_test > 0.5).astype(float)
 
-    # GPD tail-based threshold (same as phase detector) — adaptive to T2 distribution shape
+    # GPD tail threshold with explicit fallback on degenerate fit
     non_silent_t2 = t2_z[silence_at_test > 0.5]
-    n_tests_xf = len(non_silent_t2)
-    threshold = _gpd_threshold(non_silent_t2, n_tests=max(n_tests_xf, 1), alpha=0.05, context="crossfade")
+    n_tests_xf = max(len(non_silent_t2), 1)
+    try:
+        threshold = _gpd_threshold(non_silent_t2, n_tests=n_tests_xf, alpha=0.05)
+    except _FitError as e:
+        _diag("WARN", "crossfade", "gpd_unfit",
+              fallback="conservative_percentile", cause=e.reason, **e.context)
+        threshold = _conservative_threshold(non_silent_t2, n_tests=n_tests_xf, alpha=0.05)
     threshold = max(threshold, 4.5)  # safety floor
 
     # Peak pick
@@ -524,7 +573,8 @@ def _cqt_band_powers(audio: np.ndarray, sr: int, K: int = 8,
     frame_samples = max(1, int(sr * frame_s))
     n_frames = (len(audio) - frame_samples) // hop_samples + 1
     if n_frames < 1:
-        return np.zeros((K, 1))
+        raise _FitError("audio_too_short_for_stft",
+                        n_samples=len(audio), frame_samples=frame_samples)
 
     # Define log-spaced band edges
     f_min = 80.0
@@ -558,29 +608,39 @@ def _hotelling_t2(X: np.ndarray, Y: np.ndarray) -> float:
     X: (n1, K) — samples from left window
     Y: (n2, K) — samples from right window
     Returns T² statistic (higher = more different).
+
+    Raises `_FitError` when the fit is ill-defined (single-sample windows,
+    singular pooled covariance). Callers decide how to handle failures —
+    no silent substitution inside this function.
     """
     n1, p = X.shape
     n2 = Y.shape[0]
+
+    if n1 < 2 or n2 < 2:
+        raise _FitError("degenerate_sample", n1=n1, n2=n2)
 
     mean1 = X.mean(axis=0)
     mean2 = Y.mean(axis=0)
     diff = mean1 - mean2
 
-    # Pooled covariance
-    S1 = np.cov(X, rowvar=False, ddof=1) if n1 > 1 else np.eye(p) * 1e-6
-    S2 = np.cov(Y, rowvar=False, ddof=1) if n2 > 1 else np.eye(p) * 1e-6
+    S1 = np.cov(X, rowvar=False, ddof=1)
+    S2 = np.cov(Y, rowvar=False, ddof=1)
     Sp = ((n1 - 1) * S1 + (n2 - 1) * S2) / (n1 + n2 - 2)
 
-    # Regularize for numerical stability
-    Sp += np.eye(p) * 1e-6
+    # Ridge regularization for numerical stability (visible via DIAG if heavy).
+    ridge = 1e-6
+    Sp = Sp + np.eye(p) * ridge
+    # Near-singular pooled covariance is a warning, not a failure.
+    cond = float(np.linalg.cond(Sp))
+    if cond > 1e8:
+        _diag("INFO", "hotelling", "near_singular_cov",
+              cond=f"{cond:.1e}", ridge=ridge, p=p)
 
-    # T² = n1*n2/(n1+n2) * diff' * Sp^{-1} * diff
     try:
         Sp_inv_diff = np.linalg.solve(Sp, diff)
-        t2 = (n1 * n2 / (n1 + n2)) * np.dot(diff, Sp_inv_diff)
-    except np.linalg.LinAlgError:
-        t2 = 0.0
-
+    except np.linalg.LinAlgError as err:
+        raise _FitError("singular_cov", p=p, cond=f"{cond:.1e}") from err
+    t2 = (n1 * n2 / (n1 + n2)) * float(np.dot(diff, Sp_inv_diff))
     return max(0.0, t2)
 
 
@@ -616,9 +676,15 @@ def _analyze_segment_phase(audio: np.ndarray, sr: int, offset_s: float = 0.0) ->
     silence = _silence_mask(audio, sr, hop_ms=hop_ms, threshold_db=-45)[:min_len]
     fused = fused * silence
 
-    # --- GPD tail-based threshold with Bonferroni correction ---
-    n_tests = int(np.sum(silence > 0.5))  # only non-silent frames count
-    threshold = _gpd_threshold(fused[silence > 0.5], n_tests=n_tests, alpha=0.02, context="phase")
+    # --- GPD tail threshold with Bonferroni correction + explicit fallback ---
+    n_tests = max(int(np.sum(silence > 0.5)), 1)
+    phase_non_silent = fused[silence > 0.5]
+    try:
+        threshold = _gpd_threshold(phase_non_silent, n_tests=n_tests, alpha=0.02)
+    except _FitError as e:
+        _diag("WARN", "phase", "gpd_unfit",
+              fallback="conservative_percentile", cause=e.reason, **e.context)
+        threshold = _conservative_threshold(phase_non_silent, n_tests=n_tests, alpha=0.02)
 
     peaks = _peak_pick(fused, threshold=threshold, min_dist_s=5.0, hop_s=hop_s)
 
@@ -723,6 +789,8 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
     lo = max(0, center - radius)
     hi = min(len(audio), center + radius)
     if hi - lo < 100:
+        _diag("INFO", "refine", "window_too_small",
+              at_sec=f"{coarse_time:.3f}", window_samples=hi - lo)
         return coarse_time
 
     segment = audio[lo:hi]
@@ -740,22 +808,54 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
 import os as _os
 import sys as _sys
 
-_GPD_WARN = _os.environ.get("GPD_WARN", "1") != "0"
+
+# ===== Diagnostic infrastructure =====
+#
+# All degradation paths (fallback thresholds, singular covariance, degenerate
+# variance, skipped segments, classifier fallbacks) must emit a DIAG line so
+# the full evaluation is observable from stderr alone.
+#
+# Format: 'DIAG <LEVEL>.<component>.<reason> k=v k=v ...'
+#   Example: 'DIAG WARN.crossfade.gpd_unfit fallback=conservative_percentile n=29 min_required=50'
+#
+# Level hierarchy (higher number = noisier): OFF=0 < ERROR=1 < WARN=2 < INFO=3.
+# Set OMC_DIAG_LEVEL env var to filter. Default WARN (shows ERROR+WARN, hides INFO).
+
+_DIAG_ORDER = {"OFF": 0, "ERROR": 1, "WARN": 2, "INFO": 3}
+_DIAG_LEVEL = _DIAG_ORDER.get(
+    _os.environ.get("OMC_DIAG_LEVEL", "WARN").upper(), _DIAG_ORDER["WARN"]
+)
 
 
-def _gpd_warn(context: str, reason: str) -> None:
-    """Emit a diagnostic warning when GPD can't estimate the tail reliably.
+def _diag(level: str, component: str, reason: str, **context) -> None:
+    """Emit a structured diagnostic line to stderr.
 
-    Silence by exporting GPD_WARN=0. Warnings go to stderr so they don't
-    pollute the stdout metric parsers in evaluate.py.
+    Silenced when this call's level exceeds OMC_DIAG_LEVEL (default WARN).
+    Stderr keeps stdout clean for evaluate.py's metric parsers.
     """
-    if _GPD_WARN:
-        tag = f"[{context}]" if context else ""
-        print(f"WARN gpd{tag}: {reason}", file=_sys.stderr)
+    if _DIAG_ORDER.get(level, 0) > _DIAG_LEVEL:
+        return
+    ctx = " ".join(f"{k}={v}" for k, v in context.items())
+    tail = f" {ctx}" if ctx else ""
+    print(f"DIAG {level}.{component}.{reason}{tail}", file=_sys.stderr)
 
 
-def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05,
-                   context: str = "") -> float:
+class _FitError(Exception):
+    """Raised when a statistical fit cannot be computed reliably.
+
+    Carries `.reason` (short code) and `.context` (dict) so the caller can
+    forward both into a DIAG line without re-parsing. Never swallowed
+    silently — the only two sanctioned responses are (a) propagate, or
+    (b) catch, emit DIAG, and invoke an explicitly named fallback.
+    """
+    def __init__(self, reason: str, **context):
+        self.reason = reason
+        self.context = context
+        parts = [reason] + [f"{k}={v}" for k, v in context.items()]
+        super().__init__(" ".join(parts))
+
+
+def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05) -> float:
     """
     Compute detection threshold using GPD method-of-moments estimator.
 
@@ -767,56 +867,43 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05,
     2. Apply Bonferroni correction: per-test alpha = alpha / n_tests
     3. Return the score value where the tail probability = corrected alpha
 
-    Emits stderr warnings via `context` label when the fit falls back to
-    non-GPD behavior (too few samples, degenerate tail, etc.).
+    Raises `_FitError` on every degenerate path instead of returning a stub
+    value. Callers are responsible for catching, logging via _diag, and
+    selecting an explicit fallback (typically _conservative_threshold).
     """
     n = len(scores)
     if n < 50:
-        _gpd_warn(context, f"short_fallback n={n}<50 → threshold=max(scores)+1")
-        return float(np.max(scores) + 1) if n > 0 else 10.0
+        raise _FitError("insufficient_samples", n=n, min_required=50)
 
-    # Use top 5% as the tail
     tail_quantile = 0.95
     u = float(np.percentile(scores, tail_quantile * 100))
     exceedances = scores[scores > u] - u
 
     if len(exceedances) < 10:
-        _gpd_warn(context, f"sparse_tail exc={len(exceedances)}<10 → percentile fallback")
-        corrected_q = 1.0 - alpha / max(n_tests, 1)
-        return float(np.percentile(scores, min(corrected_q, 1.0 - 1e-5) * 100))
+        raise _FitError("sparse_tail", exceedances=len(exceedances), min_required=10)
 
     # Method-of-moments GPD estimator (closed-form, deterministic)
     mean_exc = float(np.mean(exceedances))
     var_exc = float(np.var(exceedances, ddof=1))
-
     if mean_exc < 1e-10:
-        _gpd_warn(context, f"degenerate_mean mean_exc={mean_exc:.2e} → threshold=u")
-        return u
+        raise _FitError("degenerate_mean", mean_exc=f"{mean_exc:.2e}")
 
     # GPD moments: E[X] = scale/(1-shape), Var[X] = scale^2/((1-shape)^2*(1-2*shape))
     # Solving: shape = 0.5*(1 - mean^2/var), scale = mean*(1-shape)
     ratio = mean_exc ** 2 / max(var_exc, 1e-10)
     shape_raw = 0.5 * (1.0 - ratio)
-    scale_raw = mean_exc * (1.0 - shape_raw)
-
-    # Clamp shape to valid range for threshold computation
-    shape = max(min(shape_raw, 0.5), -0.5)
-    if shape != shape_raw:
-        _gpd_warn(context, f"clamped_shape raw={shape_raw:.2f} → {shape:+.2f} (heavy/light tail)")
-    scale = max(scale_raw, 1e-10)
+    if shape_raw > 0.5 or shape_raw < -0.5:
+        raise _FitError("shape_out_of_range", shape_raw=f"{shape_raw:.3f}")
+    shape = shape_raw
+    scale = max(mean_exc * (1.0 - shape), 1e-10)
 
     # Bonferroni-corrected per-test significance
     p_per_test = alpha / max(n_tests, 1)
-
-    # Tail probability
     p_tail = 1.0 - tail_quantile
-
-    # Target survival in the tail
     target_survival = p_per_test / p_tail
 
     if target_survival >= 1.0:
-        _gpd_warn(context, f"alpha_too_loose n_tests={n_tests} alpha={alpha} → threshold=u (no extrapolation)")
-        return u
+        raise _FitError("alpha_too_loose", n_tests=n_tests, alpha=alpha)
 
     # GPD quantile: x = (scale/shape) * (survival^(-shape) - 1) for shape != 0
     if abs(shape) > 1e-6:
@@ -827,6 +914,21 @@ def _gpd_threshold(scores: np.ndarray, n_tests: int, alpha: float = 0.05,
 
     threshold = u + max(excess_threshold, 0.0)
     return max(float(threshold), u)
+
+
+def _conservative_threshold(scores: np.ndarray, n_tests: int,
+                            alpha: float = 0.05) -> float:
+    """Explicit Bonferroni-percentile fallback for when GPD cannot fit.
+
+    Returns the score value at the (1 - alpha/n_tests) quantile of the
+    observed distribution. No parametric extrapolation — strictly bounded
+    above by max(scores). Always paired with a DIAG WARN at the call site.
+    """
+    if len(scores) == 0:
+        return float("inf")
+    corrected_q = 1.0 - alpha / max(n_tests, 1)
+    q = min(max(corrected_q, 0.0), 1.0 - 1e-5)
+    return float(np.percentile(scores, q * 100))
 
 
 # ---------------------------------------------------------------------------
@@ -845,18 +947,25 @@ def _silence_mask(audio: np.ndarray, sr: int, hop_ms: float = 10,
 
 
 def _zscore(x: np.ndarray) -> np.ndarray:
+    """Z-score normalization. Emits DIAG WARN for degenerate variance so the
+    constant-signal case is visible rather than silently producing zeros.
+    """
     mu = np.mean(x)
     sd = np.std(x)
     if sd < 1e-8:
+        _diag("WARN", "zscore", "degenerate_variance", n=len(x), std=f"{sd:.2e}")
         return np.zeros_like(x)
     return (x - mu) / sd
 
 
 def _robust_zscore(x: np.ndarray) -> np.ndarray:
-    """MAD-based robust z-score: outlier-resistant normalization."""
+    """MAD-based robust z-score. Emits DIAG WARN for degenerate MAD so the
+    constant-signal case is visible rather than silently producing zeros.
+    """
     med = np.median(x)
     mad = np.median(np.abs(x - med))
     if mad < 1e-8:
+        _diag("WARN", "robust_zscore", "degenerate_mad", n=len(x), mad=f"{mad:.2e}")
         return np.zeros_like(x)
     return (x - med) / (mad * 1.4826)  # 1.4826 scales MAD to std for normal
 

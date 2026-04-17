@@ -32,6 +32,9 @@ from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.metrics import f1_score
 import joblib
 
+# Shared diagnostic emitter (structured DIAG lines to stderr, filtered by OMC_DIAG_LEVEL)
+from detector import _diag
+
 # Import tunable params from ml_config (agent-editable)
 import hashlib as _hashlib
 
@@ -55,6 +58,7 @@ def _load_pregenerated_patches():
 
     if not os.path.exists(patches_path):
         print("pregenerated_patches: NOT_FOUND")
+        _diag("WARN", "ml.pregenerated", "patches_missing", path=patches_path)
         return None, None, None
 
     patches = np.load(patches_path)
@@ -89,6 +93,7 @@ def _load_korean_splice_patches():
 
     if not os.path.exists(gt_path):
         print("korean_splice_patches: NOT_FOUND (no ground_truth.json)")
+        _diag("WARN", "ml.korean", "gt_missing", path=gt_path)
         return None, None, None
 
     # NOTE: caching disabled — patches must reflect CURRENT detector output so
@@ -109,9 +114,13 @@ def _load_korean_splice_patches():
     file_to_id = {}
     next_id = 0
 
+    n_missing_files = 0
+    n_patch_none = 0
     for name, info in sorted(gt.items()):
         fpath = os.path.join(_KOREAN_SPLICE_DIR, info["path"])
         if not os.path.exists(fpath):
+            n_missing_files += 1
+            _diag("INFO", "ml.korean", "file_missing", name=name)
             continue
 
         if name not in file_to_id:
@@ -132,6 +141,9 @@ def _load_korean_splice_patches():
         for det_t in det_times:
             patch = extract_mel_patch(audio, sr, det_t)
             if patch is None:
+                n_patch_none += 1
+                _diag("INFO", "ml.korean", "patch_extraction_failed",
+                      file=name, at_sec=f"{det_t:.3f}")
                 continue
             label = 1 if is_tp(det_t, gt_times) else 0
             all_patches.append(patch)
@@ -161,7 +173,14 @@ def _load_korean_splice_patches():
 
     if not all_patches:
         print("korean_splice_patches: NO_PATCHES")
+        _diag("WARN", "ml.korean", "no_patches_generated",
+              missing_files=n_missing_files)
         return None, None, None
+
+    if n_missing_files or n_patch_none:
+        _diag("INFO", "ml.korean", "extraction_summary",
+              missing_files=n_missing_files, patch_none=n_patch_none,
+              patches=len(all_patches))
 
     patches = np.array(all_patches)
     labels = np.array(all_labels, dtype=int)
@@ -190,6 +209,8 @@ def evaluate_with_classifier(dsp_results, data_dir):
     # --- FP bound check ---
     if dsp_clean_fp > DSP_FP_BOUND:
         print("dsp_fp_bound: EXCEEDED")
+        _diag("ERROR", "ml.eval", "dsp_fp_bound_exceeded",
+              dsp_clean_fp=dsp_clean_fp, bound=DSP_FP_BOUND)
         return {"bound_exceeded": True, "dsp_clean_fp": dsp_clean_fp}
 
     # --- Generate eval-set patches in-memory ---
@@ -219,6 +240,8 @@ def evaluate_with_classifier(dsp_results, data_dir):
         for det_t in det_times:
             patch = extract_mel_patch(audio, sr, det_t)
             if patch is None:
+                _diag("INFO", "ml.eval", "patch_extraction_failed",
+                      file=name, at_sec=f"{det_t:.3f}", source="detection")
                 continue
             label = 1 if is_tp(det_t, gt_times) else 0
             eval_patches.append(patch)
@@ -265,7 +288,8 @@ def evaluate_with_classifier(dsp_results, data_dir):
     n_eval = len(eval_patches)
     if n_eval == 0:
         print("classifier: NO_EVAL_PATCHES")
-        # Fall back to DSP-only
+        _diag("WARN", "ml.eval", "no_eval_patches",
+              fallback="dsp_only", combined=f"{dsp_combined:.4f}")
         print(f"combined: {dsp_combined:.6f}")
         return {"classifier_quality": "NO_DATA", "cv_f1": 0.0, "combined_full": dsp_combined}
 
@@ -314,6 +338,8 @@ def evaluate_with_classifier(dsp_results, data_dir):
     if n_unique_eval_groups < 2:
         # Not enough groups for CV — fall back to DSP-only
         print(f"classifier: INSUFFICIENT_GROUPS ({n_unique_eval_groups})")
+        _diag("WARN", "ml.eval", "insufficient_cv_groups",
+              n_groups=n_unique_eval_groups, required=2, fallback="dsp_only")
         print(f"combined: {dsp_combined:.6f}")
         return {"classifier_quality": "LOW", "cv_f1": 0.0, "combined_full": dsp_combined}
 
@@ -349,6 +375,8 @@ def evaluate_with_classifier(dsp_results, data_dir):
         cv_f1 = float(f1_score(y_eval[valid_mask], oof_preds[valid_mask], zero_division=0))
     else:
         cv_f1 = 0.0
+        _diag("WARN", "ml.eval", "no_valid_oof_preds",
+              n_eval=n_eval, n_folds=n_splits)
     print(f"classifier_cv_f1: {cv_f1:.6f}")
 
     # --- Filter detections using OOF predictions (no quality gate) ---
@@ -371,7 +399,9 @@ def evaluate_with_classifier(dsp_results, data_dir):
         for det_t in det_times:
             proba = oof_lookup.get((name, det_t))
             if proba is None:
-                # No OOF prediction — keep to be safe
+                # No OOF prediction — keep to be safe (visible via DIAG)
+                _diag("INFO", "ml.filter", "no_oof_proba_keeping_det",
+                      file=name, at_sec=f"{det_t:.3f}")
                 filtered_dets.append(det_t)
             elif proba >= OOF_THRESHOLD:
                 filtered_dets.append(det_t)
