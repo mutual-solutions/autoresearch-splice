@@ -44,6 +44,10 @@ run_loop() {
             recent_failures=$(awk -F'\t' '$9 == "discard" || $9 == "verify-fail" {printf "  - combined=%s: %s\n", $2, $10}' "$RESULTS" | tail -30)
         fi
 
+        # Current best = baseline_metrics.json.combined. Use this (not the
+        # possibly-stale tail of results.tsv) as the keep/discard threshold.
+        current_best=$(python3 -c "import json; print(json.load(open('.omc/coordination/baseline_metrics.json'))['combined'])" 2>/dev/null || echo "0")
+
         iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
 ARCHITECTURE NOTE (2026-04-18): detect_splices now runs GBM-first dense scan.
@@ -67,7 +71,7 @@ ARCHITECTURE NOTE (2026-04-18): detect_splices now runs GBM-first dense scan.
     (classifier missing) which is not exercised by evaluate.py on this machine.
 
 Read program.md for the overall goal, then execute exactly ONE experiment iteration:
-1. Check git state and read results.tsv to see recent history.
+1. Check git state and read .omc/coordination/baseline_metrics.json for context.
 2. Form a hypothesis to improve combined. Prefer PRIMARY tunables (instant loop).
    Touch RETRAIN tunables only when the primary knob space feels exhausted.
 
@@ -81,8 +85,11 @@ ${recent_failures:-  (none yet)}
 4. git commit -m \"hypothesis: <one-line description>\"
 5. Run: uv run python evaluate.py --with-classifier
 6. Parse combined score from the LAST 'combined:' line in the output.
-7. If combined > previous best (strictly):      print RESULT:keep-pending
-   If combined <= previous best:                 git reset --hard HEAD~1 ; print RESULT:discard
+7. CURRENT BEST (authoritative, from baseline_metrics.json): ${current_best}
+   If combined > ${current_best} (strictly greater):    print RESULT:keep-pending
+   If combined <= ${current_best}:                      git reset --hard HEAD~1 ; print RESULT:discard
+   Do NOT rely on results.tsv for the 'previous best' — it lags the baseline
+   file after successful keeps.
 8. Do NOT run verify_agent.py yourself — the wrapper handles it.
 9. Do NOT write to results.tsv — the wrapper handles it.
 
@@ -154,6 +161,20 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 # Match "combined: 0.X", "combined=0.X", "Combined dropped to 0.X", "combined score of 0.X", etc.
                 reported=$(echo "$last_output" | grep -oiE '\bcombined[^0-9\n]{0,30}[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
 
+                # Wrapper-side strict-improvement gate. Claude's own keep/discard
+                # decision can be wrong when the prompt-provided current_best
+                # lags a recent baseline update, so we re-check here.
+                strictly_better=$(python3 -c "print(1 if float('$reported') > float('$current_best') + 1e-9 else 0)" 2>/dev/null || echo 0)
+                if [ "$strictly_better" != "1" ]; then
+                    echo "$(date -Iseconds) NO-OP KEEP REJECTED: reported=$reported not > current_best=$current_best" >> "$LOG_FILE"
+                    log_to_results_tsv "verify-fail"
+                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
+                    consecutive_discards=$((consecutive_discards + 1))
+                    # Brief pause then continue to next iteration
+                    sleep 2
+                    continue
+                fi
+
                 # verify_agent.py has its own 120s timeout for evaluate.py internally.
                 # Capture exit code separately — `|| true` would mask LOW confidence failures.
                 set +e
@@ -166,7 +187,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
 
                 if [ $verify_exit -eq 0 ]; then
                     consecutive_discards=0
-                    echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported)" >> "$LOG_FILE"
+                    echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported, prev best=$current_best)" >> "$LOG_FILE"
                     log_to_results_tsv "keep"
 
                     # Version management
@@ -174,6 +195,23 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                     git tag "detector-v$VERSION"
                     SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
                     cp "$PROJECT_DIR/detector.py" "$SNAP"
+
+                    # Update baseline_metrics.json so the NEXT iteration sees the
+                    # new current_best. Without this, claude would compare against
+                    # a stale baseline and accept no-op commits as "improvements".
+                    python3 -c "
+import json, os
+bf = os.path.join('$PROJECT_DIR', '.omc/coordination/baseline_metrics.json')
+try:
+    data = json.load(open(bf))
+except Exception:
+    data = {}
+data['combined'] = float('$reported')
+data['git_sha'] = __import__('subprocess').run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
+data['timestamp'] = __import__('datetime').datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+data.setdefault('note', '')
+json.dump(data, open(bf, 'w'), indent=2)
+"
 
                     # Update versions.json
                     python3 -c "
@@ -194,8 +232,6 @@ data['versions'].append({
 data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
-
-                    # Classifier training now happens in-loop via evaluate.py --with-classifier
                 else
                     # Verification failed — log BEFORE reverting (otherwise git HEAD changes)
                     log_to_results_tsv "verify-fail"
