@@ -76,13 +76,8 @@ def _load_pregenerated_patches():
     return patches, labels, file_ids
 
 
-# Speech-splice dataset paths (relative to project root)
-_KOREAN_SPLICE_DIR = os.path.join(
-    os.path.dirname(_proj), "audio-splice-detector", "data", "korean-splice"
-)
-_ENGLISH_SPLICE_DIR = os.path.join(
-    os.path.dirname(_proj), "audio-splice-detector", "data", "english-splice"
-)
+# Speech-splice datasets — source of truth in dataset_registry.DATASETS.
+from dataset_registry import DATASETS
 
 
 def _load_speech_splice_patches(splice_dir: str, tag: str):
@@ -306,13 +301,13 @@ def evaluate_with_classifier(dsp_results, data_dir):
             all_pregen_fids.append(pregen_fids_raw + fid_offset)
             fid_offset += int(pregen_fids_raw.max()) + 1
 
-        # 2-3. Speech-splice datasets — each regenerated live from current detector
-        for splice_dir, tag in (
-            (_KOREAN_SPLICE_DIR, "korean"),
-            (_ENGLISH_SPLICE_DIR, "english"),
-        ):
+        # 2-n. Speech-splice datasets — each regenerated live from current detector.
+        # Iterate dataset_registry.DATASETS so adding a new language is one entry.
+        for ds in DATASETS:
+            if ds.train_weight <= 0:
+                continue
             sp_patches, sp_labels, sp_fids_raw = _load_speech_splice_patches(
-                splice_dir, tag
+                str(ds.path), ds.id
             )
             if sp_patches is not None:
                 all_pregen_patches.append(sp_patches.reshape(len(sp_patches), -1))

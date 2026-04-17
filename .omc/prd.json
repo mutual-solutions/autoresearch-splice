@@ -1,91 +1,82 @@
 {
   "project": "autoresearch-splice",
   "created": "2026-04-17",
-  "goal": "Systematic error logging and transparent degradation-path handling across detector.py and ml_eval.py. Eliminate silent fallbacks that mask bugs. Preserve baseline metric (combined=0.719 ± 0.02).",
+  "goal": "Plugin-style dataset architecture. Adding a new dataset requires a single-line addition to dataset_registry.py. Classifier training iterates the registry. Aggregation helper ready for future evaluate.py integration. Baseline preserved at combined=0.742.",
   "stories": [
+    {"id": "US-010", "title": "CQT + Hotelling T² crossfade detector", "priority": 1, "passes": true, "note": "Legacy — achieved earlier."},
+    {"id": "US-011", "title": "Combine phase + crossfade detectors", "priority": 2, "passes": true, "note": "Legacy — achieved earlier."},
+    {"id": "US-012", "title": "F1 improvement on crossfade files", "priority": 3, "passes": true, "note": "Legacy — achieved earlier."},
+    {"id": "US-100", "title": "Diagnostic infrastructure (DIAG emitter + _FitError)", "priority": 10, "passes": true, "note": "Shipped in 77f9392."},
+    {"id": "US-101", "title": "Remove GPD silent fallbacks; caller-side policy", "priority": 11, "passes": true, "note": "Shipped in 77f9392."},
+    {"id": "US-102", "title": "Remove non-GPD silent fallbacks", "priority": 12, "passes": true, "note": "Shipped in 77f9392."},
+    {"id": "US-103", "title": "Instrument ml_eval.py silent paths", "priority": 13, "passes": true, "note": "Shipped in 77f9392."},
+    {"id": "US-104", "title": "End-to-end transparency + regression", "priority": 14, "passes": true, "note": "Shipped in 77f9392."},
+    {"id": "US-150", "title": "Length-agnostic sliding-window detector", "priority": 15, "passes": true, "note": "Shipped in 84cd656."},
+    {"id": "US-151", "title": "ml_eval speech-loader generalized", "priority": 16, "passes": true, "note": "Shipped in 21a5d43."},
     {
-      "id": "US-010",
-      "title": "Implement CQT + Hotelling T\u00b2 crossfade detector",
-      "priority": 1,
-      "passes": true,
-      "note": "Legacy — achieved earlier. Kept for history."
-    },
-    {
-      "id": "US-011",
-      "title": "Combine phase detector + crossfade detector",
-      "priority": 2,
-      "passes": true,
-      "note": "Legacy — achieved earlier."
-    },
-    {
-      "id": "US-012",
-      "title": "F1 improvement on crossfade files",
-      "priority": 3,
-      "passes": true,
-      "note": "Legacy — achieved earlier."
-    },
-    {
-      "id": "US-100",
-      "title": "Diagnostic infrastructure: structured DIAG emitter and _FitError",
-      "priority": 10,
+      "id": "US-200",
+      "title": "dataset_registry.py with Dataset dataclass + DATASETS list",
+      "priority": 20,
       "passes": true,
       "acceptanceCriteria": [
-        "detector.py defines _diag(level, component, reason, **context) that emits 'DIAG <LEVEL>.<component>.<reason> key=value ...' to stderr",
-        "Levels: ERROR > WARN > INFO. Env var OMC_DIAG_LEVEL filters (default WARN). OMC_DIAG_LEVEL=OFF silences everything.",
-        "detector.py defines _FitError(reason, **context) carrying a .context dict for downstream logging",
-        "Sanity shell test: `OMC_DIAG_LEVEL=INFO uv run python -c 'import detector as D; D._diag(\"WARN\",\"test\",\"hello\",n=5)'` emits 'DIAG WARN.test.hello n=5' on stderr"
+        "File dataset_registry.py exists at repo root",
+        "Exports Dataset dataclass (frozen) with fields: id (str), path (Path), eval_weight (float), train_weight (float)",
+        "Exports DATASETS: list[Dataset] with exactly 3 entries: singing (eval=1, train=0 since singing uses pregenerated patches), korean (eval=1, train=1), english (eval=1, train=1)",
+        "Paths resolve via `Path(__file__).resolve().parent` (project root) so the module is importable from any cwd",
+        "Sanity: `uv run python -c 'from dataset_registry import DATASETS; print([d.id for d in DATASETS])'` prints ['singing', 'korean', 'english']",
+        "Each dataset path exists (or points at an optional directory — import succeeds even if one is missing)"
       ]
     },
     {
-      "id": "US-101",
-      "title": "Remove GPD silent fallbacks; explicit caller-side policy",
-      "priority": 11,
+      "id": "US-201",
+      "title": "ml_eval.py iterates DATASETS for classifier training patches",
+      "priority": 21,
       "passes": true,
       "acceptanceCriteria": [
-        "_gpd_threshold(scores, n_tests, alpha, context) RAISES _FitError for each of: n<50, exc<10, mean\u22480, alpha_too_loose, shape clamped out of range. No stub-value returns.",
-        "_gpd_threshold no longer prints internally; all logging happens at call sites.",
-        "Each of the 3 call sites (_detect_phase, _detect_cpe, _detect_crossfade) wraps _gpd_threshold in try/except _FitError. On catch: emit _diag(\"WARN\", component, reason, **context) AND invoke an explicit named fallback `_conservative_threshold(scores, n_tests, alpha)` returning a Bonferroni percentile (no hidden heuristics).",
-        "_conservative_threshold is a plain documented function: `percentile(scores, min(100*(1 - alpha/n_tests), 99.999))`. Its use is always paired with a DIAG WARN, never silent.",
-        "Baseline regression: uv run evaluate.py --with-classifier completes with combined within [0.70, 0.74]"
+        "Hardcoded _KOREAN_SPLICE_DIR and _ENGLISH_SPLICE_DIR constants removed from ml_eval.py",
+        "ml_eval.py imports DATASETS from dataset_registry",
+        "Speech-patch loader iterates datasets with train_weight > 0, calls _load_speech_splice_patches(str(ds.path), ds.id) for each",
+        "Behavior preserved: full eval combined == 0.742 ± 0.01",
+        "DIAG output still shows per-language labels (ml.korean, ml.english) — no regressions in observability"
       ]
     },
     {
-      "id": "US-102",
-      "title": "Remove non-GPD silent fallbacks in detector.py",
-      "priority": 12,
+      "id": "US-202",
+      "title": "aggregate_combined helper in dataset_registry.py",
+      "priority": 22,
       "passes": true,
       "acceptanceCriteria": [
-        "_hotelling_t2 on LinAlgError: raises _FitError. Loop caller (_detect_crossfade / _detect_pairwise) catches per-window, replaces that test\u2019s T\u00b2 with NaN, emits _diag INFO 'hotelling_singular' with window index, and filters NaN before downstream stats.",
-        "_hotelling_t2 for n1==1 or n2==1: raises _FitError 'degenerate_sample'. Callers skip.",
-        "_cqt_band_powers for n_frames<1: raises _FitError. Callers (_detect_pairwise segment loop) catch, emit _diag WARN, skip segment.",
-        "_zscore/_robust_zscore on constant input: no longer silently return zeros. Emit _diag WARN 'degenerate_variance' and return zeros (mathematical limit, but now visible).",
-        "_refine_splice_point when edges prevent refinement: emits _diag INFO 'refine_skipped' with context and returns coarse time.",
-        "Sp regularization in _hotelling_t2 (np.eye*1e-6): emits _diag INFO 'sp_regularized' only when Sp is near-singular (cond > 1e8), not every call."
+        "dataset_registry.py exports aggregate_combined(per_dataset: dict[str, float], method: str = 'geometric', floor: float = 0.01) -> dict",
+        "method supports: 'geometric', 'mean', 'min'",
+        "Returns dict with keys: combined, combined_mean, combined_min, per_dataset",
+        "Geometric mean uses max(v, floor) per value to avoid zero-collapse",
+        "Inline self-test in __main__: for input {'s': 0.738, 'k': 0.25, 'e': 0.05} with method='geometric' + floor=0.01, returned combined is within 0.001 of hand-computed value (≈ 0.227)",
+        "Self-test also covers method='mean' and method='min'"
       ]
     },
     {
-      "id": "US-103",
-      "title": "Instrument silent paths in ml_eval.py",
-      "priority": 13,
+      "id": "US-203",
+      "title": "evaluate.py integration patch documented for user",
+      "priority": 23,
       "passes": true,
       "acceptanceCriteria": [
-        "ml_eval.py imports _diag from detector. Every early-return silent path (_load_patches None, _load_korean_splice_patches None, bound_exceeded, NO_DATA, LOW classifier_quality, continue statements inside patch-extraction loops) emits a DIAG line with reason and useful context (file id, patch count, etc.).",
-        "Continue statements inside loops emit _diag INFO with a count-not-stall warning when fraction skipped exceeds 10%",
-        "Every NaN/inf introduced into features is paired with a DIAG WARN tied to the file id"
+        "File .omc/evaluate_integration.md documents the exact change-set for evaluate.py: (a) iterate DATASETS for per-dataset eval, (b) optional classifier pass per dataset, (c) call aggregate_combined and print combined_<id>, combined_mean, combined_min, combined at end",
+        "Document shows the replacement block for the current Korean-only secondary eval (lines ~519-532 in evaluate.py) with explicit before/after",
+        "Document includes proposed new .omc/coordination/baseline_metrics.json value with a brief rationale (metric semantics change)",
+        "Document is standalone readable — user can apply without agent context"
       ]
     },
     {
-      "id": "US-104",
-      "title": "End-to-end transparency + regression verification",
-      "priority": 14,
+      "id": "US-204",
+      "title": "End-to-end regression after registry refactor",
+      "priority": 24,
       "passes": true,
       "acceptanceCriteria": [
-        "Full eval completes: uv run evaluate.py --with-classifier in <240s, exit 0",
-        "combined (primary) within [0.70, 0.74] of baseline 0.719",
-        "dsp_clean_fp \u2264 15",
-        "verify_agent.py --agent-name observability --reported-combined <actual> exits 0 (HIGH or MEDIUM confidence)",
-        "stderr DIAG lines allow a reader to tally: `grep '^DIAG' warnings.log | awk '{print $2}' | sort | uniq -c` produces meaningful counts per component.reason",
-        "No silent fallback remains: `grep -nE 'return (np\\.zeros|0\\.0|float\\(np\\.max\\()' detector.py ml_eval.py` returns zero lines that aren't inside an explicit _diag-preceded branch"
+        "uv run evaluate.py --with-classifier completes in <240s, exit 0",
+        "combined (primary) == 0.742 ± 0.01",
+        "dsp_clean_fp ≤ 15",
+        "verify_agent.py --agent-name registry-refactor --reported-combined <actual> exits 0 (HIGH or MEDIUM)",
+        "grep-audit confirms no new silent fallbacks: every stub-value return in dataset_registry.py and ml_eval.py is preceded by a _diag or is a policy return"
       ]
     }
   ]
