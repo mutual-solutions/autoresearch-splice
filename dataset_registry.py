@@ -99,6 +99,62 @@ def aggregate_combined(
     }
 
 
+def forensic_combined(
+    per_cell: dict[str, float],
+    clean_fp: int,
+    max_allowed: int = 15,
+    floor: float = 0.01,
+) -> dict:
+    """15-cell geometric mean × smooth FP multiplier.
+
+    Built for the Phase-1 forensic metric (spec: gbm-main-forensic-metric).
+    Callers should pass a dict with 15 keys by convention:
+      12 spliced F1 cells:  `<dataset>_t<tier>_<regime>`
+                            e.g. singing_t1_random, korean_t2_quiet_matched
+       3 clean-score cells: `<dataset>_clean_score`
+
+    Formula:
+      combined = GM(max(v, floor) for v in per_cell.values()) *
+                 max(0, 1 - clean_fp / max(max_allowed, 1))
+
+    The floor prevents zero-collapse when a cell has no signal yet; the
+    FP multiplier is clamped to [0, 1].
+
+    Returns:
+      combined:          scalar primary metric ∈ [0, 1]
+      combined_gm_cells: GM of floored cells, before FP multiplier
+      fp_multiplier:     clamped (1 - clean_fp/max_allowed)
+      per_cell:          echo of input
+      n_cells_included:  number of cells in the GM
+    """
+    if not per_cell:
+        return {
+            "combined": 0.0,
+            "combined_gm_cells": 0.0,
+            "fp_multiplier": 1.0,
+            "per_cell": {},
+            "n_cells_included": 0,
+        }
+
+    floored = np.array(
+        [max(float(v), floor) for v in per_cell.values()], dtype=np.float64
+    )
+    gm = float(np.exp(np.log(floored).mean()))
+
+    raw_mult = 1.0 - float(clean_fp) / max(int(max_allowed), 1)
+    fp_multiplier = max(0.0, min(1.0, raw_mult))
+
+    combined = gm * fp_multiplier
+
+    return {
+        "combined": combined,
+        "combined_gm_cells": gm,
+        "fp_multiplier": fp_multiplier,
+        "per_cell": dict(per_cell),
+        "n_cells_included": len(per_cell),
+    }
+
+
 if __name__ == "__main__":
     # Sanity tests
     ids = [d.id for d in DATASETS]
@@ -126,6 +182,37 @@ if __name__ == "__main__":
     got_min = aggregate_combined({"a": 0.4, "b": 0.6}, method="min")
     assert got_min["combined"] == 0.4
 
+    # --- forensic_combined tests ---
+    # 15 synthetic cells all at 0.5, no FP
+    uniform_cells = {f"cell_{i}": 0.5 for i in range(15)}
+    got_f = forensic_combined(uniform_cells, clean_fp=0, max_allowed=15)
+    assert abs(got_f["combined"] - 0.5) < 1e-9, got_f
+    assert got_f["fp_multiplier"] == 1.0
+    assert got_f["n_cells_included"] == 15
+
+    # One cell at 0.01 (the floor), others at 0.5 — GM drops
+    mixed_cells = dict(uniform_cells)
+    mixed_cells["cell_0"] = 0.01
+    got_mix = forensic_combined(mixed_cells, clean_fp=0, max_allowed=15)
+    # GM = exp((14*log(0.5) + log(0.01))/15) ≈ 0.381
+    expected_gm = float(np.exp((14 * np.log(0.5) + np.log(0.01)) / 15))
+    assert abs(got_mix["combined_gm_cells"] - expected_gm) < 1e-6, got_mix
+    # GM of 14×0.5 + 1×0.01 ≈ 0.385 — meaningfully below the uniform 0.5
+    assert got_mix["combined"] < 0.40, got_mix
+    assert got_mix["combined"] < 0.5, got_mix  # penalty signal confirmed
+
+    # FP multiplier: 5/15 → 0.667
+    got_fp = forensic_combined(uniform_cells, clean_fp=5, max_allowed=15)
+    assert abs(got_fp["fp_multiplier"] - (1 - 5/15)) < 1e-9, got_fp
+    assert abs(got_fp["combined"] - 0.5 * (1 - 5/15)) < 1e-9
+
+    # Clamp: clean_fp > max_allowed → 0
+    got_clamp = forensic_combined(uniform_cells, clean_fp=30, max_allowed=15)
+    assert got_clamp["fp_multiplier"] == 0.0, got_clamp
+    assert got_clamp["combined"] == 0.0
+
     print(f"DATASETS: {ids}")
-    print(f"Self-tests: PASS")
+    print(f"Self-tests: PASS (aggregate_combined + forensic_combined)")
     print(f"Example aggregation: {got}")
+    print(f"Example forensic (15x0.5, fp=5, max=15): combined={got_fp['combined']:.4f} "
+          f"gm={got_fp['combined_gm_cells']:.4f} fpm={got_fp['fp_multiplier']:.4f}")

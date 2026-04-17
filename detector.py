@@ -1036,6 +1036,198 @@ def _peak_pick(curve: np.ndarray, threshold: float, min_dist_s: float,
 # CLI
 # ---------------------------------------------------------------------------
 
+# ===========================================================================
+# DSP single-position accessors (US-300)
+#
+# Each existing _detect_{phase, cpe, crossfade} function computes a score
+# curve, applies silence masking, GPD-thresholds, peak-picks, and refines.
+# For GBM-as-main, we want the CURVE part only — sampled at an arbitrary
+# time t — so DSP scores can feed the GBM feature vector without re-running
+# the whole detector pipeline. These helpers produce the pre-thresholding
+# fused curves and cache them inside a chunk context dict.
+#
+# The existing detection pipeline is UNCHANGED; these are additive.
+# ===========================================================================
+
+def _compute_phase_fused_curve(chunk: np.ndarray, sr: int) -> tuple[np.ndarray, float]:
+    """Return (fused_phase_z_curve, hop_s). Mirrors the curve-building portion
+    of _analyze_segment_phase, up to the silence-masked fused curve — no peak
+    picking / quiet-boundary filter / refine."""
+    hop_ms = 10
+    hop_s = hop_ms / 1000.0
+    n_fft = 1024
+    hop_length = max(1, int(sr * hop_ms / 1000))
+
+    _, _, Zxx = sp_signal.stft(chunk, fs=sr, nperseg=n_fft,
+                                noverlap=n_fft - hop_length)
+    phase_disc = _phase_discontinuity(Zxx, sr, n_fft, hop_length)
+    phase_z = _zscore(phase_disc)
+
+    mag = np.abs(Zxx)
+    bcr = _broadband_change_ratio(mag)
+    bcr_z = _zscore(bcr)
+
+    min_len = min(len(phase_z), len(bcr_z))
+    phase_z = phase_z[:min_len]
+    bcr_z = bcr_z[:min_len]
+    fused = phase_z * (1.0 + np.clip(bcr_z, 0, None))
+
+    silence = _silence_mask(chunk, sr, hop_ms=hop_ms, threshold_db=-45)[:min_len]
+    fused = fused * silence
+    return fused, hop_s
+
+
+def _compute_cpe_fused_curve(chunk: np.ndarray, sr: int) -> tuple[np.ndarray, float]:
+    """Return (fused_cpe_z_curve, hop_s). Mirrors _detect_cpe up to the
+    silence-masked fused curve."""
+    hop_ms = 10
+    hop_s = hop_ms / 1000.0
+    n_fft = 1024
+    hop_length = max(1, int(sr * hop_ms / 1000))
+
+    agc_window = max(1, int(sr * 0.300))
+    local_power = uniform_filter1d(chunk ** 2, size=agc_window, mode='constant')
+    local_rms = np.sqrt(np.maximum(local_power, 1e-10))
+    audio_agc = chunk / local_rms
+
+    _, _, Zxx = sp_signal.stft(audio_agc, fs=sr, nperseg=n_fft,
+                                noverlap=n_fft - hop_length)
+    freqs = np.fft.rfftfreq(n_fft, d=1.0 / sr)
+    phase_advance = np.exp(1j * 2 * np.pi * freqs * (hop_length / sr))[:, np.newaxis]
+    predicted = Zxx[:, :-1] * phase_advance
+    error = Zxx[:, 1:] - predicted
+    cpe_score = np.sum(np.abs(error) ** 2, axis=0)
+    cpe_z = _zscore(cpe_score)
+
+    silence = _silence_mask(chunk, sr, hop_ms=hop_ms, threshold_db=-45)
+    min_len = min(len(cpe_z), len(silence))
+    fused = cpe_z[:min_len] * silence[:min_len]
+    return fused, hop_s
+
+
+def _compute_t2_z_curve(chunk: np.ndarray, sr: int,
+                        compare_window_s: float = 5.0,
+                        hop_s: float = 0.5,
+                        K: int = 16) -> tuple[np.ndarray, np.ndarray]:
+    """Return (t2_z_curve, test_times_sec). Mirrors _detect_crossfade up to the
+    silence-masked t2_z curve. Returns (empty, empty) arrays if the chunk is
+    too short to fit the compare window."""
+    try:
+        band_powers = _cqt_band_powers(chunk, sr, K, frame_s=0.050, hop_s=0.020)
+    except _FitError:
+        return np.array([]), np.array([])
+
+    flux = np.sqrt(np.sum(np.diff(band_powers, axis=1) ** 2, axis=0))
+    flux = np.concatenate([[flux[0]], flux])
+    flux_smooth = uniform_filter1d(flux, size=5, mode='nearest')
+    band_powers = np.vstack([band_powers, flux_smooth[np.newaxis, :]])
+
+    frames_per_window = max(1, int(compare_window_s / 0.020))
+    hop_frames = max(1, int(hop_s / 0.020))
+    n_frames = band_powers.shape[1]
+    if n_frames < 2 * frames_per_window + 1:
+        return np.array([]), np.array([])
+
+    t2_scores = []
+    test_times = []
+    for center in range(frames_per_window, n_frames - frames_per_window, hop_frames):
+        left = band_powers[:, center - frames_per_window: center].T
+        right = band_powers[:, center: center + frames_per_window].T
+        try:
+            t2 = _hotelling_t2(left, right)
+        except _FitError:
+            t2 = 0.0
+        t2_scores.append(t2)
+        test_times.append(center * 0.020)
+
+    if not t2_scores:
+        return np.array([]), np.array([])
+
+    t2_arr = np.array(t2_scores)
+    times_arr = np.array(test_times)
+    t2_z = _robust_zscore(t2_arr)
+
+    silence = _silence_mask(chunk, sr, hop_ms=100, threshold_db=-45)
+    silence_at_test = np.interp(times_arr, np.arange(len(silence)) * 0.1, silence)
+    t2_z = t2_z * (silence_at_test > 0.5).astype(float)
+    return t2_z, times_arr
+
+
+def _build_chunk_context(chunk: np.ndarray, sr: int) -> dict:
+    """Precompute DSP score curves once per chunk. Caller passes the returned
+    dict to phase_z_at / t2_z_at / cpe_z_at for O(1) per-t lookups.
+
+    Also computes pairwise block-structure (single summary value, not a curve).
+    """
+    phase_curve, phase_hop_s = _compute_phase_fused_curve(chunk, sr)
+    cpe_curve, cpe_hop_s = _compute_cpe_fused_curve(chunk, sr)
+    t2_curve, t2_times = _compute_t2_z_curve(chunk, sr)
+
+    try:
+        pw_score, pw_time = _detect_pairwise(chunk, sr)
+    except Exception:
+        pw_score, pw_time = 0.0, None
+
+    return {
+        "sr": sr,
+        "duration_s": len(chunk) / sr,
+        "phase_curve": phase_curve,
+        "phase_hop_s": phase_hop_s,
+        "cpe_curve": cpe_curve,
+        "cpe_hop_s": cpe_hop_s,
+        "t2_curve": t2_curve,
+        "t2_times": t2_times,
+        "pw_score": float(pw_score),
+        "pw_time": None if pw_time is None else float(pw_time),
+    }
+
+
+def _sample_uniform_curve(curve: np.ndarray, hop_s: float, t_sec: float) -> float:
+    """Sample a uniform-hop curve at t_sec. Clamps to curve bounds."""
+    if len(curve) == 0:
+        return 0.0
+    frame = int(round(t_sec / hop_s))
+    frame = max(0, min(frame, len(curve) - 1))
+    return float(curve[frame])
+
+
+def phase_z_at(ctx: dict, t_sec: float) -> float:
+    """DSP phase-discontinuity fused z-score at chunk-local time t_sec."""
+    return _sample_uniform_curve(ctx["phase_curve"], ctx["phase_hop_s"], t_sec)
+
+
+def cpe_z_at(ctx: dict, t_sec: float) -> float:
+    """DSP complex-prediction-error fused z-score at chunk-local time t_sec."""
+    return _sample_uniform_curve(ctx["cpe_curve"], ctx["cpe_hop_s"], t_sec)
+
+
+def t2_z_at(ctx: dict, t_sec: float) -> float:
+    """DSP crossfade Hotelling T² z-score at the t2 test point nearest t_sec.
+
+    The t2 grid is sparse (0.5s hop) so we find the closest test point.
+    Returns 0.0 if chunk was too short for T² tests.
+    """
+    times = ctx["t2_times"]
+    curve = ctx["t2_curve"]
+    if len(curve) == 0:
+        return 0.0
+    idx = int(np.argmin(np.abs(times - t_sec)))
+    return float(curve[idx])
+
+
+def pairwise_proximity_at(ctx: dict, t_sec: float) -> float:
+    """How close t_sec is to the chunk's pairwise-block-split time. Returns
+    0.0 when no pairwise split was found; otherwise pw_score scaled by a
+    Gaussian centered on the split time (sigma=2.5s).
+    """
+    pw_time = ctx.get("pw_time")
+    pw_score = ctx.get("pw_score", 0.0)
+    if pw_time is None or pw_score == 0.0:
+        return 0.0
+    sigma_s = 2.5
+    return float(pw_score * np.exp(-0.5 * ((t_sec - pw_time) / sigma_s) ** 2))
+
+
 def _load_wav(path: str) -> tuple[np.ndarray, int]:
     import soundfile as sf
     audio, sr = sf.read(path, dtype="float32", always_2d=False)

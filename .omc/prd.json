@@ -67,6 +67,123 @@
       ]
     },
     {
+      "id": "US-300",
+      "title": "DSP single-position accessors — phase_z_at / t2_z_at / cpe_z_at",
+      "priority": 30,
+      "passes": true,
+      "acceptanceCriteria": [
+        "detector.py exposes `phase_z_at(chunk_ctx, t_sec) -> float`, `t2_z_at(chunk_ctx, t_sec) -> float`, `cpe_z_at(chunk_ctx, t_sec) -> float` that return the chunk-local z-score at a given time without re-running the full detection pipeline",
+        "A new `_build_chunk_context(chunk, sr) -> dict` precomputes phase/T2/CPE curves once per chunk so the per-t accessors are O(1) lookups",
+        "The existing detect_splices code path still works unchanged (accessors are additive; current API preserved)",
+        "Sanity: uv run python -c \"from detector import _build_chunk_context, phase_z_at, t2_z_at, cpe_z_at; import librosa; y,sr=librosa.load('data/spliced/tier1/splice_t1_001.wav', sr=None); ctx=_build_chunk_context(y[:60*sr], sr); print(phase_z_at(ctx, 30.0), t2_z_at(ctx, 30.0), cpe_z_at(ctx, 30.0))\" returns three floats without error"
+      ]
+    },
+    {
+      "id": "US-301",
+      "title": "15-cell metric aggregator + FP multiplier",
+      "priority": 31,
+      "passes": true,
+      "acceptanceCriteria": [
+        "dataset_registry.py adds `forensic_combined(per_cell: dict[str, float], clean_fp: int, max_allowed: int, floor: float = 0.01) -> dict` that computes geometric mean of the 15 cells (floored) × (1 - clean_fp/max_allowed) clamped to [0, 1]",
+        "Cell names follow convention `<dataset>_t<tier>_<regime>` for 12 spliced cells and `<dataset>_clean_score` for 3 clean cells",
+        "Returns dict with keys: combined, combined_gm_cells, fp_multiplier, per_cell, n_cells_included",
+        "Inline __main__ test: for 15 synthetic cells all at 0.5 + 0 clean_fp, combined == 0.5. For one cell at 0.01 + others at 0.5, combined drops below 0.38 (demonstrating GM penalty). For 5 clean_fp / max_allowed=15, fp_multiplier == 0.667.",
+        "Does NOT replace the existing aggregate_combined — it sits alongside as the forensic-specific aggregator"
+      ]
+    },
+    {
+      "id": "US-302",
+      "title": "Regenerate singing dataset with boundary_energy regime split",
+      "priority": 32,
+      "passes": false,
+      "acceptanceCriteria": [
+        "corpora/data/generate_splices.py (singing, 44.1kHz) imports from splice_boundary and picks 10 random + 10 quiet_matched per tier (matching Korean/English structure)",
+        "Regenerated data/spliced/ground_truth.json has boundary_energy field on every tier1/tier2 entry; at least 10 entries per regime per tier",
+        "Measured boundary_rms_db_a / boundary_rms_db_b recorded per spliced file",
+        "Singing primary eval still runs without error after regeneration; combined_dsp differs no more than 0.1 from pre-regen baseline (i.e. new dataset is stylistically compatible)",
+        "Submodule corpora/ commit pins the new generator; parent repo updates corpora pointer"
+      ]
+    },
+    {
+      "id": "US-303",
+      "title": "Feature extraction module features.py (~66 dims per candidate)",
+      "priority": 33,
+      "passes": false,
+      "acceptanceCriteria": [
+        "New features.py at repo root exports `extract_features(audio, sr, t_sec, chunk_ctx=None) -> dict[str, float]` returning ~66 named features",
+        "Feature categories covered: 4 DSP scores, 13 MFCC pre/post deltas, 6 spectral summary deltas, 6 noise-floor color features, 8 pitch/voicing, 6 energy/ZCR, 3 boundary-region, 20 mel-PCA-tail",
+        "Every feature has a documented name; `extract_features` also exports FEATURE_NAMES list for SHAP labeling",
+        "Idempotent: same (audio, sr, t) produces identical output vector",
+        "Performance: 1000 calls on a cached chunk_ctx complete in <2s on laptop CPU (budget for dense scanning)",
+        "Integration: ml_eval or a training script can call it to produce a feature matrix",
+        "Note: PCA fit for mel tail is pre-loaded from a training-time fit file if present; self-fit fallback if not"
+      ]
+    },
+    {
+      "id": "US-304",
+      "title": "Multi-class GBM training pipeline",
+      "priority": 34,
+      "passes": false,
+      "acceptanceCriteria": [
+        ".omc/classifier/train_classifier.py trains a 3-class GBM (not_splice / hard_cut / crossfade) using features.py output",
+        "Training data: for each spliced file, label positive candidates (within 1s of GT) by tier (1→hard_cut, 2→crossfade); label negatives sampled from both spliced (far from GT) and clean files as not_splice",
+        "GroupKFold by file_id preserved; OOF multi-class F1 reported (weighted and per-class)",
+        "Saved joblib artifact at .omc/classifier/fp_classifier.joblib works with `model.predict_proba([features_vector])` returning shape (1, 3)",
+        "Multi-class OOF F1 (weighted) ≥ 0.70 on training distribution (softer than binary 0.85 because 3-way is harder; ground-truth target)"
+      ]
+    },
+    {
+      "id": "US-305",
+      "title": "Detector refactor — GBM-first dense scan",
+      "priority": 35,
+      "passes": false,
+      "acceptanceCriteria": [
+        "detector.py `detect_splices` replaces DSP-first logic with: slide chunks (W=60s, S=50s); for each chunk call `_build_chunk_context` then `gbm.predict_proba` at every candidate position (stride = ANALYSIS_STRIDE_S = 0.2s); emit (t, label, probability) when p_splice > THRESHOLD (default 0.5)",
+        "Labels are 'hard_cut' or 'crossfade' from argmax of the two non-not_splice classes",
+        "Memoization cache preserved (keyed by audio fingerprint + model hash so it invalidates when the classifier changes)",
+        "DIAG observability preserved — existing DIAG lines for GPD unfit / hotelling near-singular still emit; one new DIAG emits per chunk with (scan_count, emit_count)",
+        "Sliding window geometry (W=60, S=50) unchanged",
+        "Existing eval_by_regime.py works without modification (same API: `detect_splices(audio, sr) -> list[float]` with times in file coordinates)"
+      ]
+    },
+    {
+      "id": "US-306",
+      "title": "evaluate.py integration patch for new metric",
+      "priority": 36,
+      "passes": false,
+      "acceptanceCriteria": [
+        ".omc/evaluate_integration.md updated with the exact block to replace in evaluate.py — iterating DATASETS × regimes × tiers, computing forensic_combined, printing combined_<cell>, combined_mean, combined_min, combined (last)",
+        "Includes updated baseline_metrics.json proposal with new combined value pinned once current code runs end-to-end",
+        "Doc is standalone applyable by the user without agent assistance",
+        "Does NOT edit evaluate.py itself (protected)"
+      ]
+    },
+    {
+      "id": "US-307",
+      "title": "Forensic report sidecar (SHAP export per detection)",
+      "priority": 37,
+      "passes": false,
+      "acceptanceCriteria": [
+        "ml_eval.py (or a new report module) exports per-detection explanation JSON: {'time_sec': float, 'label': str, 'probability': float, 'top_features': [{'name': str, 'value': float, 'shap': float}, ...]}",
+        "Top-3 SHAP contributors computed from the saved GBM model (use sklearn's feature_importances_ if SHAP not installed; fall back with a DIAG note)",
+        "When evaluate.py runs with --with-classifier, a reports/ directory is populated with one JSON per detection",
+        "Report includes dsp-score values even when they're not the top-3 SHAP contributors (they're always forensically relevant)"
+      ]
+    },
+    {
+      "id": "US-308",
+      "title": "End-to-end regression: implementation-done gate",
+      "priority": 38,
+      "passes": false,
+      "acceptanceCriteria": [
+        "uv run evaluate.py --with-classifier completes in <240s, exit 0",
+        "verify_agent.py returns HIGH (or MEDIUM) confidence on the new combined value",
+        "DSP clean_fp bound respected (DSP layer still checkpointed)",
+        "DIAG tally post-run shows no silent crashes (no unexpected high-count WARN/ERROR components)",
+        "Current combined value (Phase 1 baseline) is RECORDED in baseline_metrics.json and .omc/progress.txt — this becomes the Phase 2 autoresearch starting point"
+      ]
+    },
+    {
       "id": "US-204",
       "title": "End-to-end regression after registry refactor",
       "priority": 24,
