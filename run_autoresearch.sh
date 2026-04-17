@@ -55,11 +55,6 @@ ARCHITECTURE NOTE (2026-04-18): detect_splices now runs GBM-first dense scan.
       GBM_THRESHOLD         current 0.985  — P(splice)>thr is an emit; higher = fewer FP
       GBM_MIN_SEP_S         current 2.5    — dedupe distance for adjacent emits
       ANALYSIS_STRIDE_S     current 0.2    — dense-scan stride (smaller = denser, slower)
-      GATE_PHASE_Z_MIN      current 1.0    — OR-gate on phase z-score
-      GATE_T2_Z_MIN         current 2.0    — OR-gate on T² z-score
-      GATE_CPE_Z_MIN        current 1.0    — OR-gate on CPE z-score
-      GATE_PAIRWISE_MIN     current 1.0    — OR-gate on pairwise proximity
-      GATING_DEFAULT        current True   — master gating switch
   - RETRAIN-required tunables (slower, ~3-5 min each) — .omc/classifier/train_classifier.py:
       make_pipeline() GradientBoostingClassifier hyperparams (n_estimators, max_depth,
       learning_rate, subsample). After edits run: uv run python .omc/classifier/train_classifier.py

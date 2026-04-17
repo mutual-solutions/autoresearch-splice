@@ -43,37 +43,6 @@ GBM_THRESHOLD = 0.985
 # adjacent candidates.
 GBM_MIN_SEP_S = 2.5
 
-# --- DSP gating (optional second-stage filter on GBM candidates) ---
-# When enabled, every GBM-accepted candidate t must additionally show at
-# least one elevated DSP score at t. This re-purposes the old DSP
-# detectors (phase, T2, CPE, pairwise) as cheap-to-compute gates — they
-# run for free once `_build_chunk_context` has already populated the
-# curves. Thresholds are loose by design: the GBM has already decided
-# "splice-like", so the gate only needs to reject positions with *no*
-# DSP signal at all (typical of clean-audio false positives).
-#
-# Calibration (measured 2026-04-18):
-#   TP positions:  t2_z median 8.3, pairwise median 5.3
-#   Clean-random:  t2_z p90 1.4,   pairwise p90 0.07
-# So any OR of these above p99-of-clean lets ≈95% of TPs through while
-# blocking the easiest clean-audio false positives.
-GATE_PHASE_Z_MIN = 1.0
-GATE_T2_Z_MIN = 3.0
-GATE_CPE_Z_MIN = 1.0
-GATE_PAIRWISE_MIN = 1.0
-# Enable the gate unless explicitly turned off (evaluate.py --with-gating
-# path). Toggle via env var so we can A/B without editing the protected
-# evaluate.py: OMC_SPLICE_GATING="0" disables, "1" enables, anything else
-# falls back to the default.
-GATING_DEFAULT = True
-_GATING_ENV = os.environ.get("OMC_SPLICE_GATING")
-if _GATING_ENV in ("0", "false", "no"):
-    GATING_ENABLED = False
-elif _GATING_ENV in ("1", "true", "yes"):
-    GATING_ENABLED = True
-else:
-    GATING_ENABLED = GATING_DEFAULT
-
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     ".omc", "classifier", "fp_classifier.joblib",
@@ -240,8 +209,6 @@ def _gbm_detect_splices(
     t_ctx_sum = 0.0
     t_feat_sum = 0.0
     t_pred_sum = 0.0
-    t_gate_sum = 0.0
-    gate_rej_total = 0
     gbm_emit_total = 0
 
     file_t0 = _time.perf_counter()
@@ -294,20 +261,8 @@ def _gbm_detect_splices(
         gbm_emit_count = int(hit_mask.sum())
         gbm_emit_total += gbm_emit_count
 
-        t0 = _time.perf_counter()
-        gated_out = 0
         for i in np.flatnonzero(hit_mask):
             t_local = float(t_grid[i])
-            if GATING_ENABLED and not _dsp_gate_pass(ctx, t_local):
-                gated_out += 1
-                _diag("INFO", "gate", "rejected",
-                      t=f"{offset_s + t_local:.2f}",
-                      p_splice=f"{p_splice[i]:.3f}",
-                      phase=f"{phase_z_at(ctx, t_local):.2f}",
-                      t2=f"{t2_z_at(ctx, t_local):.2f}",
-                      cpe=f"{cpe_z_at(ctx, t_local):.2f}",
-                      pw=f"{pairwise_proximity_at(ctx, t_local):.2f}")
-                continue
             label_id, _col = max(splice_cols, key=lambda sc: proba[i, sc[1]])
             all_emits.append((
                 float(offset_s + t_local),
@@ -315,16 +270,11 @@ def _gbm_detect_splices(
                 float(p_splice[i]),
                 X[i].tolist(),
             ))
-        t_gate_sum += _time.perf_counter() - t0
-        gate_rej_total += gated_out
 
         _diag("INFO", "gbm", "chunk_scan_done",
               start=f"{offset_s:.2f}",
               scan_count=len(t_grid),
               gbm_emit=gbm_emit_count,
-              gated_out=gated_out,
-              post_gate=gbm_emit_count - gated_out,
-              gating=("on" if GATING_ENABLED else "off"),
               t_ctx_ms=int(t_ctx * 1000),
               t_feat_ms=int(t_feat * 1000),
               t_pred_ms=int(t_pred * 1000))
@@ -333,12 +283,9 @@ def _gbm_detect_splices(
           chunks=n_chunks,
           scan_total=scan_total,
           gbm_emit_total=gbm_emit_total,
-          gate_rej_total=gate_rej_total,
-          post_gate=gbm_emit_total - gate_rej_total,
           t_ctx_total_ms=int(t_ctx_sum * 1000),
           t_feat_total_ms=int(t_feat_sum * 1000),
           t_pred_total_ms=int(t_pred_sum * 1000),
-          t_gate_total_ms=int(t_gate_sum * 1000),
           t_wall_ms=int((_time.perf_counter() - file_t0) * 1000))
 
     _diag("INFO", "gbm", "scan_summary",
@@ -1550,24 +1497,6 @@ def pairwise_proximity_at(ctx: dict, t_sec: float) -> float:
         return 0.0
     sigma_s = 2.5
     return float(pw_score * np.exp(-0.5 * ((t_sec - pw_time) / sigma_s) ** 2))
-
-
-def _dsp_gate_pass(ctx: dict, t_sec: float) -> bool:
-    """OR-gate: any elevated DSP score at t_sec confirms the GBM candidate.
-
-    Using OR (not AND) because no single DSP signal is reliable across all
-    splice types — phase discontinuity fires for hard cuts, T² fires for
-    crossfades, pairwise fires for block-structure changes, CPE for
-    amplitude+phase joint events. Requiring even one of them to exceed a
-    loose threshold rejects positions with zero acoustic discontinuity
-    signal (typical clean-audio false positives) while preserving recall.
-    """
-    return (
-        phase_z_at(ctx, t_sec) >= GATE_PHASE_Z_MIN
-        or t2_z_at(ctx, t_sec) >= GATE_T2_Z_MIN
-        or cpe_z_at(ctx, t_sec) >= GATE_CPE_Z_MIN
-        or pairwise_proximity_at(ctx, t_sec) >= GATE_PAIRWISE_MIN
-    )
 
 
 def _load_wav(path: str) -> tuple[np.ndarray, int]:
