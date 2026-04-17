@@ -87,6 +87,12 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
         _diag("INFO", "pairwise", "audio_too_short",
               duration_s=f"{duration_s:.2f}", n_segments=N, required=4)
         return 0.0, None
+    # O(N²) pair count grows fast; skip for long audio where crossfade T²
+    # is expected to have enough data for a real GPD fit anyway.
+    if N > 30:
+        _diag("INFO", "pairwise", "skipped_long_audio",
+              duration_s=f"{duration_s:.2f}", n_segments=N, max_n=30)
+        return 0.0, None
 
     # Compute CQT band powers for each segment. A segment that can't be
     # analyzed (too short) is skipped with an explicit DIAG and excluded
