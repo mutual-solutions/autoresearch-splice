@@ -1,12 +1,12 @@
 {
-  "version": 1,
-  "dataset": "data/spliced",
+  "version": 2,
+  "dataset": "data/eval/singing",
   "expected_counts": {
     "tier1": 20,
     "tier2": 20,
-    "clean": 50
+    "clean": 20
   },
-  "ground_truth_sha256_prefix": "f46cdbabffe6",
-  "total_files": 91,
-  "notes": "Counts exclude .DS_Store. GT hash is first 12 chars of sha256. ground_truth.json validated separately via sha256 prefix."
+  "ground_truth_sha256_prefix": "dc2fa84c0802",
+  "total_files": 61,
+  "notes": "Counts exclude .DS_Store. 20/20/20 layout (post unification + duration/codec mix). GT hash is first 12 chars of sha256 of ground_truth.json. Korean/English eval live under data/eval/{korean,english}/ now."
 }

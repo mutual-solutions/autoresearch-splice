@@ -52,6 +52,9 @@ def load_ground_truth(data_dir):
             "gt_times": sorted(gt_times),
             "tier": entry.get("tier", 0),
             "crossfade_ms": entry.get("crossfade_ms"),
+            # boundary_energy regime label: "random" / "quiet_matched" / None
+            # (used for forensic per-cell breakdown; absent → "unknown").
+            "boundary_energy": entry.get("boundary_energy"),
         })
     return cases
 
@@ -136,6 +139,11 @@ def evaluate(data_dir):
     fp_per_file = {}   # name -> fp count
     xfade_results = {}  # crossfade_ms -> {"tp": int, "total": int}
     all_loc_distances = []  # distances between TP detections and ground truth
+    # Per-tier × per-regime breakdown for the future 15-cell forensic metric.
+    # Key: "t{tier}_{regime}" e.g. "t1_random" / "t2_quiet_matched". Values:
+    # {tp, fp, fn, n_files}. Only spliced files contribute; clean files feed
+    # clean_score separately.
+    by_tier_regime: dict = {}
 
     print(f"Evaluating {total_files} files from {data_dir}")
     print("-" * 60)
@@ -204,6 +212,18 @@ def evaluate(data_dir):
         if not case["spliced"]:
             clean_files += 1
             clean_fp += fp
+
+        # Per-tier × per-regime accumulation (spliced only).
+        if case["spliced"]:
+            regime = case.get("boundary_energy") or "unknown"
+            cell = f"t{case['tier']}_{regime}"
+            slot = by_tier_regime.setdefault(
+                cell, {"tp": 0, "fp": 0, "fn": 0, "n_files": 0}
+            )
+            slot["tp"] += tp
+            slot["fp"] += fp
+            slot["fn"] += fn
+            slot["n_files"] += 1
 
         # Per-file summary
         status = "OK" if (tp == len(case["gt_times"]) and fp == 0) else "MISS"
@@ -294,6 +314,7 @@ def evaluate(data_dir):
         "fp_distribution": fp_dist,
         "max_fp_file": max_fp_file,
         "t2_by_xfade": {xf: {"tp": v["tp"], "total": v["total"]} for xf, v in xfade_results.items()},
+        "by_tier_regime": by_tier_regime,
         "loc_distances": all_loc_distances,
         "loc_mean": loc_mean,
         "loc_median": loc_median,
@@ -480,8 +501,10 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--data-dir",
-        default=os.path.join(os.path.dirname(__file__), "data", "spliced"),
-        help="Path to spliced test data directory (default: data/spliced/)",
+        default=None,
+        help="Single-dataset override for ad-hoc debugging. If omitted the "
+             "evaluator iterates every entry in dataset_registry.DATASETS and "
+             "reports the geometric-mean `combined` across them.",
     )
     parser.add_argument(
         "--multi", action="store_true",
@@ -495,12 +518,24 @@ if __name__ == "__main__":
         "--shap", action="store_true",
         help="Write per-detection SHAP explanation JSONs under reports/<git_sha>/",
     )
+    parser.add_argument(
+        "--test", action="store_true",
+        help="Evaluate the held-out test split (data/test/<domain>/) instead "
+             "of the eval split. Longer duration envelope, 20-min budget; "
+             "NOT the metric autoresearch optimizes.",
+    )
     args = parser.parse_args()
 
     t0 = time.time()
     if args.multi:
-        base = os.path.dirname(os.path.realpath(args.data_dir))
-        dirs = [args.data_dir]
+        # Legacy: --multi runs both normal and quiet variants of a single
+        # tree. Retained for ad-hoc debugging; does not feed the cross-dataset
+        # GM.
+        base = os.path.dirname(os.path.realpath(
+            args.data_dir or os.path.join(os.path.dirname(__file__), "data", "spliced")
+        ))
+        primary = args.data_dir or os.path.join(base, "spliced")
+        dirs = [primary]
         quiet = os.path.join(base, "spliced_quiet")
         if os.path.exists(quiet):
             dirs.append(quiet)
@@ -511,16 +546,75 @@ if __name__ == "__main__":
             for d in dirs:
                 evaluate_codec(d)
             evaluate_multi_codec(dirs)
-    else:
+    elif args.data_dir:
+        # Single-dataset ad-hoc mode. Prints `combined:` for THIS dataset
+        # only; not aggregated into the GM.
         result = evaluate(args.data_dir)
         if args.codec:
             evaluate_codec(args.data_dir)
-
         if args.shap:
             from ml_eval import export_shap_reports
             export_shap_reports(result, args.data_dir)
-        # The detector always runs the GBM internally now; `combined:` here is
-        # the GBM-filtered score regardless of the --shap flag.
         print(f"combined: {result['combined']:.6f}")
+    else:
+        # Default: iterate dataset_registry.DATASETS and report the
+        # geometric-mean `combined` across all eval_weight>0 entries. This
+        # is the metric autoresearch optimizes.
+        from dataset_registry import DATASETS, aggregate_combined
+        if args.shap:
+            from ml_eval import export_shap_reports
+
+        split_label = "test" if args.test else "eval"
+        per_dataset: dict[str, float] = {}
+        per_dataset_clean_fp: dict[str, int] = {}
+
+        for ds in DATASETS:
+            if ds.eval_weight <= 0:
+                continue
+            ds_path = str(ds.test_path if args.test else ds.eval_path)
+            if not os.path.isdir(ds_path):
+                print(f"combined_{ds.id}: MISSING (no such directory: {ds_path})")
+                continue
+            print(f"\n=== Evaluating {split_label}: {ds.id} ({ds_path}) ===")
+            try:
+                ds_result = evaluate(ds_path)
+                per_dataset[ds.id] = ds_result["combined"]
+                per_dataset_clean_fp[ds.id] = ds_result["clean_fp"]
+                if args.shap:
+                    export_shap_reports(ds_result, ds_path)
+                if args.codec:
+                    evaluate_codec(ds_path)
+            except Exception as _e:
+                per_dataset[ds.id] = 0.0
+                per_dataset_clean_fp[ds.id] = 0
+                print(f"combined_{ds.id}: ERROR ({type(_e).__name__}: {_e})")
+            print(f"=== End {ds.id} ===\n")
+
+        # Aggregate — geometric mean with floor to avoid zero-collapse on
+        # new / untested datasets.
+        agg = aggregate_combined(per_dataset, method="geometric", floor=0.01)
+        print("=== Cross-dataset aggregate ===")
+        for ds_id, v in per_dataset.items():
+            print(f"combined_{ds_id}: {v:.6f}  clean_fp_{ds_id}={per_dataset_clean_fp.get(ds_id, 'NA')}")
+        print(f"combined_mean: {agg['combined_mean']:.6f}")
+        print(f"combined_min:  {agg['combined_min']:.6f}")
+        # RESULTS_TSV: one-line structured block the autoresearch wrapper
+        # greps for deterministic metric parsing. Keys match results.tsv
+        # column names. NA is emitted when a value is not applicable (e.g.
+        # a dataset was missing). The wrapper must also parse combined /
+        # splice_f1 / clean_score from their own lines above; this block is
+        # a redundant safety net so the TSV is never silently zero.
+        total_clean_fp = sum(per_dataset_clean_fp.values())
+        print(
+            "RESULTS_TSV: "
+            f"combined={agg['combined']:.6f} "
+            f"combined_mean={agg['combined_mean']:.6f} "
+            f"combined_min={agg['combined_min']:.6f} "
+            f"clean_fp={total_clean_fp} "
+            f"n_datasets={len(per_dataset)}"
+        )
+        # LAST `combined:` line — wrapper + verify_agent parsers rely on
+        # this contract.
+        print(f"combined: {agg['combined']:.6f}")
     elapsed = time.time() - t0
     print(f"elapsed: {elapsed:.1f}s")

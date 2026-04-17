@@ -819,7 +819,7 @@ def extract_features(
 if __name__ == "__main__":
     import time
 
-    wav_path = "data/spliced/tier1/splice_t1_001.wav"
+    wav_path = "data/eval/singing/tier1/splice_t1_001.wav"
     print(f"Loading {wav_path} ...")
     audio, sr = librosa.load(wav_path, sr=None, mono=True)
     print(f"  sr={sr}  duration={len(audio)/sr:.1f}s")

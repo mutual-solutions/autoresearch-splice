@@ -126,7 +126,7 @@ def _tier_label(tier: int) -> int:
 
 def _iter_training_files():
     for ds in DATASETS:
-        gt_path = ds.path / "ground_truth.json"
+        gt_path = ds.train_path / "ground_truth.json"
         if not gt_path.exists():
             _diag("WARN", "train", "gt_missing",
                   dataset=ds.id, path=str(gt_path))
@@ -134,7 +134,7 @@ def _iter_training_files():
         with open(gt_path) as f:
             gt = json.load(f)
         for name, info in sorted(gt.items()):
-            audio_path = ds.path / info["path"]
+            audio_path = ds.train_path / info["path"]
             if not audio_path.exists():
                 _diag("INFO", "train", "audio_missing",
                       dataset=ds.id, name=name)

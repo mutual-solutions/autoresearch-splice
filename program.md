@@ -62,7 +62,7 @@ Allowed techniques (non-exhaustive):
 1. Agree on a run tag (e.g. `apr15`). Branch `autoresearch/<tag>` must not exist.
 2. `git checkout -b autoresearch/<tag>` from main.
 3. Read `README.md`, `evaluate.py`, and `detector.py` in full.
-4. Verify `data/spliced/` contains WAV files and `ground_truth.json`.
+4. Verify `data/eval/{singing,korean,english}/` each contain `ground_truth.json` and `tier1/` / `tier2/` / `clean/` subdirs.
 5. Initialize `results.tsv` with just the header row.
 6. Confirm and begin.
 

@@ -17,7 +17,8 @@ BASELINE_PATH = SCRIPT_DIR / "baseline_metrics.json"
 PROTECTED_FILES = [
     "evaluate.py",
     "program.md",
-    "data/spliced/*",
+    "data/eval/*",
+    "data/test/*",
     ".omc/coordination/manifest.json",
     ".omc/coordination/preflight.py",
 ]
@@ -28,10 +29,10 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     try:
         result = subprocess.run(
             ["uv", "run", "python", "evaluate.py", "--shap"],
-            capture_output=True, text=True, timeout=240,
+            capture_output=True, text=True, timeout=300,
         )
     except subprocess.TimeoutExpired:
-        return "FAIL", "evaluate.py timed out after 240s", ""
+        return "FAIL", "evaluate.py timed out after 300s", ""
     except Exception as e:
         return "FAIL", f"subprocess error: {e}", ""
 

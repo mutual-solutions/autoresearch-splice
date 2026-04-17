@@ -28,3 +28,35 @@ results.tsv
 
 # Stale cache (see ml_eval.py note — no longer written, but guard against reappearance)
 .omc/classifier/patches_korean_splice.npz
+
+# Raw source-audio pools — 20+ GB from zeroth-korean / LibriSpeech / singing
+# clean WAVs. Reproducible via external downloads; not worth committing.
+data/sources/
+
+# Generated audio in eval/train/test — ~1.8 GB across 3 domains × 3 splits.
+# Reproducible deterministically via `uv run python data_synth/regenerate_datasets.py
+# --domain all --split all` from the source pools. Only ground_truth.json per
+# split is tracked (acts as the manifest the generator populates).
+data/eval/*/tier1/
+data/eval/*/tier2/
+data/eval/*/clean/
+data/train/*/tier1/
+data/train/*/tier2/
+data/train/*/clean/
+data/test/*/tier1/
+data/test/*/tier2/
+data/test/*/clean/
+
+# Autoresearch debug sink (rotates, regrows per run)
+.omc/autoresearch-debug.log
+.omc/autoresearch-debug.log.1
+
+# Coverage artifacts
+.coverage
+
+# SHAP sidecars are per-commit forensic output, not source code
+reports/
+
+# macOS + editor detritus
+.DS_Store
+.claude/

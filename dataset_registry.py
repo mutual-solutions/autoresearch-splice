@@ -18,37 +18,49 @@ from pathlib import Path
 import numpy as np
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
-# Speech corpora live in the `corpora/` submodule (formerly the sibling
-# audio-splice-detector repo, relocated 2026-04-17).
-_CORPORA_DATA = _PROJECT_ROOT / "corpora" / "data"
+# All data now lives under data/ at the repo root. Split layout:
+#   data/eval/<id>/    ← used by evaluate.py and baseline metric
+#   data/train/<id>/   ← used by .omc/classifier/train_classifier.py
+#   data/test/<id>/    ← held-out, run with test_eval.py (20-min budget)
+#   data/sources/...   ← source audio pools (not directly consumed at eval time)
+_DATA = _PROJECT_ROOT / "data"
 
 
 @dataclass(frozen=True)
 class Dataset:
     id: str                 # short, unique; used in DIAG labels and metric keys
-    path: Path              # directory containing tier1/ tier2/ clean/ ground_truth.json
+    eval_path: Path         # dir with tier1/ tier2/ clean/ ground_truth.json
+    train_path: Path        # disjoint-source train split for the classifier
+    test_path: Path         # held-out, disjoint-source test split
     eval_weight: float = 1.0
     train_weight: float = 1.0
+
+    # Back-compat alias so pre-rename callers that still dereference `ds.path`
+    # get the eval path (the original semantics before train/test splits
+    # existed).
+    @property
+    def path(self) -> Path:
+        return self.eval_path
 
 
 DATASETS: list[Dataset] = [
     Dataset(
         id="singing",
-        path=_PROJECT_ROOT / "data" / "spliced",
-        eval_weight=1.0,
-        train_weight=0.0,   # patches come from pre-generated patches_combined/
+        eval_path=_DATA / "eval" / "singing",
+        train_path=_DATA / "train" / "singing",
+        test_path=_DATA / "test" / "singing",
     ),
     Dataset(
         id="korean",
-        path=_CORPORA_DATA / "korean-splice",
-        eval_weight=1.0,
-        train_weight=1.0,
+        eval_path=_DATA / "eval" / "korean",
+        train_path=_DATA / "train" / "korean",
+        test_path=_DATA / "test" / "korean",
     ),
     Dataset(
         id="english",
-        path=_CORPORA_DATA / "english-splice",
-        eval_weight=1.0,
-        train_weight=1.0,
+        eval_path=_DATA / "eval" / "english",
+        train_path=_DATA / "train" / "english",
+        test_path=_DATA / "test" / "english",
     ),
 ]
 

@@ -92,9 +92,9 @@
       "korean",
       "english"
     ],
-    "n_samples": 1320,
+    "n_samples": 1200,
     "class_counts": {
-      "0": 720,
+      "0": 600,
       "1": 300,
       "2": 300
     }
