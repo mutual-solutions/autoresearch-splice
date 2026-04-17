@@ -76,33 +76,34 @@ def _load_pregenerated_patches():
     return patches, labels, file_ids
 
 
-# Korean-splice dataset path (relative to project root)
+# Speech-splice dataset paths (relative to project root)
 _KOREAN_SPLICE_DIR = os.path.join(
     os.path.dirname(_proj), "audio-splice-detector", "data", "korean-splice"
 )
+_ENGLISH_SPLICE_DIR = os.path.join(
+    os.path.dirname(_proj), "audio-splice-detector", "data", "english-splice"
+)
 
 
-def _load_korean_splice_patches():
-    """Generate patches from korean-splice dataset as additional training data.
+def _load_speech_splice_patches(splice_dir: str, tag: str):
+    """Generate mel patches from a speech-splice dataset for classifier training.
 
-    Runs detector on 60 korean-splice files, extracts mel patches from
-    detections and GT positions. Cached to .omc/classifier/patches_korean_splice.npz.
+    Runs the current detector on every file, extracts patches at detections
+    + missed GTs + random clean negatives. No caching — patches must reflect
+    the live detector state or they poison training.
+
+    Returns (patches, labels, file_ids) or (None, None, None) if the dataset
+    directory is missing or produces zero patches. Emits DIAG lines via the
+    `ml.<tag>` component label so each language's events are traceable.
     """
-    cache_path = os.path.join(_classifier_dir, "patches_korean_splice.npz")
-    gt_path = os.path.join(_KOREAN_SPLICE_DIR, "ground_truth.json")
+    gt_path = os.path.join(splice_dir, "ground_truth.json")
+    component = f"ml.{tag}"
 
     if not os.path.exists(gt_path):
-        print("korean_splice_patches: NOT_FOUND (no ground_truth.json)")
-        _diag("WARN", "ml.korean", "gt_missing", path=gt_path)
+        print(f"{tag}_splice_patches: NOT_FOUND (no ground_truth.json)")
+        _diag("WARN", component, "gt_missing", path=gt_path)
         return None, None, None
 
-    # NOTE: caching disabled — patches must reflect CURRENT detector output so
-    # the classifier learns to filter current-detector FPs, not stale ones.
-    # Staleness caused measurement drift: cache generated under one detector
-    # state poisoned classifier training under a later detector state.
-    # See tracer analysis 2026-04-17. Cost of regen: ~15s per eval.
-
-    # Generate patches from korean-splice dataset
     from detector import detect_splices
 
     with open(gt_path) as f:
@@ -113,14 +114,14 @@ def _load_korean_splice_patches():
     all_file_ids = []
     file_to_id = {}
     next_id = 0
-
     n_missing_files = 0
     n_patch_none = 0
+
     for name, info in sorted(gt.items()):
-        fpath = os.path.join(_KOREAN_SPLICE_DIR, info["path"])
+        fpath = os.path.join(splice_dir, info["path"])
         if not os.path.exists(fpath):
             n_missing_files += 1
-            _diag("INFO", "ml.korean", "file_missing", name=name)
+            _diag("INFO", component, "file_missing", name=name)
             continue
 
         if name not in file_to_id:
@@ -137,12 +138,11 @@ def _load_korean_splice_patches():
         gt_times = [gt_time] if gt_time else []
         det_times = detect_splices(audio, sr)
 
-        # Patches from detections
         for det_t in det_times:
             patch = extract_mel_patch(audio, sr, det_t)
             if patch is None:
                 n_patch_none += 1
-                _diag("INFO", "ml.korean", "patch_extraction_failed",
+                _diag("INFO", component, "patch_extraction_failed",
                       file=name, at_sec=f"{det_t:.3f}")
                 continue
             label = 1 if is_tp(det_t, gt_times) else 0
@@ -150,7 +150,6 @@ def _load_korean_splice_patches():
             all_labels.append(label)
             all_file_ids.append(fid)
 
-        # GT positions missed by detector
         if info.get("spliced") and gt_time:
             already_covered = any(abs(gt_time - d) < TOLERANCE_S for d in det_times)
             if not already_covered:
@@ -160,7 +159,6 @@ def _load_korean_splice_patches():
                     all_labels.append(1)
                     all_file_ids.append(fid)
 
-        # Random negatives
         rng = np.random.RandomState(_stable_hash(name) + 100)
         if not info.get("spliced"):
             for _ in range(3):
@@ -172,22 +170,21 @@ def _load_korean_splice_patches():
                     all_file_ids.append(fid)
 
     if not all_patches:
-        print("korean_splice_patches: NO_PATCHES")
-        _diag("WARN", "ml.korean", "no_patches_generated",
+        print(f"{tag}_splice_patches: NO_PATCHES")
+        _diag("WARN", component, "no_patches_generated",
               missing_files=n_missing_files)
         return None, None, None
 
     if n_missing_files or n_patch_none:
-        _diag("INFO", "ml.korean", "extraction_summary",
+        _diag("INFO", component, "extraction_summary",
               missing_files=n_missing_files, patch_none=n_patch_none,
               patches=len(all_patches))
 
     patches = np.array(all_patches)
     labels = np.array(all_labels, dtype=int)
     file_ids = np.array(all_file_ids)
-
-    # No caching — see note above. Every eval regenerates from current detector.
-    print(f"korean_splice_patches: {len(patches)} generated ({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
+    print(f"{tag}_splice_patches: {len(patches)} generated "
+          f"({int(labels.sum())} pos, {int(len(labels) - labels.sum())} neg)")
     return patches, labels, file_ids
 
 
@@ -309,12 +306,19 @@ def evaluate_with_classifier(dsp_results, data_dir):
             all_pregen_fids.append(pregen_fids_raw + fid_offset)
             fid_offset += int(pregen_fids_raw.max()) + 1
 
-        # 2. Korean-splice dataset patches (cached after first run)
-        ks_patches, ks_labels, ks_fids_raw = _load_korean_splice_patches()
-        if ks_patches is not None:
-            all_pregen_patches.append(ks_patches.reshape(len(ks_patches), -1))
-            all_pregen_labels.append(ks_labels.astype(int))
-            all_pregen_fids.append(ks_fids_raw + fid_offset)
+        # 2-3. Speech-splice datasets — each regenerated live from current detector
+        for splice_dir, tag in (
+            (_KOREAN_SPLICE_DIR, "korean"),
+            (_ENGLISH_SPLICE_DIR, "english"),
+        ):
+            sp_patches, sp_labels, sp_fids_raw = _load_speech_splice_patches(
+                splice_dir, tag
+            )
+            if sp_patches is not None:
+                all_pregen_patches.append(sp_patches.reshape(len(sp_patches), -1))
+                all_pregen_labels.append(sp_labels.astype(int))
+                all_pregen_fids.append(sp_fids_raw + fid_offset)
+                fid_offset += int(sp_fids_raw.max()) + 1
 
         if all_pregen_patches:
             pregen_X = np.vstack(all_pregen_patches)
