@@ -515,6 +515,22 @@ if __name__ == "__main__":
         result = evaluate(args.data_dir)
         if args.codec:
             evaluate_codec(args.data_dir)
+
+        # Secondary eval: Korean speech (DSP-only, informational).
+        # Printed BEFORE primary `combined:` so parsers that take the LAST
+        # `combined:` line still see the singing score.
+        _speech_dir = "/Users/yejunjang/Projects/mutual/audio-splice-detector/data/korean-splice"
+        if os.path.isdir(_speech_dir):
+            print("\n=== Secondary eval: Korean speech (DSP-only) ===")
+            try:
+                _speech = evaluate(_speech_dir)
+                print(f"combined_speech: {_speech['combined']:.6f}  "
+                      f"(recall={_speech['recall']:.2f}, precision={_speech['precision']:.2f}, "
+                      f"clean_fp={_speech['clean_fp']})")
+            except Exception as _e:
+                print(f"combined_speech: ERROR ({type(_e).__name__}: {_e})")
+            print("=== End secondary eval ===\n")
+
         if args.with_classifier:
             from ml_eval import evaluate_with_classifier
             ml_result = evaluate_with_classifier(result, args.data_dir)
