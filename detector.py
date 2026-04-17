@@ -546,7 +546,13 @@ def _detect_crossfade(audio: np.ndarray, sr: int,
                 continue
             w_left = band_powers[:, t_frame - wide_frames: t_frame].T
             w_right = band_powers[:, t_frame: t_frame + wide_frames].T
-            wide_t2 = _hotelling_t2(w_left, w_right)
+            try:
+                wide_t2 = _hotelling_t2(w_left, w_right)
+            except _FitError as e:
+                _diag("INFO", "crossfade", "wide_t2_failed",
+                      at_sec=f"{t:.2f}", cause=e.reason, **e.context)
+                consistent.append(t)  # can't test — keep (conservative)
+                continue
             # Compare to narrow T² at same point: if wide/narrow ratio is very low,
             # the spectral change is only local → likely natural transition
             narrow_frame_idx = np.argmin(np.abs(times_arr - t))
@@ -835,7 +841,8 @@ def _diag(level: str, component: str, reason: str, **context) -> None:
     Silenced when this call's level exceeds OMC_DIAG_LEVEL (default WARN).
     Stderr keeps stdout clean for evaluate.py's metric parsers.
     """
-    if _DIAG_ORDER.get(level, 0) > _DIAG_LEVEL:
+    # Unknown levels (typos) fall through as ERROR-visible so bugs surface.
+    if _DIAG_ORDER.get(level, _DIAG_ORDER["ERROR"]) > _DIAG_LEVEL:
         return
     ctx = " ".join(f"{k}={v}" for k, v in context.items())
     tail = f" {ctx}" if ctx else ""
