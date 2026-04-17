@@ -23,12 +23,12 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 - Every detection must be explainable (statistical test or spectral anomaly).
 - Full evaluation must complete in under 240 seconds.
 - `evaluate.py` and `program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
-- `detector.py` (DSP) and `ml_config.py` (ML params) are edited for experiments.
+- `detector.py` (GBM thresholds + sliding window geometry), `features.py` (feature set), and `.omc/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `uv run python .omc/classifier/train_classifier.py`.
 
 ## Protected Files
 
 The verification system guards these from modification:
-`evaluate.py`, `data/spliced/*`, `.omc/coordination/manifest.json`, `.omc/coordination/preflight.py`
+`evaluate.py`, `program.md`, `data/spliced/*`, `.omc/coordination/manifest.json`, `.omc/coordination/preflight.py`
 
 ## Preflight
 

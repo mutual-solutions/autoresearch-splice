@@ -78,7 +78,7 @@ ${recent_failures:-  (none yet)}
 3. Edit detector.py (or features.py / train_classifier.py if retraining) with the
    smallest viable change. If retraining, also run train_classifier.py in this step.
 4. git commit -m \"hypothesis: <one-line description>\"
-5. Run: uv run python evaluate.py --with-classifier
+5. Run: uv run python evaluate.py --shap
 6. Parse combined score from the LAST 'combined:' line in the output.
 7. CURRENT BEST (authoritative, from baseline_metrics.json): ${current_best}
    If combined > ${current_best} (strictly greater):    print RESULT:keep-pending
@@ -136,7 +136,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             local precision=$(echo "$last_output" | grep -oE 'precision:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
             local recall=$(echo "$last_output" | grep -oE 'recall:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
             local fp_rate=$(echo "$last_output" | grep -oE 'fp_rate:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local clean_fp=$(echo "$last_output" | grep -oE 'dsp_clean_fp:\s*[0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "0")
+            local clean_fp=$(echo "$last_output" | grep -oE 'clean_fp[=:]\s*[0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "0")
 
             if [ ! -s "$RESULTS" ]; then
                 printf 'commit\tcombined\tsplice_f1\tclean_score\tprecision\trecall\tfp_rate\tclean_fp\tstatus\tdescription\n' > "$RESULTS"
@@ -170,7 +170,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                     continue
                 fi
 
-                # verify_agent.py has its own 120s timeout for evaluate.py internally.
+                # verify_agent.py enforces a 240s timeout on evaluate.py internally.
                 # Capture exit code separately — `|| true` would mask LOW confidence failures.
                 set +e
                 verify_output=$(uv run python .omc/coordination/verify_agent.py \
@@ -273,7 +273,7 @@ data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
 
-                    # Classifier training now happens in-loop via evaluate.py --with-classifier
+                    # Classifier training now happens in-loop via evaluate.py --shap
                 else
                     git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
                     consecutive_discards=$((consecutive_discards + 1))

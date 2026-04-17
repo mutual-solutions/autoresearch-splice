@@ -46,10 +46,15 @@ Allowed techniques (non-exhaustive):
 
 - **`evaluate.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
   computes F1 vs ground truth, prints metrics. **Do NOT modify** (only the human edits this).
-- **`detector.py`** — DSP detector. You edit this for DSP experiments. Must be importable as a module
-  (`detect_splices(audio, sr)`) AND runnable as a CLI (`python detector.py file.wav`).
-- **`ml_config.py`** — ML classifier parameters. You edit this for ML experiments (n_estimators,
-  max_depth, learning_rate, OOF_THRESHOLD, PCA_COMPONENTS, etc.). Read by `ml_eval.py` at eval time.
+- **`detector.py`** — splice detector. Runs a multi-class GBM over features from
+  `features.py` at every `ANALYSIS_STRIDE_S` candidate. Edit `GBM_THRESHOLD`,
+  `GBM_MIN_SEP_S`, or `ANALYSIS_STRIDE_S` for instant-effect experiments. Must stay
+  importable as `detect_splices(audio, sr) -> list[float]`.
+- **`features.py`** — 75-dim feature extractor feeding the GBM. Extending
+  FEATURE_NAMES requires retraining via `.omc/classifier/train_classifier.py`.
+- **`.omc/classifier/train_classifier.py`** — multi-class GBM trainer. `make_pipeline()`
+  is the GBM hyperparameter knob (`n_estimators`, `max_depth`, `learning_rate`,
+  `subsample`). Retrain with `uv run python .omc/classifier/train_classifier.py`.
 - **`program.md`** — instructions for the agent (this file). Only the human edits this.
 
 ## Setup
@@ -68,11 +73,15 @@ LOOP FOREVER:
 1. Check git state (current branch and commit).
 2. Read `detector.py` and `results.tsv` to understand where you are.
 3. Form a **hypothesis**: a specific idea expected to improve combined score.
-   This can be a DSP change (detector.py), an ML parameter change (ml_config.py), or both.
+   Valid knobs: detector.py constants (GBM_THRESHOLD, GBM_MIN_SEP_S,
+   ANALYSIS_STRIDE_S), features.py feature additions (requires retrain), or
+   .omc/classifier/train_classifier.py hyperparameters (requires retrain).
    Write it as a one-line comment at the top of your planned change.
-4. Edit `detector.py` and/or `ml_config.py` with the smallest viable change that tests the hypothesis.
+4. Edit the relevant file(s) with the smallest viable change. If the change is
+   feature- or hyperparameter-level, also run
+   `uv run python .omc/classifier/train_classifier.py` to refresh the bundle.
 5. `git commit -m "hypothesis: <one line>"`
-6. Run evaluation: `uv run evaluate.py --with-classifier > run.log 2>&1`
+6. Run evaluation: `uv run evaluate.py --shap > run.log 2>&1`
    - Must finish in <240s. If it hangs past 270s, kill it (treat as crash).
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):

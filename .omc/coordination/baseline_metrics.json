@@ -2,9 +2,9 @@
   "timestamp": "2026-04-17T20:15:00Z",
   "git_sha": "51dc74d",
   "phase": "phase1_gbm_dense_scan",
-  "combined": 0.771282,
-  "combined_dsp": 0.771282,
-  "splice_f1": 0.820513,
+  "combined": 0.785316,
+  "combined_dsp": 0.785316,
+  "splice_f1": 0.835443,
   "clean_score": 0.94,
   "precision": 0.85,
   "recall": 0.82,
@@ -18,6 +18,6 @@
   },
   "gbm_threshold": 0.985,
   "analysis_stride_s": 0.2,
-  "note": "Post dead-code rip. GBM_MIN_SEP_S raised 2.5->4.0 dropped 1 TP (combined 0.785->0.771). Single-mode GBM-only detector (no DSP fallback).",
-  "gbm_min_sep_s": 4.0
+  "note": "Post dead-code rip. Flag renamed --with-classifier -> --shap. GBM-only detector (no DSP fallback). SHAP reports land under reports/<git_sha>/.",
+  "gbm_min_sep_s": 2.5
 }

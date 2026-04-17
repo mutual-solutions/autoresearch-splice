@@ -1,11 +1,17 @@
-"""
-Audio splice detector — classical DSP only, no neural networks.
+"""Audio splice detector — multi-class GBM over a 75-dim feature vector.
 
-v11: Dual-mode detection.
-- Mode 1 (hard cuts): Phase discontinuity — detects tier 1 splices.
-- Mode 2 (crossfades): CQT subband PSD change-point detection via
-  Hotelling's T² test — detects tier 2 crossfaded splices by finding
-  statistically significant shifts in the frequency-band power distribution.
+`detect_splices(audio, sr)` slides a fixed-size analysis window, builds a
+per-chunk feature context, and runs `gbm.predict_proba` at every
+`ANALYSIS_STRIDE_S` candidate. Emissions above `GBM_THRESHOLD` are
+deduped within `GBM_MIN_SEP_S` and returned as file-level splice times.
+
+Feature components (see features.py) still include classical DSP signals
+(phase discontinuity fused z-score, Hotelling T² z-score, complex
+prediction error, pairwise block-structure proximity), computed from the
+per-chunk context — but they feed the classifier, they do not gate the
+output on their own. A multi-class bundle at
+`.omc/classifier/fp_classifier.joblib` is required; `detect_splices`
+raises if the bundle is missing.
 """
 
 from __future__ import annotations
@@ -254,9 +260,11 @@ def _gbm_detect_splices(
         clf = model.named_steps["clf"] if hasattr(model, "named_steps") else model
         col_for = {int(c): i for i, c in enumerate(clf.classes_)}
         splice_cols = [(c, col_for[c]) for c in (1, 2) if c in col_for]
-        if not splice_cols:
+        if 0 not in col_for or not splice_cols:
+            _diag("WARN", "gbm", "unexpected_classes",
+                  classes=sorted(col_for), start=f"{offset_s:.2f}")
             continue
-        p_splice = 1.0 - proba[:, col_for.get(0, 0)]
+        p_splice = 1.0 - proba[:, col_for[0]]
         scan_total += len(t_grid)
 
         hit_mask = p_splice > GBM_THRESHOLD
@@ -319,7 +327,8 @@ def _gbm_detect_splices(
 
 def get_detection_meta(audio: np.ndarray, sr: int) -> list[dict]:
     """Per-detection SHAP-sidecar payload from the most recent GBM scan of
-    this audio. Empty list when the detector ran in DSP-fallback mode.
+    this audio. Empty list if the audio has not been scanned yet or
+    produced no emissions above GBM_THRESHOLD.
     """
     return list(_DETECT_META.get(_cache_key(audio, sr), []))
 
@@ -620,19 +629,38 @@ _DEBUG_LOG_PATH = os.environ.get(
                  ".omc", "autoresearch-debug.log"),
 )
 _DEBUG_LOG_FP = None  # lazy-opened on first emit
+# Rotate when the sink exceeds this many bytes. One .1 backup is kept so
+# callers can still grep the previous iteration after rotation.
+_DEBUG_LOG_MAX_BYTES = int(os.environ.get("OMC_DIAG_FILE_MAX_BYTES", 10 * 1024 * 1024))
+
+
+def _debug_log_rotate_if_needed() -> None:
+    try:
+        if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
+            global _DEBUG_LOG_FP
+            if _DEBUG_LOG_FP is not None:
+                _DEBUG_LOG_FP.close()
+                _DEBUG_LOG_FP = None
+            backup = _DEBUG_LOG_PATH + ".1"
+            if os.path.exists(backup):
+                os.remove(backup)
+            os.rename(_DEBUG_LOG_PATH, backup)
+    except OSError:
+        pass
 
 
 def _debug_log_write(line: str) -> None:
     """Append a DIAG line to the forensic debug log (best-effort).
 
-    The forensic sink captures every DIAG regardless of OMC_DIAG_LEVEL so
-    autoresearch iterations can be diffed later. Stderr filtering still
-    applies to the user-visible stream so evaluate.py output stays clean.
-    Set OMC_DIAG_FILE="" to disable the sink entirely.
+    Captures every DIAG regardless of OMC_DIAG_LEVEL so autoresearch
+    iterations can be diffed later. Stderr filtering still applies.
+    Rotates at OMC_DIAG_FILE_MAX_BYTES (default 10 MB), keeping one
+    `.1` backup. Set OMC_DIAG_FILE="" to disable the sink entirely.
     """
     global _DEBUG_LOG_FP
     if not _DEBUG_LOG_PATH:
         return
+    _debug_log_rotate_if_needed()
     try:
         if _DEBUG_LOG_FP is None:
             os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
@@ -835,10 +863,11 @@ def _compute_t2_z_curve(chunk: np.ndarray, sr: int,
 
 
 def _build_chunk_context(chunk: np.ndarray, sr: int) -> dict:
-    """Precompute DSP score curves once per chunk. Caller passes the returned
-    dict to phase_z_at / t2_z_at / cpe_z_at for O(1) per-t lookups.
-
-    Also computes pairwise block-structure (single summary value, not a curve).
+    """Precompute per-chunk feature inputs once per chunk: fused phase /
+    CPE / T² z-score curves plus a single pairwise-block-structure summary.
+    The returned dict feeds both the single-position DSP accessors
+    (phase_z_at / t2_z_at / cpe_z_at / pairwise_proximity_at) and
+    features.py via its own cache layer.
     """
     phase_curve, phase_hop_s = _compute_phase_fused_curve(chunk, sr)
     cpe_curve, cpe_hop_s = _compute_cpe_fused_curve(chunk, sr)

@@ -92,8 +92,18 @@ def write_reports(
     """
     if not detections:
         return 0
+    if not feature_names:
+        _diag("WARN", "shap", "missing_feature_names",
+              source=source_file, hint="retrain to regenerate meta.json")
+        return 0
 
     X = np.asarray([d["feature_vector"] for d in detections], dtype=np.float64)
+    if X.shape[1] != len(feature_names):
+        _diag("WARN", "shap", "feature_length_mismatch",
+              source=source_file, n_features=X.shape[1],
+              n_names=len(feature_names))
+        return 0
+
     shap_mat, strategy = _shap_values_per_sample(model, X)
 
     os.makedirs(reports_dir, exist_ok=True)

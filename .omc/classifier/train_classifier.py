@@ -6,9 +6,9 @@ random positions ≥NEG_MIN_DIST_S away. Per clean file: negatives only, at
 the midpoint chunk. GroupKFold is file_id-grouped so positives and their
 negatives never leak across folds.
 
-Keeps `make_pipeline` exported so ml_eval.py's legacy OOF path still imports
-it; the function now just returns the multi-class pipeline and ignores the
-old PCA `n_components` argument.
+`make_pipeline()` is the GBM hyperparameter knob autoresearch can tune
+(n_estimators / max_depth / learning_rate / subsample). After editing,
+rerun this script to refresh the on-disk bundle consumed by detector.py.
 """
 
 from __future__ import annotations
@@ -62,9 +62,9 @@ DATASET_META_OUT = _HERE.parent / "training_manifest.json"
 # ---------------------------------------------------------------------------
 
 
-def make_pipeline(n_components=None):
-    """Multi-class GBM pipeline. `n_components` is accepted but ignored —
-    retained so ml_eval.py's legacy binary-patch OOF path keeps importing.
+def make_pipeline():
+    """Multi-class GBM pipeline. Edit the hyperparameters here to adjust
+    model capacity or regularization, then rerun the script to retrain.
     """
     return Pipeline([
         ("scaler", StandardScaler()),
@@ -264,6 +264,13 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
     elapsed = time.time() - t0
     print(f"Training-set built: files={n_files} skipped_short={n_skip_short} "
           f"rows={len(X_rows)} elapsed={elapsed:.1f}s")
+    if not X_rows:
+        raise RuntimeError(
+            f"Training-set is empty. Processed {n_files} file(s), "
+            f"skipped {n_skip_short} as too short. Check dataset paths in "
+            f"dataset_registry.py and that CHUNK_S ({CHUNK_S}s) is not "
+            f"larger than most files."
+        )
     X = np.asarray(X_rows, dtype=np.float64)
     y_arr = np.asarray(y, dtype=np.int64)
     g_arr = np.asarray(groups, dtype=np.int64)

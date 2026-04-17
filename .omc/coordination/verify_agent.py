@@ -16,6 +16,7 @@ SCRIPT_DIR = Path(__file__).parent
 BASELINE_PATH = SCRIPT_DIR / "baseline_metrics.json"
 PROTECTED_FILES = [
     "evaluate.py",
+    "program.md",
     "data/spliced/*",
     ".omc/coordination/manifest.json",
     ".omc/coordination/preflight.py",
@@ -26,7 +27,7 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     """Re-run evaluate.py and compare combined score to reported value."""
     try:
         result = subprocess.run(
-            ["uv", "run", "python", "evaluate.py", "--with-classifier"],
+            ["uv", "run", "python", "evaluate.py", "--shap"],
             capture_output=True, text=True, timeout=240,
         )
     except subprocess.TimeoutExpired:
@@ -119,15 +120,16 @@ def check_preflight() -> tuple[str, str]:
     return "FAIL", f"preflight exited {result.returncode}: {result.stdout.strip()}"
 
 
-def check_dsp_fp_bound(output: str) -> tuple[str, str]:
-    """Check that DSP clean_fp is within bound."""
-    match = re.search(r"dsp_clean_fp:\s*(\d+)", output)
+def check_clean_fp_bound(output: str) -> tuple[str, str]:
+    """Check that clean_fp is within bound."""
+    # evaluate.py prints clean_fp=N inside the TP=.. FP=.. FN=.. clean_fp=N line.
+    match = re.search(r"clean_fp[=:]\s*(\d+)", output)
     if not match:
-        return "WARN", "dsp_clean_fp not found in output (may be running without --with-classifier)"
-    dsp_fp = int(match.group(1))
-    if dsp_fp > 15:
-        return "FAIL", f"dsp_clean_fp={dsp_fp} exceeds bound of 15"
-    return "PASS", f"dsp_clean_fp={dsp_fp} (bound: 15)"
+        return "WARN", "clean_fp not found in output (evaluate.py may have crashed)"
+    clean_fp = int(match.group(1))
+    if clean_fp > 15:
+        return "FAIL", f"clean_fp={clean_fp} exceeds bound of 15"
+    return "PASS", f"clean_fp={clean_fp} (bound: 15)"
 
 
 def main():
@@ -158,9 +160,9 @@ def main():
     preflight_status, preflight_detail = check_preflight()
     print(f"  Preflight:        {preflight_status} ({preflight_detail})")
 
-    # 5. DSP FP bound
-    fp_bound_status, fp_bound_detail = check_dsp_fp_bound(metric_output)
-    print(f"  DSP FP bound:     {fp_bound_status} ({fp_bound_detail})")
+    # 5. Clean FP bound
+    fp_bound_status, fp_bound_detail = check_clean_fp_bound(metric_output)
+    print(f"  Clean FP bound:   {fp_bound_status} ({fp_bound_detail})")
 
     # Determine confidence
     all_statuses = [metric_status, diff_status, anomaly_status, preflight_status, fp_bound_status]

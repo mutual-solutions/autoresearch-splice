@@ -1,0 +1,122 @@
+{
+  "versions": [
+    {
+      "version": 1,
+      "git_tag": "detector-v1",
+      "git_sha": "2fc5cff",
+      "detector_snapshot": "detector_v1.py",
+      "combined_dsp": 0.75,
+      "combined_full": null,
+      "timestamp": "2026-04-16T19:20:02.535450"
+    },
+    {
+      "version": 3,
+      "git_tag": "detector-v3",
+      "git_sha": "a3714b9",
+      "detector_snapshot": "detector_v3.py",
+      "combined_dsp": 0.730159,
+      "combined_full": null,
+      "timestamp": "2026-04-16T22:28:40.949841"
+    },
+    {
+      "version": 4,
+      "git_tag": "detector-v4",
+      "git_sha": "11a4ab6",
+      "detector_snapshot": "detector_v4.py",
+      "combined_dsp": 0.730159,
+      "combined_full": null,
+      "timestamp": "2026-04-16T22:45:26.525899"
+    },
+    {
+      "version": 6,
+      "git_tag": "detector-v6",
+      "git_sha": "18848c6",
+      "detector_snapshot": "detector_v6.py",
+      "combined_dsp": 0.0,
+      "combined_full": null,
+      "timestamp": "2026-04-17T01:43:21.006071"
+    },
+    {
+      "version": 7,
+      "git_tag": "detector-v7",
+      "git_sha": "55f8bd5",
+      "detector_snapshot": "detector_v7.py",
+      "combined_dsp": 0.0,
+      "combined_full": null,
+      "timestamp": "2026-04-17T01:47:03.708483"
+    },
+    {
+      "version": 8,
+      "git_tag": "detector-v8",
+      "git_sha": "a959d5c",
+      "detector_snapshot": "detector_v8.py",
+      "combined_dsp": 0.0,
+      "combined_full": null,
+      "timestamp": "2026-04-17T02:16:54.449199"
+    },
+    {
+      "version": 9,
+      "git_tag": "detector-v9",
+      "git_sha": "8a7e138",
+      "detector_snapshot": "detector_v9.py",
+      "combined_dsp": 0.75,
+      "combined_full": null,
+      "timestamp": "2026-04-17T02:25:43.983302"
+    },
+    {
+      "version": 10,
+      "git_tag": "detector-v10",
+      "git_sha": "34a478d",
+      "detector_snapshot": "detector_v10.py",
+      "combined_dsp": 0.75,
+      "combined_full": null,
+      "timestamp": "2026-04-17T06:51:17.228109"
+    },
+    {
+      "version": 11,
+      "git_tag": "detector-v11",
+      "git_sha": "d6e6037",
+      "detector_snapshot": "detector_v11.py",
+      "combined_dsp": 0.75,
+      "combined_full": null,
+      "timestamp": "2026-04-17T06:54:44.994397"
+    },
+    {
+      "version": 12,
+      "git_tag": "detector-v12",
+      "git_sha": "d64f676",
+      "detector_snapshot": "detector_v12.py",
+      "combined_dsp": 0.75,
+      "combined_full": null,
+      "timestamp": "2026-04-17T06:57:44.597639"
+    },
+    {
+      "version": 13,
+      "git_tag": "detector-v13",
+      "git_sha": "6c2cfcc",
+      "detector_snapshot": "detector_v13.py",
+      "combined_dsp": 0.769231,
+      "combined_full": null,
+      "timestamp": "2026-04-17T08:03:05.996599"
+    },
+    {
+      "version": 14,
+      "git_tag": "detector-v14",
+      "git_sha": "3e4b1c1",
+      "detector_snapshot": "detector_v14.py",
+      "combined_dsp": 0.769231,
+      "combined_full": null,
+      "timestamp": "2026-04-17T08:06:24.672154"
+    },
+    {
+      "version": 15,
+      "git_tag": "detector-v15",
+      "git_sha": "81e8172",
+      "detector_snapshot": "detector_v15.py",
+      "combined_dsp": 0.769231,
+      "combined_full": null,
+      "timestamp": "2026-04-17T08:14:18.872318"
+    }
+  ],
+  "latest": 15
+}

@@ -4,7 +4,7 @@ Protected from autoresearch agent modification — only the human edits this.
 
 Usage:
     uv run python evaluate.py
-    uv run python evaluate.py --with-classifier   # DSP + ML pipeline
+    uv run python evaluate.py --shap              # write per-detection SHAP reports
     uv run python evaluate.py --data-dir /path/to/spliced
     uv run python evaluate.py --codec             # also test Opus 32k roundtrip
 """
@@ -492,8 +492,8 @@ if __name__ == "__main__":
         help="Also evaluate after Opus 32k codec roundtrip (KakaoTalk standard)",
     )
     parser.add_argument(
-        "--with-classifier", action="store_true",
-        help="Run DSP + ML classifier pipeline (train + OOF filter + combined_full)",
+        "--shap", action="store_true",
+        help="Write per-detection SHAP explanation JSONs under reports/<git_sha>/",
     )
     args = parser.parse_args()
 
@@ -516,29 +516,11 @@ if __name__ == "__main__":
         if args.codec:
             evaluate_codec(args.data_dir)
 
-        # Secondary eval: Korean speech (DSP-only, informational).
-        # Printed BEFORE primary `combined:` so parsers that take the LAST
-        # `combined:` line still see the singing score.
-        _speech_dir = "/Users/yejunjang/Projects/mutual/audio-splice-detector/data/korean-splice"
-        if os.path.isdir(_speech_dir):
-            print("\n=== Secondary eval: Korean speech (DSP-only) ===")
-            try:
-                _speech = evaluate(_speech_dir)
-                print(f"combined_speech: {_speech['combined']:.6f}  "
-                      f"(recall={_speech['recall']:.2f}, precision={_speech['precision']:.2f}, "
-                      f"clean_fp={_speech['clean_fp']})")
-            except Exception as _e:
-                print(f"combined_speech: ERROR ({type(_e).__name__}: {_e})")
-            print("=== End secondary eval ===\n")
-
-        if args.with_classifier:
-            from ml_eval import evaluate_with_classifier
-            ml_result = evaluate_with_classifier(result, args.data_dir)
-            if ml_result.get("bound_exceeded"):
-                print(f"combined: 0.000000")
-            elif ml_result.get("combined_full") is not None:
-                print(f"combined: {ml_result['combined_full']:.6f}")
-            else:
-                print(f"combined: {result['combined']:.6f}")
+        if args.shap:
+            from ml_eval import export_shap_reports
+            export_shap_reports(result, args.data_dir)
+        # The detector always runs the GBM internally now; `combined:` here is
+        # the GBM-filtered score regardless of the --shap flag.
+        print(f"combined: {result['combined']:.6f}")
     elapsed = time.time() - t0
     print(f"elapsed: {elapsed:.1f}s")
