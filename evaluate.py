@@ -598,21 +598,24 @@ if __name__ == "__main__":
             print(f"combined_{ds_id}: {v:.6f}  clean_fp_{ds_id}={per_dataset_clean_fp.get(ds_id, 'NA')}")
         print(f"combined_mean: {agg['combined_mean']:.6f}")
         print(f"combined_min:  {agg['combined_min']:.6f}")
-        # RESULTS_TSV: one-line structured block the autoresearch wrapper
-        # greps for deterministic metric parsing. Keys match results.tsv
-        # column names. NA is emitted when a value is not applicable (e.g.
-        # a dataset was missing). The wrapper must also parse combined /
-        # splice_f1 / clean_score from their own lines above; this block is
-        # a redundant safety net so the TSV is never silently zero.
+        # RESULTS_TSV: single-line structured block the autoresearch wrapper
+        # greps for deterministic metric parsing. Keys are `k=v` pairs,
+        # space-separated. This is the ONLY contract the wrapper relies on
+        # for populating results.tsv — claude's prose narrative is not
+        # parsed. Missing / not-applicable values would be rendered as
+        # `NA` by the wrapper (never as 0, which collides with real zeros).
         total_clean_fp = sum(per_dataset_clean_fp.values())
-        print(
-            "RESULTS_TSV: "
-            f"combined={agg['combined']:.6f} "
-            f"combined_mean={agg['combined_mean']:.6f} "
-            f"combined_min={agg['combined_min']:.6f} "
-            f"clean_fp={total_clean_fp} "
-            f"n_datasets={len(per_dataset)}"
-        )
+        tsv_parts = [
+            f"combined={agg['combined']:.6f}",
+            f"combined_mean={agg['combined_mean']:.6f}",
+            f"combined_min={agg['combined_min']:.6f}",
+            f"clean_fp={total_clean_fp}",
+            f"n_datasets={len(per_dataset)}",
+        ]
+        for ds_id in sorted(per_dataset):
+            tsv_parts.append(f"combined_{ds_id}={per_dataset[ds_id]:.6f}")
+            tsv_parts.append(f"clean_fp_{ds_id}={per_dataset_clean_fp.get(ds_id, 0)}")
+        print("RESULTS_TSV: " + " ".join(tsv_parts))
         # LAST `combined:` line — wrapper + verify_agent parsers rely on
         # this contract.
         print(f"combined: {agg['combined']:.6f}")

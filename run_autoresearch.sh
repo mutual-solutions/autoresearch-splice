@@ -41,7 +41,17 @@ run_loop() {
         # Injected into prompt so agent doesn't repeat experiments that already failed.
         recent_failures=""
         if [ -f "$RESULTS" ]; then
-            recent_failures=$(awk -F'\t' '$9 == "discard" || $9 == "verify-fail" {printf "  - combined=%s: %s\n", $2, $10}' "$RESULTS" | tail -30)
+            # New column layout: commit combined combined_mean combined_min
+            # clean_fp n_datasets c_singing c_korean c_english cfp_singing
+            # cfp_korean cfp_english status description.
+            # Skip header row AND skip rows where combined=="NA" (parse failures
+            # would drown the prompt in "failed at combined=NA" noise).
+            recent_failures=$(awk -F'\t' '
+                NR==1 {next}
+                $13 == "discard" || $13 == "verify-fail" {
+                    if ($2 == "NA") next
+                    printf "  - combined=%s: %s\n", $2, $14
+                }' "$RESULTS" | tail -30)
         fi
 
         # Current best = baseline_metrics.json.combined. Use this (not the
@@ -78,7 +88,8 @@ ${recent_failures:-  (none yet)}
 3. Edit detector.py (or features.py / train_classifier.py if retraining) with the
    smallest viable change. If retraining, also run train_classifier.py in this step.
 4. git commit -m \"hypothesis: <one-line description>\"
-5. Run: uv run python evaluate.py --shap
+5. Run (REDIRECT REQUIRED — the wrapper parses the file, not your narrative):
+   uv run python evaluate.py --shap 2>&1 | tee .omc/last_eval.log
 6. Parse combined score from the LAST 'combined:' line in the output.
 7. CURRENT BEST (authoritative, from baseline_metrics.json): ${current_best}
    If combined > ${current_best} (strictly greater):    print RESULT:keep-pending
@@ -87,6 +98,8 @@ ${recent_failures:-  (none yet)}
    file after successful keeps.
 8. Do NOT run verify_agent.py yourself — the wrapper handles it.
 9. Do NOT write to results.tsv — the wrapper handles it.
+10. Do NOT delete or rename .omc/last_eval.log — the wrapper reads it to
+    populate results.tsv. It is in .gitignore and will never enter a commit.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
@@ -124,26 +137,64 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         # Parse result from claude output
         last_status=$(echo "$last_output" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
 
-        # Auto-log every iteration to results.tsv (agent-independent reliability).
-        # Called by each case handler with status + optional commit override (for discards).
+        # Auto-log every iteration to results.tsv. The contract: every metric
+        # column is either the value extracted from `.omc/last_eval.log`'s
+        # single `RESULTS_TSV:` line, or the literal string "NA" when that
+        # line is missing / malformed. We NEVER use 0 as a parse-failure
+        # sentinel because 0 is also a legitimate combined value (e.g. when
+        # a hypothesis pushes clean_fp past the bound and combined clamps to
+        # 0). Conflating "couldn't parse" with "real zero" is how the prior
+        # wrapper silently corrupted the TSV for weeks.
+        _tsv_field() {
+            # Usage: _tsv_field <line> <key>  ->  stdout = value or "NA"
+            local line="$1"
+            local key="$2"
+            local val
+            val=$(printf '%s' "$line" | grep -oE "${key}=[^ ]+" | head -1 | cut -d= -f2)
+            if [ -z "$val" ]; then
+                echo "NA"
+            else
+                echo "$val"
+            fi
+        }
+
         log_to_results_tsv() {
             local status="$1"
             local commit="${2:-$(git log -1 --format=%h 2>/dev/null)}"
             local subject="${3:-$(git log -1 --format=%s 2>/dev/null | sed 's/^hypothesis: //' | tr '\t' ' ')}"
-            local combined=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local splice_f1=$(echo "$last_output" | grep -oE 'splice_f1:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local clean_score=$(echo "$last_output" | grep -oE 'clean_score:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local precision=$(echo "$last_output" | grep -oE 'precision:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local recall=$(echo "$last_output" | grep -oE 'recall:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local fp_rate=$(echo "$last_output" | grep -oE 'fp_rate:\s*[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-            local clean_fp=$(echo "$last_output" | grep -oE 'clean_fp[=:]\s*[0-9]+' | tail -1 | grep -oE '[0-9]+' || echo "0")
-
-            if [ ! -s "$RESULTS" ]; then
-                printf 'commit\tcombined\tsplice_f1\tclean_score\tprecision\trecall\tfp_rate\tclean_fp\tstatus\tdescription\n' > "$RESULTS"
+            local eval_log="$PROJECT_DIR/.omc/last_eval.log"
+            local tsv_line=""
+            if [ -f "$eval_log" ]; then
+                # Take the LAST RESULTS_TSV line — defensive against multiple
+                # eval runs within one iteration.
+                tsv_line=$(grep -E "^RESULTS_TSV: " "$eval_log" | tail -1)
             fi
 
-            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-                "$commit" "$combined" "$splice_f1" "$clean_score" "$precision" "$recall" "$fp_rate" "$clean_fp" "$status" "$subject" \
+            if [ -z "$tsv_line" ]; then
+                echo "$(date -Iseconds) WARN: no RESULTS_TSV in $eval_log; logging NA row" >> "$LOG_FILE"
+            fi
+
+            local combined=$(_tsv_field "$tsv_line" combined)
+            local combined_mean=$(_tsv_field "$tsv_line" combined_mean)
+            local combined_min=$(_tsv_field "$tsv_line" combined_min)
+            local clean_fp=$(_tsv_field "$tsv_line" clean_fp)
+            local n_datasets=$(_tsv_field "$tsv_line" n_datasets)
+            local combined_singing=$(_tsv_field "$tsv_line" combined_singing)
+            local combined_korean=$(_tsv_field "$tsv_line" combined_korean)
+            local combined_english=$(_tsv_field "$tsv_line" combined_english)
+            local clean_fp_singing=$(_tsv_field "$tsv_line" clean_fp_singing)
+            local clean_fp_korean=$(_tsv_field "$tsv_line" clean_fp_korean)
+            local clean_fp_english=$(_tsv_field "$tsv_line" clean_fp_english)
+
+            if [ ! -s "$RESULTS" ]; then
+                printf 'commit\tcombined\tcombined_mean\tcombined_min\tclean_fp\tn_datasets\tcombined_singing\tcombined_korean\tcombined_english\tclean_fp_singing\tclean_fp_korean\tclean_fp_english\tstatus\tdescription\n' > "$RESULTS"
+            fi
+
+            printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+                "$commit" "$combined" "$combined_mean" "$combined_min" "$clean_fp" "$n_datasets" \
+                "$combined_singing" "$combined_korean" "$combined_english" \
+                "$clean_fp_singing" "$clean_fp_korean" "$clean_fp_english" \
+                "$status" "$subject" \
                 >> "$RESULTS"
         }
 
