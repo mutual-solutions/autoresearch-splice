@@ -19,52 +19,111 @@ from scipy import signal as sp_signal
 from scipy.ndimage import uniform_filter1d
 from scipy.stats import genpareto
 
-WINDOW_S = 60.0
-OVERLAP_S = 10.0
+# Sliding analysis-window geometry.
+# All detectors run inside a fixed-size chunk so GPD thresholds, n_tests
+# Bonferroni terms, and pairwise N stay bounded regardless of total file
+# length. Sweet spot from duration sweep (sweep_duration.png): 30–60s;
+# W=60 gives crossfade T² and CPE enough context; S=30 (50% overlap) means
+# splices near a chunk boundary are seen by two adjacent chunks.
+ANALYSIS_WINDOW_S = 60.0
+ANALYSIS_STEP_S = 50.0  # ~17% overlap — W-S=10s still > 5s crossfade margin
+
+
+_DETECT_CACHE: dict = {}  # (bytes-fingerprint, sr, nsamples) -> list[float]
+_DETECT_CACHE_MAX = 512
+
+
+def _cache_key(audio: np.ndarray, sr: int):
+    """Cheap fingerprint: first + last 4KB of raw bytes, plus length and sr.
+    Distinct audios can't collide given differing length or content at edges;
+    identical audios hit every time.
+    """
+    b = audio.tobytes()
+    head = b[:4096]
+    tail = b[-4096:] if len(b) > 4096 else b""
+    return (hash(head), hash(tail), int(sr), len(audio))
 
 
 def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
-    """Unified phase + crossfade + pairwise detector.
+    """Length-agnostic splice detector.
 
-    Phase detector handles T1 hard cuts via BCR-boosted phase discontinuity.
-    Crossfade detector handles T2 via Hotelling T^2 with CPE confirmation.
-    Pairwise detector adds block-structure signal as tiebreaker.
+    Slides a fixed W=ANALYSIS_WINDOW_S chunk across the audio at step
+    ANALYSIS_STEP_S, runs all detectors inside each chunk, and merges
+    detections with chunk-relative times offset to file-level times.
+    Dedupe within 1s over the union keeps boundary splices from
+    double-counting.
+
+    Results are memoized by audio fingerprint so that evaluate.py's
+    secondary eval and ml_eval.py's classifier-patch extraction don't
+    re-run the detector on the same underlying file.
     """
-    # Phase detector: hard cuts (T1) with BCR-boost fusion
-    phase_hits = _detect_phase(audio, sr)
+    key = _cache_key(audio, sr)
+    if key in _DETECT_CACHE:
+        return list(_DETECT_CACHE[key])
 
-    # CPE curve for crossfade confirmation (CPE hits unused directly)
-    _cpe_unused, cpe_curve, cpe_hop_s = _detect_cpe(audio, sr)
+    W = int(ANALYSIS_WINDOW_S * sr)
+    S = int(ANALYSIS_STEP_S * sr)
+    n = len(audio)
 
-    # Crossfade detector with CPE confirmation (T2)
-    xfade_hits = _detect_crossfade(audio, sr, cpe_curve, cpe_hop_s)
+    if n <= W:
+        starts = [0]
+    else:
+        starts = list(range(0, n - W + 1, S))
+        # Tail window: make sure the last chunk reaches the end of the file.
+        if starts[-1] + W < n:
+            starts.append(n - W)
 
-    # Pairwise block structure detector
-    pw_score, pw_time = _detect_pairwise(audio, sr)
+    all_hits: list[float] = []
+    min_chunk = int(5 * sr)  # below this, no detector can fit a window
+    for start in starts:
+        chunk = audio[start:start + W]
+        if len(chunk) < min_chunk:
+            _diag("INFO", "slider", "chunk_too_small",
+                  start=f"{start/sr:.1f}", samples=len(chunk), min=min_chunk)
+            continue
+        offset_s = start / sr
+        for t in _detect_in_chunk(chunk, sr):
+            all_hits.append(offset_s + t)
 
-    # Merge phase (hard cuts) + crossfade (smooth edits)
-    all_hits = sorted(phase_hits + xfade_hits)
-
-    # Pairwise as additional signal when block structure is clear.
-    # Gate is sample-rate adaptive: speech (sr < 32k) has lower block-ratio
-    # magnitudes due to phonetic variety, so a lower gate is needed there.
-    # Singing at 44.1kHz keeps the original autoresearch-tuned gate of 50.
-    pw_gate = 5.0 if sr < 32000 else 50.0
-    if pw_score >= pw_gate and pw_time is not None:
-        if not any(abs(pw_time - h) < 5.0 for h in all_hits):
-            all_hits.append(pw_time)
-            all_hits.sort()
-
-    # Deduplicate within 1s
-    merged = []
+    # Dedupe within 1s
+    all_hits.sort()
+    merged: list[float] = []
     for t in all_hits:
         if not merged or t - merged[-1] > 1.0:
             merged.append(t)
 
     # FP filtering is handled by ml_eval.py's OOF pipeline (via evaluate.py --with-classifier).
     # Do NOT filter here — it would double-filter and prevent ml_eval from seeing raw DSP output.
-
+    if len(_DETECT_CACHE) < _DETECT_CACHE_MAX:
+        _DETECT_CACHE[key] = list(merged)
     return merged
+
+
+def _detect_in_chunk(chunk: np.ndarray, sr: int) -> list[float]:
+    """Run all four detectors on a single analysis chunk, return chunk-local
+    splice times. Called by detect_splices() for each sliding-window chunk.
+    """
+    phase_hits = _analyze_segment_phase(chunk, sr, offset_s=0.0)
+    _cpe_unused, cpe_curve, cpe_hop_s = _detect_cpe(chunk, sr)
+    xfade_hits = _detect_crossfade(chunk, sr, cpe_curve, cpe_hop_s)
+    pw_score, pw_time = _detect_pairwise(chunk, sr)
+
+    hits = sorted(phase_hits + xfade_hits)
+
+    # Pairwise as tiebreaker — sr-adaptive gate (speech < 32kHz uses lower
+    # threshold because phonetic variety damps block-ratio magnitudes).
+    pw_gate = 5.0 if sr < 32000 else 50.0
+    if pw_score >= pw_gate and pw_time is not None:
+        if not any(abs(pw_time - h) < 5.0 for h in hits):
+            hits.append(pw_time)
+            hits.sort()
+
+    # Chunk-level dedupe; file-level dedupe happens in detect_splices().
+    deduped: list[float] = []
+    for t in hits:
+        if not deduped or t - deduped[-1] > 1.0:
+            deduped.append(t)
+    return deduped
 
 
 # ===== MODE 5: Pairwise Segment Distance Matrix =====
@@ -87,12 +146,8 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
         _diag("INFO", "pairwise", "audio_too_short",
               duration_s=f"{duration_s:.2f}", n_segments=N, required=4)
         return 0.0, None
-    # O(N²) pair count grows fast; skip for long audio where crossfade T²
-    # is expected to have enough data for a real GPD fit anyway.
-    if N > 30:
-        _diag("INFO", "pairwise", "skipped_long_audio",
-              duration_s=f"{duration_s:.2f}", n_segments=N, max_n=30)
-        return 0.0, None
+    # O(N²) duration gate removed: the sliding orchestrator in detect_splices
+    # bounds chunk size to ANALYSIS_WINDOW_S (~60s) → N ≈ 12, always tractable.
 
     # Compute CQT band powers for each segment. A segment that can't be
     # analyzed (too short) is skipped with an explicit DIAG and excluded
@@ -266,31 +321,9 @@ def _detect_cpe(audio: np.ndarray, sr: int) -> tuple[list[float], np.ndarray, fl
 
 
 # ===== MODE 1: Phase discontinuity (hard cuts) =====
-
-def _detect_phase(audio: np.ndarray, sr: int) -> list[float]:
-    duration_s = len(audio) / sr
-    if duration_s <= WINDOW_S + 5:
-        return _analyze_segment_phase(audio, sr, offset_s=0.0)
-
-    window_samples = int(WINDOW_S * sr)
-    step_samples = int((WINDOW_S - OVERLAP_S) * sr)
-    all_peaks = []
-    pos = 0
-    while pos < len(audio):
-        end = min(pos + window_samples, len(audio))
-        segment = audio[pos:end]
-        if len(segment) < sr * 10:
-            break
-        peaks = _analyze_segment_phase(segment, sr, offset_s=pos / sr)
-        all_peaks.extend(peaks)
-        pos += step_samples
-
-    all_peaks.sort()
-    deduped = []
-    for p in all_peaks:
-        if not deduped or p - deduped[-1] > 1.0:
-            deduped.append(p)
-    return deduped
+# `_analyze_segment_phase` is called directly by `_detect_in_chunk`; the
+# previous `_detect_phase` multi-segment wrapper is gone — file-level
+# chunking lives in `detect_splices`.
 
 
 # ===== MODE 3: Noise floor jump (quiet sections) =====
