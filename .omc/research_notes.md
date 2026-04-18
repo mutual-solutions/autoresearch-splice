@@ -1244,3 +1244,105 @@ per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=
     audio segments to smoke-test new features against the ACTUAL
     failure cases, instead of guessing from data/train/singing/tier1.
 
+## 2026-04-18T19:23:58+09:00 — ac2d350 (discard, combined=0.010000)
+subject: FILE-LEVEL mean-flatness route GBM_THRESHOLD (0.982 -> 0.988 on tonal files)
+per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=0.000000
+
+# 2026-04-18 — hypothesis: FILE-LEVEL mean-flatness → conditional GBM threshold
+
+(a) HYPOTHESIS. Pure detector.py change, no retrain, no feature change.
+    At the top of `detect_splices`, sample mean spectral_flatness on ~8
+    one-second windows spread evenly across the full audio. Compute
+    `file_flatness_mean`. If `file_flatness_mean < FILE_TONALITY_MAX =
+    0.05` (highly tonal / musical content) use the tighter
+    `GBM_THRESHOLD_FILE_TONAL = 0.990` as the emit gate; otherwise use
+    the standard `GBM_THRESHOLD = 0.982`. One helper, 3 new constants,
+    ~15 lines in detector.py. Classifier joblib / features.py /
+    train_classifier.py untouched.
+
+(b) WHY this over recent failures. Every prior tonality-gated move
+    used PER-EMIT context:
+      * `tonality-conditioned per-emit threshold (flat<0.05 → 0.988)`
+        (0.446) — lifted singing to 0.275 but collapsed korean 0.500
+        → 0.426 because some voiced-korean ±2s windows dip below
+        0.05 mid-utterance and the per-emit gate tightens their
+        threshold too. The FAILURE MODE was per-emit noisiness.
+      * `GATED tonality+persistence post-filter` (catastrophic 0.010)
+        — per-emit AND gate, same failure ingredient plus runtime
+        instability.
+      * `singing-specialized GBM with audio-flatness routing` (0.357)
+        — did use file-level flatness but SWAPPED THE CLASSIFIER;
+        the small singing-only training set over-fit and singing
+        dropped to 0.120.
+    NO prior attempt has used file-level flatness to route the
+    DECISION THRESHOLD on the same unified classifier. The two prior
+    post-mortems cited this specific combination as a next step
+    without attempting it. File-level flatness is a ROBUST
+    discriminator: the singing-routing post-mortem measured korean
+    speech files at 0.10-0.30 (never below 0.06) and singing files
+    at 0.02-0.05 (always below 0.06), so a 0.05 cutoff sits cleanly
+    between populations and cannot mis-gate korean. Tightening to
+    0.990 (vs 0.988 in the per-emit attempt) is safe because the
+    gate only bites on a genuinely-musical file set — the worst it
+    can do is cost 1-2 tier2 singing crossfades; in exchange the 6
+    singing clean FPs that sit at p_splice ≈ 0.982-0.988 are dropped.
+
+    Risk-bounded design: file-level flatness evaluation is one
+    librosa.feature.spectral_flatness call on ~8 sampled 1s slices
+    (~30 ms overhead per file × ~60 files ≈ 2 s, well inside
+    243/300 s headroom). Only detector.py changes so there is no
+    retrain path — which is important because AUTO-RETRAIN has
+    been clobbering recent features.py-touching hypotheses.
+    Byte-identical behaviour on speech files because their
+    file_flatness_mean is above cutoff → threshold unchanged.
+
+    Orthogonal to all 50+ prior failures: 6 primary tunables
+    bracketed, 8 GBM hyperparam axes failed, 5 training-data axes
+    failed, 12+ feature add/ablation failed, 7+ post-filters failed
+    (including per-emit flatness), 2 model-class swaps failed,
+    isotonic catastrophic, bootstrap-adversarial failed, per-bin
+    phase catastrophic. NO prior used FILE-LEVEL flatness as a
+    threshold router.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Loosen (0.06 cutoff) or tighten (0.04) the flatness
+        boundary; calibrate tight threshold (0.988 or 0.995) to
+        move the precision/recall point.
+    (2) Add a second scalar to the file-level test (e.g. voicing
+        fraction or harmonic_ratio = HPSS harmonic-energy share)
+        and require BOTH to flag tonal before tightening.
+    Final escalation if file-level gating cannot help singing
+    without hurting it: genuine audio-augmentation during training
+    (add reverb / EQ / pitch-shift to clean singing training rows
+    so GBM sees a wider clean distribution and chord-transition
+    spec_*_delta magnitudes look less exceptional).
+
+(d) Information gaps. The 4 most recent discards were catastrophic
+    0.010 (ExtraTrees 43944a6, gated tonality d47c0e2, isotonic
+    d25f455, phase residual b39dbc9). The prompt shows the final
+    combined but NOT the eval stderr that explains whether eval
+    crashed, timed out, or legitimately predicted a zero score.
+    Without a `RECENT_CATASTROPHIC_DIAGNOSTICS` block surfacing
+    `.omc/classifier/eval.stderr` tails for the last N 0.010 runs
+    (e.g. "crash: RuntimeError at detector.py:268" vs "timeout at
+    294 s" vs "all splice predictions below threshold"), I cannot
+    distinguish hypothesis-content failure from pipeline breakage.
+    Two of those four (isotonic, phase feature) had healthy OOF
+    F1 post-retrain but still scored 0.010 on evaluate.py — strong
+    signal that something other than the hypothesis content killed
+    the eval.
+
+(e) Wrapper enhancements.
+    (1) Show the eval.stderr tail on 0.010 outcomes inside the
+        next iteration's prompt (a `LAST_CATASTROPHIC_STDERR` block
+        at the top of HISTORY). This directly unblocks the 4
+        consecutive 0.010 mystery.
+    (2) `verify_agent.py --diagnose-last` helper that prints, for
+        the most recent DISCARD, the evaluate.py stderr tail, the
+        detector fp_classifier.meta.json features_py_sha, and the
+        pass/fail of each of preflight's 4 checks — single
+        command, no guessing.
+    (3) Surface `classifier_oof_f1_weighted_baseline` and the
+        latest AUTO-RETRAIN OOF delta in CURRENT STATE, so I can
+        spot training-pipeline drift vs hypothesis issues.
+
