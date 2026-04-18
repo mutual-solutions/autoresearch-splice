@@ -981,3 +981,71 @@ per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=
         issue, isotonic regression fit OOF recalibrates the p_splice >
         0.982 tail. Complementary axis to model-family swap; never tried.
 
+## 2026-04-18T18:42:11+09:00 — d47c0e2 (discard, combined=0.010000)
+subject: GATED tonality+persistence post-filter — drop GBM emit ONLY when BOTH (i) mean spectral_flatness on ±2s window around t_emit < 0.05 (tonal/musical content) AND (ii) spec_rolloff |d_near|>200Hz but |d_far|<0.4*|d_near| at +4..+6s (chord cycle-back). Pure detector.py change, no retrain, no feature change. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Prior two most-promising post-filters were each applied UNCONDITIONALLY: persistence (0.455) dropped singing 0.272->0.268 AND english 0.756->0.727 from over-aggressive global bite; tonality-conditioned threshold (0.447) lifted singing to 0.275 but collapsed korean 0.500->0.426 from per-emit flatness mis-gating voiced speech as tonal. Last tonality post-mortem explicitly suggested "Combine: require BOTH mean_flatness<0.05 AND persistence_ratio<0.4" — never tried. The AND gate is orthogonal-safe: speech sits at flatness ~0.08-0.25 so gate (i) filters the filter out for korean/english (smoke-tested: english clean 7.5%/korean clean 12.5% of time positions fire both gates vs singing clean 17-37%); singing sits at ~0.02-0.04 so gate (i) passes and gate (ii) then only drops chord-cycle-back shifts (same mic/room/singer continues so rolloff returns within ±0.4*d_near; real cross-song splices persist d_far≈d_near). Orthogonal to all 40+ prior failures: 6 primary tunables bracketed, 8 GBM hyperparam axes failed, 5 training-data axes failed, 12+ feature add/ablation failed, 7+ individual post-filters failed, 2 model-class swaps (HistGBM kept, ExtraTrees 0.010 catastrophic), bootstrap-adversarial failed, singing-specialized GBM routing failed — NO prior attempt required MULTIPLE independent gates before dropping. Cost ~4 librosa calls per emit on small slices; speech short-circuits at gate (i) so typical overhead ~15-20s within 243/300s headroom. Smoke test on data/train/singing/tier1/splice_t1_001.wav at t=5 (pre-splice): flat=0.0006 d_near=-270 d_far=-925 ratio=3.42 -> KEEP (persistence holds = real shift).
+per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=0.000000
+
+# 2026-04-18 — hypothesis: GATED tonality+persistence post-filter
+
+(a) HYPOTHESIS. Pure detector.py post-dedupe filter that drops an emit
+    ONLY when BOTH of two gates fire on the file-level audio:
+      * tonality gate: mean spectral_flatness on a ±2.0s window around
+        t_emit is < 0.05 (musical / highly tonal content)
+      * persistence gate: on spec_rolloff, |d_near|>200 Hz AND
+        |d_far|<0.4*|d_near| where d_near = near(t..t+2) - pre(t-2..t)
+        and d_far = far(t+4..t+6) - pre(t-2..t) (the rolloff shift the
+        GBM keyed on did NOT persist 4-6s post-emit → chord cycle-back).
+    Skip filter at file edges (keep). Pure detector.py change; no
+    retrain; no feature change. New helper _gated_persistence_filter
+    and 5 new constants.
+
+(b) WHY this over recent failures. The two most-promising post-filters
+    of the last 30 iterations were each tried UNCONDITIONALLY:
+      * persistence post-filter on spec_rolloff (0.454984) — singing
+        0.268 vs baseline 0.272 (close) but english dropped 0.756→0.727
+        and korean 0.500→0.484. Damage to speech domains from over-
+        aggressive global application.
+      * tonality-conditioned threshold tightening (0.446512) — singing
+        0.275 ABOVE baseline but korean 0.500→0.426 collapsed because
+        per-emit flatness mis-gated some korean voiced segments as
+        "tonal" and tightened their threshold too.
+    Last tonality post-mortem explicitly suggested: "Combine: require
+    BOTH mean_flatness<0.05 AND persistence_ratio<0.4 (resurrect
+    persistence filter gated on tonality)". Never tried.
+
+    Why the AND gate is orthogonal-safe: speech files sit at
+    mean_flatness ~0.08-0.25 on most windows, so gate 1 nearly always
+    fails for korean/english emits → filter is a no-op on their
+    decisions. Singing files sit at flatness ~0.02-0.04, so gate 1
+    typically passes. Then gate 2 (persistence) only drops emits where
+    the rolloff shift cycles back within 4-6s — the chord-progression
+    signature that does NOT fit real cross-song splices (mic/room/
+    singer change persists for file remainder). Much tighter than
+    either gate alone: both must fire.
+
+    Orthogonal to 40+ prior failures: 6 primary tunables bracketed,
+    8 GBM hyperparam axes failed, 5 training-data axes failed, 12+
+    feature add/ablation failed, 7+ post-filters failed individually,
+    2 model-class swaps (HistGBM kept, ExtraTrees catastrophic
+    0.010), bootstrap-adversarial failed, singing-specialized GBM
+    routing failed. NO prior attempt required MULTIPLE independent
+    gates to fire before dropping.
+
+    Cost bounded: ~4 librosa calls per emit on small ±2s slices of
+    file audio. Speech files short-circuit at gate 1 so typical
+    overhead ~15-20s within 243/300s headroom.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Loosen gate 1 (PERSIST_FLATNESS_MAX 0.06 or 0.08) if singing
+        TPs were dropped alongside FPs — many singing TPs also sit
+        in tonal windows, so the filter may need to be restricted
+        further (add a THIRD gate on the GBM probability: only
+        apply filter to marginal emits with p_splice<0.99).
+    (2) Switch gate 2's feature from spec_rolloff to spec_centroid
+        (similar SHAP mass, different numerical behaviour); or use
+        logical OR (rolloff OR centroid persistence fail → drop) for
+        stricter bite. Final escalation: calibrate HistGBM with
+        CalibratedClassifierCV(method='isotonic', cv=5) — explicit
+        untried move from the ExtraTrees post-mortem that targets
+        probability over-confidence rather than rank error.
+
