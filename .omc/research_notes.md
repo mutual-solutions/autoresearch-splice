@@ -427,3 +427,55 @@ per-domain: combined_english=0.674419 combined_korean=0.436364 combined_singing=
     itself (harmonic ratio / voicing rate proxies) inside detect_splices
     and dispatching to one of three trained classifiers.
 
+## 2026-04-18T16:24:36+09:00 — 78832ad (discard, combined=0.447181)
+subject: first feature ABLATION attempt — delete spec_bandwidth_delta from FEATURE_NAMES and _block_spectral (75->74). Directly targets singing clean_fp=6 plateau at weakest-domain combined=0.272 by breaking the correlated top-3 SHAP cluster (spec_rolloff_delta 1365 / spec_centroid_delta 427 / spec_bandwidth_delta 408 in singing — three envelope-shape statistics derived from the same STFT building redundant GBM splits that fire equally on real splices and song-natural chord transitions). Every prior hypothesis either ADDED features (local-novelty spec ratio, mfcc_cosine, HPSS-percussive, hf-band spec) or tweaked tunables/training-data/post-filters — ZERO prior attempts have REMOVED a feature. Ablating the weakest top-3 singing predictor forces GBM to redistribute the 408 SHAP mass to less-correlated features (nf_rolloff_delta, dsp_t2_z, dsp_pairwise_proximity) producing a different decision surface; english/korean blast bounded because spec_rolloff_delta (their #1) and spec_centroid_delta remain intact, and bandwidth is the weakest of their spec top-3 too. This is the direction the HPSS-percussive post-mortem explicitly recommended and has never been taken. Min blast radius: 2-line deletion in features.py, zero detector.py or train_classifier.py edits. FEATURE_NAMES sha changes so US-505 staleness gate triggers classifier retrain automatically. feat_bandwidth chunk-context slot remains computed (harmless, single librosa.feature.spectral_bandwidth call ~5ms per chunk) to preserve minimum diff.
+per-domain: combined_english=0.775000 combined_korean=0.500000 combined_singing=0.230769
+
+# Iteration reflection
+
+(a) HYPOTHESIS. First FEATURE ABLATION attempt in the entire run. Delete
+    `spec_bandwidth_delta` from FEATURE_NAMES and from `_block_spectral`
+    in features.py. FEATURE_NAMES shrinks 75 -> 74. Classifier
+    auto-retrains (US-505 staleness gate on features.py sha).
+
+(b) WHY this over every recent failure. The last ~8 hypotheses were
+    either feature ADDITIONS (local-novelty spec ratio, mfcc_cosine,
+    HPSS-percussive, hf-band spec deltas), training-data tweaks
+    (sample_weight 2.0x, onset hard-negative mining), or detector
+    post-filters (plateau, class-margin, onset-local-pct,
+    asymmetric-class-threshold) -- every one verify-failed or
+    regressed. Primary tunables bracketed (6 axes), GBM hyperparams
+    failed (8 axes), training-data composition failed (4 axes),
+    signal-decomposition feature adds failed (HPSS, HF-band,
+    local-novelty), timbral cosine-direction feature failed, plus all
+    post-processing filters failed. NO hypothesis has ever REMOVED a
+    feature. The SHAP rollup shows top singing predictors are
+    spec_rolloff_delta (1365) / spec_centroid_delta (427) /
+    spec_bandwidth_delta (408), a highly-correlated trio of
+    envelope-shape statistics derived from the same STFT. GBM's
+    addition-path builds redundant splits across this correlated
+    cluster and the dominant singing SHAP mass stays locked on
+    spec_rolloff_delta because removing one redundant axis simply
+    activates the next. The ablation move forces GBM off the
+    correlated cluster: with bandwidth removed, the 408 SHAP mass must
+    redistribute to non-correlated features (nf_rolloff_delta,
+    dsp_t2_z, dsp_pairwise_proximity, or the dropped-in block signals
+    that never got traction when added alongside). English/korean
+    impact bounded because spec_rolloff_delta (their #1 predictor)
+    and spec_centroid_delta remain -- bandwidth is the weakest of
+    their spec top-3 too. Minimum blast radius: 2 line deletions
+    (FEATURE_NAMES entry + `_block_spectral` dict entry), zero
+    detector.py changes, zero train_classifier.py changes. This is
+    explicitly the direction the HPSS-percussive post-mortem
+    recommended and it has never been taken.
+
+(c) IF THIS FAILS. Ablate a second redundant-cluster member
+    (spec_centroid_delta or spec_flatness_delta) -- continue the
+    ablation-as-forcing-function strategy rather than adding more
+    orthogonal features. If TWO consecutive ablations both fail,
+    the correlated-cluster theory is wrong and the next move is
+    per-audio domain heuristic routing: compute
+    voicing_fraction/harmonic_ratio at inference time to route
+    between two classifiers trained separately on
+    singing-vs-speech subsets of the training manifest.
+
