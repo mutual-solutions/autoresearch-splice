@@ -383,3 +383,47 @@ per-domain: combined_english=0.674419 combined_korean=0.436364 combined_singing=
     not_splice locations, add those exact positions as hard negatives
     for a second-pass retrain.
 
+## 2026-04-18T16:14:29+09:00 — 6eeb79c (verify-fail, combined=0.425240)
+subject: add 3 high-frequency-band (>=2000 Hz) spectral deltas — hf_centroid_delta/hf_rolloff_delta/hf_bandwidth_delta computed on |STFT| with freq<2000 Hz bins zeroed then fed to librosa.feature.*(S=, freq=). FEATURE_NAMES 75->78, classifier auto-retrains (US-505). Targets singing clean_fp=6 plateau at weakest-domain combined=0.272 by exploiting a SIGNAL-LOCALIZATION axis orthogonal to all 7 recent verify-fails at 0.463218 (sample_weight 2x / local-novelty spec ratio / mfcc_cosine / HPSS-percussive / plateau-filter / class-margin / onset-local-pct) and all 20+ prior failed hyperparam+data-composition+primary-tunable axes: chord transitions in singing shift the low-mid spectrum (new chord root + new harmonic stack concentrated in 0-2000 Hz) while preserving HF profile (same singer, same mic high-end, same room reverb tail, same air noise), so hf_*_delta near zero; cross-song splices change the downstream HF chain (different reverb tails, different mic HF response, different codec HF rolloff), so hf_*_delta fires. HPSS tried time-harmonicity decomposition — this attempts FREQUENCY-CUTOFF decomposition, a genuinely different subspace. Blast radius minimal: +3 features in one block sharing one STFT call per chunk (~10ms overhead, 243s/300s headroom ample), no detector.py or train_classifier.py edits. Smoke test on data/train/singing/tier1/splice_t1_001.wav: hf_centroid_delta=2145/hf_rolloff_delta=4388/hf_bandwidth_delta=1725 at GT splice t=30 vs -881/-1848/-512 at stable mid-content t=10 (distinct sign and magnitude separation).
+per-domain: combined_english=0.674419 combined_korean=0.436364 combined_singing=0.261290
+
+# Iteration reflection
+
+(a) Hypothesis: add 3 HIGH-FREQUENCY-BAND spectral deltas to `_block_spectral`
+    — `hf_centroid_delta`, `hf_rolloff_delta`, `hf_bandwidth_delta`. Compute
+    them on |STFT| restricted to bins whose FFT frequency is ≥ 2000 Hz.
+    FEATURE_NAMES grows 75 → 78 so the classifier auto-retrains (US-505).
+    No detector.py or train_classifier.py changes.
+
+(b) WHY this over recent failures. Every full-band feature-addition in the
+    last 7 attempts (sample_weight 2x, local-novelty spec ratio, mfcc_cosine,
+    HPSS-percussive, plateau-filter, class-margin-filter, onset-local-pct
+    post-filter) verify-failed. The core failure mode is specific: in clean
+    singing, spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta
+    fire on song-natural chord transitions at magnitudes indistinguishable
+    from real splices, driving clean_fp=6 and weakest-domain combined=0.272.
+    All top singing predictors live in the FULL-BAND spectrum where the
+    fundamental + low harmonics of the singer's voice dominate (0–2000 Hz).
+    A singing chord transition shifts the low-mid spectrum (new chord root,
+    new harmonic stack) but PRESERVES the high-frequency profile: same
+    singer, same mic high-end response, same room reverberation tail, same
+    air noise. A cross-song splice, by contrast, replaces recording-room /
+    mic / codec downstream of ~2000 Hz — reverb tails, HF air noise, and
+    codec HF rolloff all change. HF-band centroid / rolloff-0.85 / bandwidth
+    deltas should fire at true splices and be near-zero at chord transitions,
+    giving the classifier a signal that the full-band features cannot
+    provide. Orthogonal to every prior failed axis: HPSS decomposes via
+    time-harmonicity (filter |STFT| along time), this decomposes via
+    FREQUENCY CUTOFF (filter |STFT| along frequency) — genuinely different
+    subspaces. Implementation shares one STFT call per chunk and masks bins
+    with freq < 2000 Hz to zero before feeding librosa.feature.*(S=..., freq=...)
+    — ~10ms overhead per chunk, well within 243s/300s budget headroom.
+
+(c) If this fails: move to ABLATION instead of addition — delete
+    spec_bandwidth_delta and spec_contrast_delta from FEATURE_NAMES (the
+    two weakest top-3 singing predictors) to force GBM off the
+    correlated-feature cluster dominating splits. If THAT also fails,
+    attempt per-domain classifier routing by inferring domain from audio
+    itself (harmonic ratio / voicing rate proxies) inside detect_splices
+    and dispatching to one of three trained classifiers.
+
