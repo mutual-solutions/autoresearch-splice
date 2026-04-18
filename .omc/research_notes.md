@@ -188,3 +188,54 @@ per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=
     the easy-domain loss pressure that sample_weight rebalancing
     failed to fix.
 
+## 2026-04-18T15:17:42+09:00 — 4af21bc (verify-fail, combined=0.463218)
+subject: plateau-filter GBM emissions — keep hit only if neighbor (i±1 at stride=0.12s) is ALSO above threshold, filtering single-frame spikes. New constant GBM_MIN_CONSECUTIVE_HITS=2 gates the hit_mask in _gbm_detect_splices. Untried post-processing axis orthogonal to every prior attempt (all 6 primary tunables bracketed, 7 GBM hyperparam axes failed, 4 training-data-composition axes failed, spec feature-window down failed, joint THRESHOLD+MIN_SEP failed, 4 consecutive feature-addition+training-weight hypotheses verify-failed at IDENTICAL combined=0.463218 with byte-identical per-domain breakdown — strongly suggesting those changes did NOT reach eval due to stale feature cache or retrain skip); pure detector.py change definitely takes effect since cached classifier is invoked unchanged but post-filtered differently. spec_*_delta features (top singing predictors) use ±2s pre/post windows so adjacent grid points at stride=0.12s have 98% overlapping feature windows — p_splice values are highly correlated and real splices produce 2-8 consecutive hits above threshold. Song-natural chord transitions firing a single spec_rolloff_delta frame by musical coincidence rather than a true discontinuity produce narrow isolated spikes whose surrounding frames sit below 0.982 — filtered. Dedupe at GBM_MIN_SEP_S=3.5 still collapses each plateau to its max-prob sample so emit count at TPs is unchanged. Minimum blast radius: 5 lines added, zero feature/training changes.
+per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=0.276056
+
+# Iteration reflection
+
+(a) Hypothesis: require an emission plateau. In detector.py, after the GBM
+    produces the `p_splice > GBM_THRESHOLD` hit_mask, keep a hit at index
+    `i` only if its neighbor (i-1 or i+1 at stride=0.12s) is ALSO above
+    threshold. Single-frame spikes get filtered; multi-frame plateaus
+    pass through untouched. New constant `GBM_MIN_CONSECUTIVE_HITS = 2`.
+
+(b) WHY this over recent failures. The last four hypotheses
+    (sample_weight singing 2.0x, local-novelty spec ratio,
+    mfcc_cosine_distance, HPSS-percussive deltas) all verify-failed at
+    IDENTICAL combined=0.463218 with IDENTICAL per-domain breakdown
+    (singing 0.276056 / korean 0.476190 / english 0.756098). Four
+    structurally different feature additions + one training-weight
+    change producing byte-identical evaluation output is
+    astronomically unlikely by chance — it suggests those changes did
+    not actually reach evaluate.py (likely a stale feature cache or
+    retrain skip). A pure detector.py post-processing change
+    definitely takes effect: the cached classifier is invoked the
+    same way but its output is post-filtered differently. This is
+    also genuinely untried: every prior detector.py tweak moved a
+    scalar tunable (THRESHOLD, MIN_SEP, STRIDE, STEP, WINDOW, EDGE).
+    None added a plateau / consecutive-hits filter. The spec_*_delta
+    features use ±2s pre/post windows, so at stride=0.12s adjacent
+    grid points have 98%-overlapping feature windows — their
+    p_splice values are highly correlated. At a real splice the peak
+    is surrounded by near-peak values producing 2–8 consecutive hits
+    above threshold. At a song-natural chord transition where a
+    single feature frame happens to spike above 0.982 from musical
+    coincidence rather than a true discontinuity, the surrounding
+    frames typically sit below threshold — the classifier's
+    confidence is narrow. Requiring adjacency filters those isolated
+    spikes (singing clean_fp=6 driver) while letting every broad TP
+    plateau pass through unchanged. After the filter,
+    GBM_MIN_SEP_S=3.5 dedupe still collapses the plateau to its
+    max-prob sample, so emit count at TPs is unchanged. Minimum blast
+    radius: ~3 lines in the hit_mask branch, no feature change, no
+    retrain, deterministic and fast.
+
+(c) If this fails: try a stronger plateau width (3 consecutive hits)
+    or a soft version (majority of a 3-frame window). If both fail,
+    the singing FPs are genuinely broad plateaus indistinguishable
+    from TPs by duration — shift to label-specific thresholds where
+    crossfade (tier 2) uses a tighter threshold than hard_cut
+    (tier 1), since crossfades are the lower-precision class and
+    most spurious singing FPs get classified as crossfade.
+
