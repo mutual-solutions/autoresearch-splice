@@ -26,3 +26,17 @@ autoresearch-splice — progress log
   earliest-tracked-SHA cutoff.
 - Monitor scheduled on .omc/autoresearch.log for iteration boundaries,
   keep/discard decisions, crashes, API-limit events.
+
+2026-04-18 — Ralph session (continuation): dashboard subcommand
+-----------------------------------------------------------------
+- US-502: scripts/dashboard.py + `./run_autoresearch.sh dashboard`
+  subcommand. 0.07-0.09s runtime, pure read-side, graceful fallbacks
+  on missing artifacts. Reports decrypted eval tmp SIZE (from
+  /var/folders/.ar-eval-*) without leaking the path — preserves the
+  wrapper's isolation property for the eval corpus.
+- Fixed subtle inconsistency in wrapper's hypothesis_commit: was
+  using full 40-char SHA from `git rev-parse HEAD` but legacy rows
+  used 7-char; now normalized to short SHA via `git log -1 --format=%h`.
+- Autoresearch shipped 3 consecutive keeps under the new inverted
+  flow: 8717fc5 (0.447035) → d14e03c (0.449352). verify_agent HIGH
+  confidence on all.

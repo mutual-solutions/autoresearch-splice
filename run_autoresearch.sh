@@ -416,8 +416,11 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             continue
         fi
 
-        hypothesis_commit="$head_after"
-        hypothesis_subject=$(git log -1 --format=%s "$hypothesis_commit" | sed 's/^hypothesis: //' | tr '\t' ' ')
+        # Short-form SHA for results.tsv consistency; the column mixes
+        # 7-char (from legacy %h path) and 40-char (raw rev-parse) if we
+        # don't normalize here.
+        hypothesis_commit=$(git log -1 --format=%h "$head_after")
+        hypothesis_subject=$(git log -1 --format=%s "$head_after" | sed 's/^hypothesis: //' | tr '\t' ' ')
 
         # Wrapper runs evaluate.py — claude never sees the decrypted
         # eval tree. OMC_EVAL_DATA_ROOT is already exported in this
@@ -644,6 +647,16 @@ case "${1:-help}" in
             echo "$last_log" | grep -qi "backoff" && echo "⚠️  Rate limited — backing off"
         fi
         ;;
+    dashboard)
+        if tmux has-session -t "$SESSION" 2>/dev/null; then
+            state="RUNNING"
+        elif [ -f "$STOP_FILE" ]; then
+            state="STOPPED (stop signal pending)"
+        else
+            state="STOPPED"
+        fi
+        python3 "$PROJECT_DIR/scripts/dashboard.py" --state "$state"
+        ;;
     rollback)
         N="${2:?Usage: $0 rollback <version>}"
         SNAP="$PROJECT_DIR/.omc/classifier/detector_v${N}.py"
@@ -664,7 +677,7 @@ case "${1:-help}" in
         run_loop_with_restart
         ;;
     *)
-        echo "Usage: $0 {start|stop|status|rollback <version>}"
+        echo "Usage: $0 {start|stop|status|dashboard|rollback <version>}"
         exit 1
         ;;
 esac

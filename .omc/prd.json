@@ -231,6 +231,31 @@
         "Unit-ish check: a shell helper function _detect_deep_orphans() is extracted and callable standalone; `bash -c 'source run_autoresearch.sh; _detect_deep_orphans 20'` prints zero or more warning lines to stderr and returns 0",
         "False-positive guard: commits whose subject is 'baseline-restore:' or 'chore:' or 'refactor:' or 'feat:' or 'fix:' or 'test:' or 'docs:' are NEVER flagged (they're human-authored maintenance, not autoresearch hypotheses)"
       ]
+    },
+    {
+      "id": "US-502",
+      "title": "Rich status dashboard: one-shot operator summary",
+      "priority": 52,
+      "passes": true,
+      "note": "scripts/dashboard.py + `./run_autoresearch.sh dashboard` subcommand. 0.09s end-to-end, pure read-side (no evaluate.py, only results.tsv/baseline/rollup/versions + git log %cr for last-keep age). Missing artifacts handled: absent TSV→'(no experiments yet)', absent baseline→'(no baseline_metrics.json yet)', absent rollup→'(no rollup yet)'. Also: decrypted eval tmp SIZE reported without leaking path (threat-model-consistent). Fixed TSV SHA inconsistency in wrapper's hypothesis_commit (was mixing full/short SHAs).",
+      "acceptanceCriteria": [
+        "`./run_autoresearch.sh dashboard` prints a compact multi-line summary: loop state (RUNNING/STOPPED), total experiments, keep/discard/verify-fail breakdown, current combined + per-domain combined + per-domain clean_fp from baseline_metrics.json, time since last keep (human-readable, e.g. '17m ago'), top-3 feature names from .omc/shap_rollup.json per domain, and loop-start eval decrypt tmp size if currently decrypted",
+        "Dashboard runs in <2s (no evaluate.py invocation, no expensive subprocesses). Use only filesystem reads + git for all data.",
+        "Dashboard gracefully handles missing artifacts: absent results.tsv → '(no experiments yet)'; absent baseline_metrics.json → '(no baseline yet)'; absent shap_rollup.json → '(no rollup yet)'; loop stopped → '(not running — use start to resume)'",
+        "Dashboard output is single-column, no ANSI colors, plain-text aligned — legible in tmux panes and CI captures alike",
+        "Adding dashboard does NOT introduce any new global state files; it's a pure read-side subcommand",
+        "`./run_autoresearch.sh` with no args / help mentions the new `dashboard` subcommand alongside start/stop/status/rollback"
+      ]
+    }
+  ]
+}
+      "acceptanceCriteria": [
+        "run_autoresearch.sh's orphan-detection step looks back up to N=20 commits (not just HEAD) for any 'hypothesis: …' commit that is NOT followed within 3 commits by a 'baseline: …' commit on the same branch AND does NOT appear in results.tsv as discard/keep/verify-fail",
+        "When such an orphan is found, wrapper logs a structured '.omc/autoresearch.log' entry with the orphan SHA, subject, and the detection reason (no paired baseline, not in results.tsv)",
+        "Wrapper DOES NOT auto-revert deep orphans (too dangerous — could discard human-authored commits like baseline-restore). Instead it writes a warning and continues. Only HEAD-level orphans (existing behavior) still auto-revert.",
+        "Unit-ish check: a shell helper function _detect_deep_orphans() is extracted and callable standalone; `bash -c 'source run_autoresearch.sh; _detect_deep_orphans 20'` prints zero or more warning lines to stderr and returns 0",
+        "False-positive guard: commits whose subject is 'baseline-restore:' or 'chore:' or 'refactor:' or 'feat:' or 'fix:' or 'test:' or 'docs:' are NEVER flagged (they're human-authored maintenance, not autoresearch hypotheses)"
+      ]
     }
   ]
 }
