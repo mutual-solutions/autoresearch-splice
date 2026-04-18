@@ -1,0 +1,16 @@
+2026-04-18T09:59:58+00:00 Autoresearch loop started
+2026-04-18T09:59:59+00:00 Starting iteration (consecutive discards: 0)
+2026-04-18T10:00:00+00:00 PHASE: claude start iter=abc1234
+2026-04-18T10:00:10+00:00 PHASE: claude end
+2026-04-18T10:00:11+00:00 PHASE: eval start
+2026-04-18T10:00:30+00:00 PHASE: eval end
+2026-04-18T10:00:35+00:00 ITER_SUMMARY iter=abc1234 status=discard total=38 claude=10 retrain=- eval=19 verify=3 note=1
+2026-04-18T10:00:36+00:00 Iteration: discard (discards: 1/50)
+2026-04-18T10:00:45+00:00 Starting iteration (consecutive discards: 1)
+2026-04-18T10:01:05+00:00 PHASE: claude start iter=def5678
+2026-04-18T10:01:20+00:00 PHASE: claude end
+2026-04-18T10:01:21+00:00 PHASE: eval start
+2026-04-18T10:01:50+00:00 PHASE: eval end
+2026-04-18T10:01:55+00:00 ITER_SUMMARY iter=def5678 status=keep total=50 claude=15 retrain=- eval=29 verify=5 note=1
+2026-04-18T10:01:56+00:00 Iteration: KEEP (reset discard counter)
+2026-04-18T10:02:00+00:00 PIPELINE_FAILURE: eval subprocess exited non-zero (rc=2)
