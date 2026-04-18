@@ -79,3 +79,53 @@ per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=
     splice-like transitions; next move would be per-chunk z-score
     standardization of the delta features (chunk-local normalization).
 
+## 2026-04-18T15:01:51+09:00 — d91fb98 (verify-fail, combined=0.463218)
+subject: add mfcc_cosine_distance feature to _block_mfcc — one scale-invariant orthogonal-to-magnitude feature targeting singing's song-natural-chord-transition FP plateau (clean_fp=6, weakest-domain combined=0.272). Existing mfcc_delta_XX entangles magnitude and direction so spec_*_delta features dominate SHAP in all 3 domains with identical rank but 3-5x higher singing magnitude firing at chord transitions the same as real splices. Cosine distance 1 - (pre_mean . post_mean)/(||pre_mean|| ||post_mean||) is scale-free and measures ONLY timbral direction change in MFCC-13 space: a singing chord transition preserves singer/room/mic identity so mean-MFCC direction stays aligned (cos_dist ~ 0) while a true splice across songs shifts timbral direction (cos_dist > 0). Orthogonal to all prior failed axes: 6 primary tunables bracketed, 7 GBM hyperparam axes failed, 4 training-data-composition axes failed, spec feature-window down failed, sample_weight singing 2.0x verify-failed, local-novelty spec ratio features verify-failed (temporal-novelty ratio is fundamentally different from direction-change). FEATURE_NAMES 75 -> 76 so classifier auto-retrains (US-505). Minimum blast radius: single new feature in existing block, no detector.py / train_classifier.py / geometry / threshold edits. Smoke test at t=10 stable mid-content cos_dist=0.0015 confirms low value for unchanging source, bounded [0,2] with no NaN risk (epsilon + clip).
+per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=0.276056
+
+## 2026-04-18 — hypothesis: MFCC pre/post cosine distance feature
+
+(a) HYPOTHESIS. Add ONE new feature `mfcc_cosine_distance` to
+    `_block_mfcc`: cosine distance between the mean MFCC-13 vectors
+    of the pre and post 2.0s windows around t.
+        d = 1 - (pre_mean . post_mean) / (||pre_mean|| * ||post_mean|| + eps)
+    FEATURE_NAMES grows 75 -> 76. Classifier auto-retrains (US-505).
+    Zero detector.py / train_classifier.py changes.
+
+(b) WHY. Every prior keep/fail tells the same story: magnitude-based
+    spec_*_delta features dominate SHAP in ALL three domains, but in
+    singing they fire on song-natural chord transitions with the SAME
+    magnitude distribution as true splices (driving clean_fp=6 plateau
+    at weakest combined=0.272). Existing mfcc_delta_XX = post_mean - pre_mean
+    entangles magnitude and direction: a loud->quiet transition of the
+    SAME source produces nonzero delta, and so does a same-loudness
+    transition between DIFFERENT sources. Cosine distance is scale-
+    invariant -- it measures ONLY direction change in MFCC-13 space.
+    For singing specifically, a chord transition preserves singer /
+    room / mic identity so the mean-MFCC direction stays aligned
+    (cos_dist ~ 0), while a real splice across songs shifts timbral
+    centroid direction (cos_dist > 0). This is genuinely orthogonal
+    to every prior failed axis:
+      * all 6 primary tunables bracketed by failures;
+      * all 7 GBM hyperparam axes failed (depth both dirs, subsample,
+        min_samples_leaf, max_features, learning_rate, n_estimators);
+      * all 4 training-data-composition axes failed;
+      * spec feature-window down (2.0->1.0) failed;
+      * sample_weight singing 2.0x verify-failed (0.463);
+      * local-novelty spec features (centroid/rolloff/bandwidth
+        ratio of |delta| / median(neighboring |delta|)) verify-failed
+        (0.463) -- that approached the chord-transition problem via
+        temporal-novelty ratios; this approaches it via direction
+        change orthogonal to magnitude, a strictly different signal.
+    Minimum viable change: one feature in one existing block, no
+    detector/geometry changes, retrain auto-triggered by
+    FEATURE_NAMES length change.
+
+(c) IF THIS FAILS. Try the same cosine-distance idea on the mel-PCA
+    embedding (mel_pca_01..20 are PC projections of mel-patches around
+    t -- compare pre and post patches via cosine in 20-dim PCA space).
+    That captures fuller spectral timbre including non-MFCC dimensions.
+    Or, if MFCC-cosine shows promise on singing but flat/negative on
+    english/korean, domain-gate the feature (set to 0 unless
+    voicing_prob_pre > 0.5) so it only fires on voiced content.
+
