@@ -32,7 +32,7 @@ from scipy.stats import genpareto
 # W=60 gives crossfade T² and CPE enough context; S=30 (50% overlap) means
 # splices near a chunk boundary are seen by two adjacent chunks.
 ANALYSIS_WINDOW_S = 60.0
-ANALYSIS_STEP_S = 40.0  # 33% overlap — W-S=20s gives boundary splices two chunk views
+ANALYSIS_STEP_S = 30.0  # 50% overlap — W-S=30s, every splice within 30s of a boundary sees two chunks
 
 
 _DETECT_CACHE: dict = {}
