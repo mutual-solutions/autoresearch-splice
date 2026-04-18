@@ -20,6 +20,40 @@ _eval_cleanup() {
     fi
 }
 
+# US-509: per-phase iteration timing. Uses bash $SECONDS (O(1), <1ms).
+# Phases: claude, retrain, eval, verify, note, total. Values are seconds.
+# `-` = phase skipped this iteration. Log lines use distinct prefixes
+# (`PHASE` + `ITER_SUMMARY`) so scripts/phase_stats.py can parse cleanly.
+_phase_start() {
+    eval "_PHASE_$1_T0=$SECONDS"
+}
+_phase_end() {
+    local name="$1"
+    local t0_var="_PHASE_${name}_T0"
+    local t0="${!t0_var:-$SECONDS}"
+    local elapsed=$((SECONDS - t0))
+    echo "$(date -Iseconds) PHASE ${name}: ${elapsed}s" >> "$LOG_FILE"
+    eval "ITER_${name}_S=$elapsed"
+}
+_phase_skip() {
+    eval "ITER_$1_S=-"
+}
+_reset_iter_timers() {
+    local p
+    for p in total claude retrain eval verify note; do
+        eval "ITER_${p}_S=-"
+    done
+}
+_iter_summary() {
+    local sha="$1"
+    local status="$2"
+    echo "$(date -Iseconds) ITER_SUMMARY iter=${sha} status=${status}" \
+         "total=${ITER_total_S:-?} claude=${ITER_claude_S:-?}" \
+         "retrain=${ITER_retrain_S:-?} eval=${ITER_eval_S:-?}" \
+         "verify=${ITER_verify_S:-?} note=${ITER_note_S:-?}" \
+         >> "$LOG_FILE"
+}
+
 # Paths that MUST survive every hypothesis rollback. Wrapper and
 # infrastructure — NOT the claude-editable hypothesis surface
 # (detector.py / features.py / classifier joblib+meta). Without
@@ -259,6 +293,8 @@ run_loop() {
 
         # Run one iteration via claude
         echo "$(date -Iseconds) Starting iteration (consecutive discards: $consecutive_discards)" >> "$LOG_FILE"
+        _reset_iter_timers
+        _phase_start total
 
         # ---- Build prompt context from durable artifacts ---------------
         # results.tsv columns (post-parser-fix):
@@ -377,6 +413,7 @@ for dom in sorted(per):
         # out of the claude subprocess's reach. `env -u` strips the env
         # var before exec'ing claude so dataset_registry in the claude
         # subprocess resolves the default (missing) data/eval/ paths.
+        _phase_start claude
         iteration_output=$(env -u OMC_EVAL_DATA_ROOT -u OMC_FEATURE_CACHE_DIR -u OMC_FEATURES_PY_SHA claude -p "You are forming ONE hypothesis for the audio splice detection project.
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
@@ -475,6 +512,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
 
         # Check if claude itself failed (rate limit, token exhausted, crash)
         claude_exit=$?
+        _phase_end claude
 
         # Append iteration output to log AFTER claude finishes (immune to git reset)
         echo "$iteration_output" >> "$LOG_FILE"
@@ -608,16 +646,20 @@ except Exception:
             else
                 _retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
             fi
+            _phase_start retrain
             set +e
             "${_retrain_cmd[@]}" >> "$LOG_FILE" 2>&1
             _retrain_rc=$?
             set -e
+            _phase_end retrain
             if [ $_retrain_rc -ne 0 ]; then
                 echo "$(date -Iseconds) AUTO-RETRAIN FAILED (rc=$_retrain_rc). Treating as verify-fail." >> "$LOG_FILE"
                 uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
-                _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+                _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+                _phase_end total
+                _iter_summary "$hypothesis_commit" "verify-fail"
                 consecutive_discards=$((consecutive_discards + 1))
                 continue
             fi
@@ -629,6 +671,8 @@ except Exception:
             # Refresh hypothesis_commit since amend changed the SHA.
             head_after=$(git rev-parse HEAD)
             hypothesis_commit=$(git log -1 --format=%h "$head_after")
+        else
+            _phase_skip retrain
         fi
 
         # Wrapper runs evaluate.py — claude never sees the decrypted
@@ -641,9 +685,11 @@ except Exception:
         export OMC_FEATURE_CACHE_DIR="$PROJECT_DIR/.omc/feature_cache"
         export OMC_FEATURES_PY_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo unknown)"
         set +e
+        _phase_start eval
         uv run python evaluate.py --shap > "$PROJECT_DIR/.omc/last_eval.log" 2>&1
         eval_exit=$?
         set -e
+        _phase_end eval
 
         if [ $eval_exit -ne 0 ]; then
             echo "$(date -Iseconds) evaluate.py exited $eval_exit. Reverting hypothesis (last 20 lines of eval log):" >> "$LOG_FILE"
@@ -651,7 +697,10 @@ except Exception:
             uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
-            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _phase_skip verify
+            _phase_end total
+            _iter_summary "$hypothesis_commit" "verify-fail"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -663,7 +712,10 @@ except Exception:
             uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
-            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _phase_skip verify
+            _phase_end total
+            _iter_summary "$hypothesis_commit" "verify-fail"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -674,25 +726,32 @@ except Exception:
             echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
-            _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"
+            _phase_start note; _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _phase_skip verify
+            _phase_end total
+            _iter_summary "$hypothesis_commit" "discard"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
 
         # Strict improvement — run verify_agent for structural checks.
         echo "$(date -Iseconds) Strict improvement (combined=$reported > $current_best). Running verify_agent..." >> "$LOG_FILE"
+        _phase_start verify
         set +e
         verify_output=$(uv run python .omc/coordination/verify_agent.py \
             --agent-name autoresearch \
             --reported-combined "$reported" 2>&1)
         verify_exit=$?
         set -e
+        _phase_end verify
         echo "$verify_output" >> "$LOG_FILE"
 
         if [ $verify_exit -ne 0 ]; then
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
-            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _phase_end total
+            _iter_summary "$hypothesis_commit" "verify-fail"
             consecutive_discards=$((consecutive_discards + 1))
             echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
             continue
@@ -802,7 +861,9 @@ json.dump(data, open(vf, 'w'), indent=2)
             echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
         fi
 
-        _append_note "keep" "$hypothesis_commit" "$hypothesis_subject"
+        _phase_start note; _append_note "keep" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+        _phase_end total
+        _iter_summary "$hypothesis_commit" "keep"
 
         # Brief pause between iterations
         sleep 2

@@ -281,6 +281,23 @@
       "priority": 57,
       "passes": true,
       "note": "scripts/shap_shift.py compares top-3 features per domain between last 2 keep commits. Jaccard < 0.5 on any domain → STRUCTURAL SHIFT, else LOCAL KEEP. Wrapper invokes immediately after VERIFIED KEEP, appends single-line verdict to .omc/last_reflection.md as [auto] header so it enters the next iteration's research note."
+    },
+    {
+      "id": "US-509",
+      "title": "Per-phase iteration timing instrumentation",
+      "priority": 59,
+      "passes": true,
+      "note": "Helpers: _phase_start / _phase_end / _phase_skip / _iter_summary / _reset_iter_timers using bash $SECONDS (<1ms per call). Instrumented: claude (hypothesis form), retrain (conditional on features.py drift), eval (evaluate.py + parse), verify (strict-improvement path only), note (_append_note). Each outcome branch (keep/discard/verify-fail × 3 paths) emits ITER_SUMMARY. scripts/phase_stats.py parses PHASE + ITER_SUMMARY lines, computes median + p95 across trailing N iterations. Synthetic smoke test: correct 1s/2s timings, skipped phases show `-`, all outcome routes emit summary.",
+      "acceptanceCriteria": [
+        "Wrapper emits explicit `PHASE <name>: Ns` log lines for each of: claude (hypothesis formation), retrain (auto-retrain when features.py drift), eval (evaluate.py + RESULTS_TSV parse), verify (verify_agent structural checks — strict-improvement path only), note (_append_note + notebook digest). Phases that were skipped for this iteration print `-` in the summary.",
+        "Per-iteration summary line `ITER_SUMMARY iter=<short_sha> status=<keep|discard|verify-fail> total=<N>s claude=<N|->s retrain=<N|->s eval=<N|->s verify=<N|->s note=<N|->s` emitted once per iteration at each outcome branch (keep, discard, verify-fail, parse-fail, retrain-fail, eval-crash).",
+        "Per-phase helpers `_phase_start <name>` and `_phase_end <name>` + `_phase_skip <name>` + `_iter_summary <sha> <status>` + `_reset_iter_timers` defined near the top of run_autoresearch.sh. Each uses only bash `$SECONDS` (no date-command overhead) for <100ms impact per call site.",
+        "New scripts/phase_stats.py parses `PHASE` + `ITER_SUMMARY` lines from .omc/autoresearch.log, computes per-phase median + p95 across trailing N (default 20) iterations, prints a compact table. Runs in <1s. Graceful fallback on missing data.",
+        "`scripts/phase_stats.py --stdout` sanity run prints a summary of current timing distribution without writing to disk.",
+        "No collateral damage: ITER_SUMMARY + PHASE lines sit in autoresearch.log only; no new gitignored state files; no collision with guard-stash paths; clean-iteration path still prints the existing log lines plus the new timing ones (purely additive).",
+        "All new reset paths still use `_guarded_reset` (no new `git reset --hard` sites).",
+        "Regression: `bash -n run_autoresearch.sh` passes; `uv run python scripts/phase_stats.py` prints either a stats table or `(no iteration summaries yet)` on a fresh log."
+      ]
     }
   ]
 }
