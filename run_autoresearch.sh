@@ -50,69 +50,143 @@ run_loop() {
         # Run one iteration via claude
         echo "$(date -Iseconds) Starting iteration (consecutive discards: $consecutive_discards)" >> "$LOG_FILE"
 
-        # Build "recent failed hypotheses" summary from results.tsv last 30 discards.
-        # Injected into prompt so agent doesn't repeat experiments that already failed.
+        # ---- Build prompt context from durable artifacts ---------------
+        # results.tsv columns (post-parser-fix):
+        #   1 commit          8 combined_korean
+        #   2 combined        9 combined_english
+        #   3 combined_mean  10 clean_fp_singing
+        #   4 combined_min   11 clean_fp_korean
+        #   5 clean_fp       12 clean_fp_english
+        #   6 n_datasets     13 status
+        #   7 combined_singing  14 description
         recent_failures=""
+        recent_keeps=""
+        iter_summary=""
         if [ -f "$RESULTS" ]; then
-            # New column layout: commit combined combined_mean combined_min
-            # clean_fp n_datasets c_singing c_korean c_english cfp_singing
-            # cfp_korean cfp_english status description.
-            # Skip header row AND skip rows where combined=="NA" (parse failures
-            # would drown the prompt in "failed at combined=NA" noise).
+            # Last 30 discards/verify-fails WITH per-dataset breakdown so
+            # claude sees which domain the failure came from, not just the
+            # aggregate. NA rows (parse failures) are dropped.
             recent_failures=$(awk -F'\t' '
                 NR==1 {next}
-                $13 == "discard" || $13 == "verify-fail" {
-                    if ($2 == "NA") next
-                    printf "  - combined=%s: %s\n", $2, $14
+                ($13 == "discard" || $13 == "verify-fail") && $2 != "NA" {
+                    printf "  - combined=%s [singing %s / korean %s / english %s]: %s\n", \
+                           $2, $7, $8, $9, $14
                 }' "$RESULTS" | tail -30)
+
+            # Top 5 keeps by combined — lets claude see what has worked,
+            # not only what has failed.
+            recent_keeps=$(awk -F'\t' '
+                NR==1 {next}
+                $13 == "keep" && $2 != "NA" {
+                    printf "%s\t  + combined=%s [singing %s / korean %s / english %s]: %s\n", \
+                           $2, $2, $7, $8, $9, $14
+                }' "$RESULTS" | sort -rn -k1,1 -t$'\t' | cut -f2- | head -5)
+
+            iter_summary=$(awk -F'\t' '
+                NR==1 {next}
+                { total++
+                  if ($13 == "keep") keeps++
+                  else if ($13 == "discard") discards++
+                  else if ($13 == "verify-fail") vfails++ }
+                END {
+                  printf "%d iterations (keeps=%d, discards=%d, verify-fail=%d)", \
+                         total+0, keeps+0, discards+0, vfails+0
+                }' "$RESULTS")
         fi
 
-        # Current best = baseline_metrics.json.combined. Use this (not the
-        # possibly-stale tail of results.tsv) as the keep/discard threshold.
-        current_best=$(python3 -c "import json; print(json.load(open('.omc/coordination/baseline_metrics.json'))['combined'])" 2>/dev/null || echo "0")
+        # Authoritative current state from baseline_metrics.json: the
+        # aggregate GM plus each domain's individual combined so claude
+        # can spot the weakest domain to target.
+        current_best=$(python3 -c "import json; print(json.load(open('.omc/coordination/baseline_metrics.json')).get('combined', 0))" 2>/dev/null || echo "0")
+        per_domain_state=$(python3 -c "
+import json
+d = json.load(open('.omc/coordination/baseline_metrics.json'))
+per = d.get('per_dataset_combined', {})
+fp = d.get('per_dataset_clean_fp', {})
+if not per:
+    print('  (per-dataset breakdown unavailable — baseline_metrics.json has not captured it yet)')
+else:
+    for ds in sorted(per):
+        print(f'    {ds:<8}  combined={per[ds]:.6f}  clean_fp={fp.get(ds, \"?\")}')
+" 2>/dev/null)
 
         iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
 
-ARCHITECTURE NOTE (2026-04-18): detect_splices now runs GBM-first dense scan.
-  - PRIMARY tunables (instant, no retrain) — all live in detector.py:
-      GBM_THRESHOLD         current 0.985  — P(splice)>thr is an emit; higher = fewer FP
-      GBM_MIN_SEP_S         current 2.5    — dedupe distance for adjacent emits
-      ANALYSIS_STRIDE_S     current 0.2    — dense-scan stride (smaller = denser, slower)
-  - RETRAIN-required tunables (slower, ~3-5 min each) — .omc/classifier/train_classifier.py:
-      make_pipeline() GradientBoostingClassifier hyperparams (n_estimators, max_depth,
-      learning_rate, subsample). After edits run: uv run python .omc/classifier/train_classifier.py
-  - Feature engineering: edit features.py (extend FEATURE_NAMES). Requires retrain.
-  - DO NOT tune ml_config.py — its params only drive the LEGACY binary OOF path
-    which is DEAD when the multi-class bundle is loaded. Edits have ZERO effect on combined.
-  - DO NOT tune the _detect_phase / _detect_crossfade / _detect_cpe / _detect_pairwise
-    internal thresholds — those functions are only called in the DSP-fallback path
-    (classifier missing) which is not exercised by evaluate.py on this machine.
+==== METRIC DEFINITION (what 'combined' actually measures) ================
+evaluate.py iterates every entry in dataset_registry.DATASETS (currently
+singing / korean / english) and for each dataset computes:
+    splice_f1   = harmonic_mean(precision, recall) over spliced files
+    clean_score = 1 - clean_fp / n_clean_files          (clamped to [0,1])
+    dataset_combined = splice_f1 * clean_score
+Then the aggregate:
+    combined = geometric_mean_with_floor(per_dataset_combined, floor=0.01)
+              = exp(mean(log(max(v, 0.01)) for v in per_ds_values))
+Because it's a geometric mean: the WEAKEST domain dominates the aggregate.
+Bounds: clean_fp_<domain> <= 15 per dataset, total clean_fp <= 45 across
+all 3 domains. Exceeding either fails verify_agent's Clean FP bound check.
 
-Read program.md for the overall goal, then execute exactly ONE experiment iteration:
-1. Check git state and read .omc/coordination/baseline_metrics.json for context.
-2. Form a hypothesis to improve combined. Prefer PRIMARY tunables (instant loop).
-   Touch RETRAIN tunables only when the primary knob space feels exhausted.
+==== CURRENT STATE (authoritative — from baseline_metrics.json) ===========
+combined (aggregate GM): ${current_best}
+per-domain:
+${per_domain_state}
 
-   CRITICAL: Do NOT repeat hypotheses that have already been tried and failed.
-   RECENT FAILED HYPOTHESES (last 30):
+${iter_summary:+Progress: $iter_summary}
+
+==== ARCHITECTURE & TUNABLE SURFACE =======================================
+detect_splices runs a GBM-first dense scan.
+  PRIMARY tunables (instant, no retrain) — detector.py:
+      GBM_THRESHOLD         P(splice)>thr is an emit; higher = fewer FP
+      GBM_MIN_SEP_S         dedupe distance for adjacent emits
+      ANALYSIS_STRIDE_S     dense-scan stride (smaller = denser, slower)
+  RETRAIN-required tunables (~3 min retrain) — .omc/classifier/train_classifier.py:
+      make_pipeline() GradientBoostingClassifier hyperparams
+      (n_estimators, max_depth, learning_rate, subsample).
+  Feature engineering: features.py (extend FEATURE_NAMES). Requires retrain.
+  DO NOT tune ml_config.py — its params drive a legacy path that no longer
+  runs. Edits have ZERO effect on combined.
+  DO NOT tune the _detect_phase/_detect_crossfade/_detect_cpe/_detect_pairwise
+  internal thresholds — they're only called in the DSP-fallback path which
+  is not exercised by evaluate.py.
+
+==== HISTORY ==============================================================
+
+RECENT FAILED HYPOTHESES (last 30; per-domain combined in brackets):
 ${recent_failures:-  (none yet)}
 
-   If your idea matches any of the above, pick a DIFFERENT one.
-3. Edit detector.py (or features.py / train_classifier.py if retraining) with the
-   smallest viable change. If retraining, also run train_classifier.py in this step.
-4. git commit -m \"hypothesis: <one-line description>\"
+TOP-5 KEEPS (by combined — what has actually worked):
+${recent_keeps:-  (none yet)}
+
+For deeper history use the Read tool on these READ-ONLY artifacts:
+  - results.tsv                                  full iteration ledger
+  - .omc/autoresearch.log                        wrapper/verify narrative
+  - .omc/classifier/versions.json                keep-only version history
+  - git log --oneline --grep='hypothesis:\|baseline:' | head -40
+
+==== ONE EXPERIMENT ITERATION =============================================
+1. Read baseline_metrics.json and any history artifacts you need. Decide
+   which domain most needs improvement (check per-domain table above —
+   the GM is dragged down by the WEAKEST domain, so target it).
+2. Form a hypothesis to improve combined. Prefer PRIMARY tunables
+   (instant loop). Touch RETRAIN tunables only when primary feels exhausted.
+
+   CRITICAL: Do NOT repeat a hypothesis from RECENT FAILED HYPOTHESES.
+3. Edit detector.py (or features.py / train_classifier.py if retraining)
+   with the smallest viable change. If retraining, also run
+   train_classifier.py in this step AND stage the refreshed model with:
+     git add .omc/classifier/fp_classifier.joblib .omc/classifier/fp_classifier.meta.json
+   (without staging the joblib, a later iteration's reset reverts it and
+   train_classifier.py's hyperparams to different commits — silent skew.)
+4. git add <touched files> ; git commit -m \"hypothesis: <one-line description>\"
 5. Run (REDIRECT REQUIRED — the wrapper parses the file, not your narrative):
    uv run python evaluate.py --shap 2>&1 | tee .omc/last_eval.log
-6. Parse combined score from the LAST 'combined:' line in the output.
-7. CURRENT BEST (authoritative, from baseline_metrics.json): ${current_best}
-   If combined > ${current_best} (strictly greater):    print RESULT:keep-pending
-   If combined <= ${current_best}:                      git reset --hard HEAD~1 ; print RESULT:discard
-   Do NOT rely on results.tsv for the 'previous best' — it lags the baseline
-   file after successful keeps.
+6. Parse combined from the LAST 'combined:' line in the output.
+7. CURRENT BEST (authoritative): ${current_best}
+   If combined > ${current_best} (strictly):   print RESULT:keep-pending
+   If combined <= ${current_best}:             git reset --hard HEAD~1 ; print RESULT:discard
 8. Do NOT run verify_agent.py yourself — the wrapper handles it.
 9. Do NOT write to results.tsv — the wrapper handles it.
-10. Do NOT delete or rename .omc/last_eval.log — the wrapper reads it to
-    populate results.tsv. It is in .gitignore and will never enter a commit.
+10. Do NOT delete or rename .omc/last_eval.log — the wrapper reads it.
+    It is in .gitignore and will never enter a commit.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
