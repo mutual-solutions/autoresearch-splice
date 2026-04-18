@@ -129,3 +129,62 @@ per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=
     english/korean, domain-gate the feature (set to 0 unless
     voicing_prob_pre > 0.5) so it only fires on voiced content.
 
+## 2026-04-18T15:13:23+09:00 — 3c4b105 (verify-fail, combined=0.463218)
+subject: add HPSS-percussive spectral deltas (perc_centroid/rolloff/bandwidth) to target singing chord-transition FP plateau — uniform-filter harmonic estimate of |STFT| along time, positive residual as percussive spectrogram, derive 3 new centroid/rolloff-0.85/bandwidth-p2 deltas on ±2s pre/post. FEATURE_NAMES 75→78 so classifier auto-retrains (US-505). Orthogonal to all prior verify-fails: sample_weight 2.0x, local-novelty spec ratio, mfcc_cosine_distance all computed from the FULL signal — this is the first SIGNAL-DECOMPOSITION axis attempted. Singing chord transitions are purely harmonic (sustained pitched content) so they leave the percussive residual ≈ 0, while real cross-song splices introduce a broadband transient that the time-mean harmonic estimator cannot absorb. Smoke test on data/train/singing/tier1/splice_t1_001.wav: perc_centroid_delta=1993/perc_rolloff_delta=7776/perc_bandwidth_delta=3499 at GT splice t=30 vs 141/796/511 at stable mid-content t=10 (∼10-15x SNR). Blast radius minimal: +3 features in existing _block_spectral, single uniform_filter1d(size=41, axis=time) call per chunk (~10ms overhead on a 30s chunk vs ~180ms for librosa.decompose.hpss), no detector.py or train_classifier.py edits.
+per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=0.276056
+
+## 2026-04-18 — hypothesis: HPSS-percussive-only spectral deltas
+
+(a) HYPOTHESIS. Add 3 NEW features to `_block_spectral` computed on the
+    HPSS-PERCUSSIVE component of the signal only: `perc_centroid_delta`,
+    `perc_rolloff_delta`, `perc_bandwidth_delta`. In `_ensure_feat_cache`
+    run `librosa.decompose.hpss(|STFT|, kernel_size=15)`, keep the
+    percussive magnitude spectrogram S_perc, and derive per-frame
+    centroid / rolloff-0.85 / bandwidth from S_perc by direct matrix ops
+    (no re-running librosa.feature.*). Existing spec_*_delta features on
+    the full signal remain. FEATURE_NAMES grows 75 -> 78 so the
+    classifier auto-retrains (US-505).
+
+(b) WHY. The last 3 consecutive hypotheses (sample_weight singing 2.0x,
+    local-novelty spec ratio, mfcc_cosine_distance) all verify-failed at
+    0.463218 with identical per-domain breakdowns. Every prior feature
+    addition computed its signal from the FULL waveform -- same signal
+    subspace as the failing spec_*_delta top-SHAP features. HPSS is a
+    genuinely untried SIGNAL-DECOMPOSITION axis: it splits the waveform
+    into harmonic (sustained pitched content) and percussive (transient
+    broadband content) BEFORE any feature extraction. Singing's
+    song-natural chord transitions are almost entirely harmonic -- they
+    project into the harmonic component and leave the percussive
+    component unchanged -- so perc_centroid_delta / perc_rolloff_delta /
+    perc_bandwidth_delta are near ZERO at chord transitions. Real
+    cross-song splices typically introduce a broadband transient
+    discontinuity (new mic / new room / different clip onset) that
+    registers in the percussive component, so perc_*_delta fires at
+    true splices. This is strictly orthogonal to every prior failed
+    axis:
+      * all 6 primary tunables bracketed by failures,
+      * all 7 GBM hyperparam axes failed,
+      * all 4 training-data-composition axes failed,
+      * spec feature-window down 2.0->1.0 failed,
+      * sample_weight singing 2.0x verify-failed,
+      * local-novelty spec ratio (temporal contrast) verify-failed,
+      * mfcc_cosine_distance (timbral direction) verify-failed.
+    None of those touched HPSS / source-separation. Minimum blast
+    radius: +3 features in existing _block_spectral, single kernel_size=15
+    HPSS call per chunk (~200-300ms, fits in 300s budget with 243s
+    current headroom on ~300 chunks total), no detector.py or
+    train_classifier.py edits, classifier auto-retrains on new shape.
+
+(c) IF THIS FAILS. Next move is more aggressive: ABLATE the dominant
+    spec_*_delta features entirely (delete them from FEATURE_NAMES and
+    _block_spectral) rather than just add orthogonal ones. The repeated
+    failure of orthogonal feature additions suggests GBM is stuck on
+    spec_*_delta and does not reallocate weight to new features on a
+    1200-row training set. Removing the dominant-but-indiscriminate
+    predictors forces the model onto a different decision surface.
+    Complementary path: per-domain GBM (train 3 classifiers, one per
+    domain, dispatch by file-path domain lookup at inference time) which
+    lets the singing classifier learn its own weights independent of
+    the easy-domain loss pressure that sample_weight rebalancing
+    failed to fix.
+
