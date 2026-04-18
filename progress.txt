@@ -40,3 +40,22 @@ autoresearch-splice — progress log
 - Autoresearch shipped 3 consecutive keeps under the new inverted
   flow: 8717fc5 (0.447035) → d14e03c (0.449352). verify_agent HIGH
   confidence on all.
+
+2026-04-18 — Ralph session (continuation 2): research notebook + feature cache + staleness gate + exploration frontier + SHAP shift
+----------------------------------------------------------------
+- US-503 research notebook: wrapper-owned .omc/research_notes.md,
+  committed as `note:` AFTER keep/discard tree mutation so notes
+  persist across resets. Last 10 entries in claude prompt; oldest
+  20 compacted when >50.
+- US-504 feature cache: pickle-based, env-gated, sha-scoped.
+  Bit-exact verified (cold=warm=0.468623), speed 2.32x (258s→111s),
+  invalidation by directory (new features.py sha → new subdir).
+  Wrapper strips OMC_FEATURE_CACHE_DIR + OMC_FEATURES_PY_SHA from
+  claude subprocess. Stale dirs pruned on loop start.
+- US-505 staleness gate: meta.json now records features_py_sha +
+  training_timestamp. Wrapper auto-retrains on drift (300s timeout)
+  and stages joblib+meta via --amend.
+- US-506 tunable frontier: per-tunable kept/failed/range/current
+  parsed from results.tsv, injected into prompt.
+- US-507 SHAP shift sentinel: Jaccard < 0.5 on top-3 per domain →
+  STRUCTURAL SHIFT verdict auto-appended to next iteration's note.

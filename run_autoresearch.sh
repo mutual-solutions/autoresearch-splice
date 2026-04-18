@@ -20,6 +20,62 @@ _eval_cleanup() {
     fi
 }
 
+# Append an entry to .omc/research_notes.md and commit it as `note:`
+# AFTER any keep/discard tree mutation (reset for discard, baseline
+# commit for keep). Commit order keeps notes out of the hypothesis
+# reset path: note lives on top of either the reset-to state (discard)
+# or the baseline commit (keep). Orphan detectors ignore `note:`
+# subjects because they only match `hypothesis:`.
+_append_note() {
+    local status="$1"        # keep | discard | verify-fail
+    local short_sha="$2"
+    local subject="$3"       # stripped of `hypothesis: ` prefix
+    local notes="$PROJECT_DIR/.omc/research_notes.md"
+    local refl="$PROJECT_DIR/.omc/last_reflection.md"
+    local eval_log="$PROJECT_DIR/.omc/last_eval.log"
+
+    local tsv_line=""
+    if [ -f "$eval_log" ]; then
+        tsv_line=$(grep -E "^RESULTS_TSV: " "$eval_log" | tail -1)
+    fi
+    local combined per_domain_line
+    combined=$(printf '%s' "$tsv_line" | grep -oE "\\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
+    combined="${combined:-NA}"
+    per_domain_line=$(printf '%s' "$tsv_line" \
+        | grep -oE "\\bcombined_(singing|korean|english)=[0-9.]+" \
+        | paste -sd' ' -)
+    per_domain_line="${per_domain_line:-(no per-domain data)}"
+
+    local reflection="(no reflection — claude did not write .omc/last_reflection.md this iteration)"
+    if [ -f "$refl" ] && [ -s "$refl" ]; then
+        reflection=$(cat "$refl")
+    fi
+
+    {
+        printf '## %s — %s (%s, combined=%s)\n' \
+            "$(date -Iseconds)" "$short_sha" "$status" "$combined"
+        printf 'subject: %s\n' "$subject"
+        printf 'per-domain: %s\n' "$per_domain_line"
+        printf '\n%s\n\n' "$reflection"
+    } >> "$notes"
+
+    # Consume the reflection so the next iteration's "(no reflection)"
+    # fallback actually fires if claude forgets.
+    : > "$refl" 2>/dev/null || true
+
+    if ! git diff --quiet "$notes" 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard "$notes")" ]; then
+        git add "$notes"
+        git commit -m "note: ${status} ${short_sha}" >> "$LOG_FILE" 2>&1 || true
+    fi
+
+    # Compact if we've grown past the threshold.
+    uv run python "$PROJECT_DIR/scripts/notebook_digest.py" >> "$LOG_FILE" 2>&1 || true
+    if ! git diff --quiet "$notes" 2>/dev/null; then
+        git add "$notes"
+        git commit -m "note: digest compaction" >> "$LOG_FILE" 2>&1 || true
+    fi
+}
+
 # Flag `hypothesis:` commits in the last N that lack a paired `baseline:`
 # in the next 3 commits AND are missing from results.tsv. Warn-only:
 # auto-reverting deep history would risk losing human-authored
@@ -122,6 +178,22 @@ run_loop() {
     export OMC_EVAL_DATA_ROOT="$EVAL_TMP_ROOT"
     echo "$(date -Iseconds) Eval decrypted to $EVAL_TMP_ROOT (OMC_EVAL_DATA_ROOT set for wrapper children)" >> "$LOG_FILE"
 
+    # US-504: prune stale feature_cache subdirs. Each features.py sha
+    # gets its own subdir; when the sha changes, the old one becomes
+    # dead weight (~1.5 GB per dir on this dataset). Keep only the dir
+    # matching the current features.py sha.
+    _CUR_FEAT_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")"
+    if [ -d "$PROJECT_DIR/.omc/feature_cache" ] && [ -n "$_CUR_FEAT_SHA" ]; then
+        for d in "$PROJECT_DIR/.omc/feature_cache"/*/; do
+            [ -d "$d" ] || continue
+            base="$(basename "$d")"
+            if [ "$base" != "$_CUR_FEAT_SHA" ]; then
+                echo "$(date -Iseconds) Pruning stale feature_cache dir $base (current is $_CUR_FEAT_SHA)" >> "$LOG_FILE"
+                rm -rf "$d"
+            fi
+        done
+    fi
+
     while true; do
         # Stop signal check
         if [ -f "$STOP_FILE" ]; then
@@ -202,6 +274,31 @@ else:
         # hypotheses toward slots actually driving keeps, not guesses.
         uv run python "$PROJECT_DIR/scripts/shap_rollup.py" --keeps 5 \
             >/dev/null 2>>"$LOG_FILE" || true
+
+        # Per-tunable exploration frontier (US-506).
+        uv run python "$PROJECT_DIR/scripts/tunable_frontier.py" \
+            --output "$PROJECT_DIR/.omc/tunable_frontier.txt" \
+            >/dev/null 2>>"$LOG_FILE" || true
+        tunable_frontier_block=""
+        if [ -f "$PROJECT_DIR/.omc/tunable_frontier.txt" ]; then
+            tunable_frontier_block=$(cat "$PROJECT_DIR/.omc/tunable_frontier.txt")
+        fi
+
+        # Research notes tail (US-503): inject last 10 entries verbatim.
+        research_notes_block=""
+        if [ -f "$PROJECT_DIR/.omc/research_notes.md" ]; then
+            research_notes_block=$(awk '
+                /^## / { cnt++; starts[cnt]=NR }
+                { buf[NR]=$0 }
+                END {
+                    start = (cnt > 10) ? starts[cnt-9] : 1
+                    for (i = start; i <= NR; i++) print buf[i]
+                }
+            ' "$PROJECT_DIR/.omc/research_notes.md")
+        fi
+        if [ -z "$research_notes_block" ]; then
+            research_notes_block="  (research notebook empty — this is the first iteration with notes)"
+        fi
         shap_rollup_block=$(python3 -c "
 import json, os
 p = os.path.join('$PROJECT_DIR', '.omc/shap_rollup.json')
@@ -230,7 +327,7 @@ for dom in sorted(per):
         # out of the claude subprocess's reach. `env -u` strips the env
         # var before exec'ing claude so dataset_registry in the claude
         # subprocess resolves the default (missing) data/eval/ paths.
-        iteration_output=$(env -u OMC_EVAL_DATA_ROOT claude -p "You are forming ONE hypothesis for the audio splice detection project.
+        iteration_output=$(env -u OMC_EVAL_DATA_ROOT -u OMC_FEATURE_CACHE_DIR -u OMC_FEATURES_PY_SHA claude -p "You are forming ONE hypothesis for the audio splice detection project.
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
 evaluate.py iterates dataset_registry.DATASETS (singing / korean / english)
@@ -249,6 +346,12 @@ ${per_domain_state}
 
 TOP PREDICTIVE FEATURES (rolling sum_|shap| over last 5 keeps, per domain):
 ${shap_rollup_block}
+
+PER-TUNABLE EXPLORATION FRONTIER (what's been tried on each axis):
+${tunable_frontier_block}
+
+RESEARCH NOTES (last 10 entries, chronological, latest at bottom — your own prior reflections):
+${research_notes_block}
 
 ${iter_summary:+Progress: $iter_summary}
 
@@ -291,17 +394,25 @@ Read-only artifacts for deeper context:
   .omc/coordination/preflight.py — protected.
 
 ==== ONE ITERATION ========================================================
-1. Read baseline_metrics.json and any history you need. Target the
+0. Read the RESEARCH NOTES above — your prior reflections about what you
+   tried, why, and what to try next. If 5+ recent entries all failed on
+   the same tunable axis, seriously consider a structural change
+   (features.py / train_classifier.py) instead of another tweak.
+1. Write 3-5 lines to .omc/last_reflection.md (the wrapper will capture
+   this into the permanent research notebook regardless of keep/discard):
+     (a) what hypothesis you're about to try
+     (b) WHY this direction over the recent failures
+     (c) what you'd try next if this one fails
+2. Read baseline_metrics.json and any history you need. Target the
    WEAKEST domain (GM is dragged down by it).
-2. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
+3. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
    tunables only when primary feels exhausted.
    CRITICAL: Do NOT repeat a hypothesis from RECENT FAILED HYPOTHESES.
-3. Edit detector.py / features.py / train_classifier.py with the smallest
-   viable change. If retraining, run train_classifier.py in this step AND
-   stage the refreshed model:
-     git add .omc/classifier/fp_classifier.joblib .omc/classifier/fp_classifier.meta.json
-4. git add <touched files> ; git commit -m \"hypothesis: <one-line description>\"
-5. Print RESULT:ready and exit. The wrapper will run evaluate.py, compare
+4. Edit detector.py / features.py / train_classifier.py with the smallest
+   viable change. The wrapper auto-retrains when features.py changes —
+   you do NOT need to manually run train_classifier.py (US-505).
+5. git add <touched files> ; git commit -m \"hypothesis: <one-line description>\"
+6. Print RESULT:ready and exit. The wrapper will run evaluate.py, compare
    to current_best, and decide keep vs discard.
    If you made NO change (unusual — only when every plausible hypothesis
    is ruled out by recent failures), print RESULT:skip and exit without
@@ -422,11 +533,53 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         hypothesis_commit=$(git log -1 --format=%h "$head_after")
         hypothesis_subject=$(git log -1 --format=%s "$head_after" | sed 's/^hypothesis: //' | tr '\t' ' ')
 
+        # US-505: classifier staleness gate. If features.py has drifted
+        # since the classifier was last trained, auto-retrain. Removes a
+        # silent-skew bug class where claude edits features.py but
+        # forgets to retrain; evaluate.py would then use a classifier
+        # whose feature dims or semantics mismatch the detector.
+        _features_sha_now=$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")
+        _features_sha_trained=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('.omc/classifier/fp_classifier.meta.json'))
+    print(d.get('features_py_sha') or '')
+except Exception:
+    print('')
+" 2>/dev/null)
+        if [ -n "$_features_sha_now" ] && [ "$_features_sha_now" != "$_features_sha_trained" ]; then
+            echo "$(date -Iseconds) AUTO-RETRAIN: features.py drift (was $_features_sha_trained, now $_features_sha_now)" >> "$LOG_FILE"
+            set +e
+            timeout 300 uv run python .omc/classifier/train_classifier.py >> "$LOG_FILE" 2>&1
+            _retrain_rc=$?
+            set -e
+            if [ $_retrain_rc -ne 0 ]; then
+                echo "$(date -Iseconds) AUTO-RETRAIN FAILED (rc=$_retrain_rc). Treating as verify-fail." >> "$LOG_FILE"
+                log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+                git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+                _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+                consecutive_discards=$((consecutive_discards + 1))
+                continue
+            fi
+            # Stage the refreshed model so a later discard's reset
+            # doesn't revert the joblib to a features-mismatched version.
+            git add .omc/classifier/fp_classifier.joblib \
+                    .omc/classifier/fp_classifier.meta.json >> "$LOG_FILE" 2>&1 || true
+            git commit --amend --no-edit >> "$LOG_FILE" 2>&1 || true
+            # Refresh hypothesis_commit since amend changed the SHA.
+            head_after=$(git rev-parse HEAD)
+            hypothesis_commit=$(git log -1 --format=%h "$head_after")
+        fi
+
         # Wrapper runs evaluate.py — claude never sees the decrypted
         # eval tree. OMC_EVAL_DATA_ROOT is already exported in this
         # shell, so evaluate.py + its subprocess children (preflight,
         # verify_agent) inherit it.
         echo "$(date -Iseconds) Running evaluate.py on hypothesis $(git log -1 --format=%h "$hypothesis_commit")" >> "$LOG_FILE"
+        # US-504: feature cache env vars. Invalidated automatically when
+        # features.py sha changes (new sha → new cache subdir).
+        export OMC_FEATURE_CACHE_DIR="$PROJECT_DIR/.omc/feature_cache"
+        export OMC_FEATURES_PY_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo unknown)"
         set +e
         uv run python evaluate.py --shap > "$PROJECT_DIR/.omc/last_eval.log" 2>&1
         eval_exit=$?
@@ -437,6 +590,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             tail -20 "$PROJECT_DIR/.omc/last_eval.log" >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -447,6 +601,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             echo "$(date -Iseconds) Could not parse combined from RESULTS_TSV. Reverting." >> "$LOG_FILE"
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -457,6 +612,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -474,6 +630,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         if [ $verify_exit -ne 0 ]; then
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
             continue
@@ -573,6 +730,17 @@ data['versions'].append({
 data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
+
+        # SHAP shift sentinel (US-507): classify the new keep as
+        # STRUCTURAL or LOCAL so the next iteration's research note
+        # picks up the verdict in its reflection preamble.
+        shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>/dev/null | head -1)
+        if [ -n "$shap_shift_line" ]; then
+            echo "$(date -Iseconds) $shap_shift_line" >> "$LOG_FILE"
+            echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
+        fi
+
+        _append_note "keep" "$hypothesis_commit" "$hypothesis_subject"
 
         # Brief pause between iterations
         sleep 2

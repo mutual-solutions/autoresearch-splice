@@ -246,16 +246,41 @@
         "Adding dashboard does NOT introduce any new global state files; it's a pure read-side subcommand",
         "`./run_autoresearch.sh` with no args / help mentions the new `dashboard` subcommand alongside start/stop/status/rollback"
       ]
-    }
-  ]
-}
-      "acceptanceCriteria": [
-        "run_autoresearch.sh's orphan-detection step looks back up to N=20 commits (not just HEAD) for any 'hypothesis: …' commit that is NOT followed within 3 commits by a 'baseline: …' commit on the same branch AND does NOT appear in results.tsv as discard/keep/verify-fail",
-        "When such an orphan is found, wrapper logs a structured '.omc/autoresearch.log' entry with the orphan SHA, subject, and the detection reason (no paired baseline, not in results.tsv)",
-        "Wrapper DOES NOT auto-revert deep orphans (too dangerous — could discard human-authored commits like baseline-restore). Instead it writes a warning and continues. Only HEAD-level orphans (existing behavior) still auto-revert.",
-        "Unit-ish check: a shell helper function _detect_deep_orphans() is extracted and callable standalone; `bash -c 'source run_autoresearch.sh; _detect_deep_orphans 20'` prints zero or more warning lines to stderr and returns 0",
-        "False-positive guard: commits whose subject is 'baseline-restore:' or 'chore:' or 'refactor:' or 'feat:' or 'fix:' or 'test:' or 'docs:' are NEVER flagged (they're human-authored maintenance, not autoresearch hypotheses)"
-      ]
+    },
+    {
+      "id": "US-503",
+      "title": "Research notebook: wrapper-owned qualitative context inherited across iterations",
+      "priority": 53,
+      "passes": true,
+      "note": "Wrapper-owned .omc/research_notes.md. _append_note() appends timestamp/sha/status/combined/per-domain/reflection after keep|discard|verify-fail; commit lands AFTER git reset (discard) or baseline (keep) so notes persist. Last 10 entries injected into claude prompt. scripts/notebook_digest.py compacts oldest 20 entries when total > 50. .omc/last_reflection.md gitignored; truncated after wrapper consumes it. Prompt step 1 instructs claude to write (a) hypothesis, (b) why over recent failures, (c) next-try if this fails."
+    },
+    {
+      "id": "US-504",
+      "title": "Feature-extraction cache: bit-exact, invalidated by features.py sha",
+      "priority": 54,
+      "passes": true,
+      "note": "Bit-exact PASS: cold=0.468623 == warm=0.468623 on same HEAD (full RESULTS_TSV diff empty). Speed PASS: 258s cold → 111s warm = 2.32x. Invalidation confirmed: features.py edit → new sha → new subdir coexists with old (252+251 .pkl blobs; no cross-write). Gated on OMC_FEATURE_CACHE_DIR + OMC_FEATURES_PY_SHA; claude subprocess has both stripped via `env -u`. Cache dir pruned on loop start (keeps only current-sha subdir to bound disk use ~1.5 GB/sha)."
+    },
+    {
+      "id": "US-505",
+      "title": "Classifier staleness gate: auto-retrain on features.py drift",
+      "priority": 55,
+      "passes": true,
+      "note": "train_classifier.py writes features_py_sha + training_timestamp into fp_classifier.meta.json. Wrapper checks before evaluate.py: if drift (or missing meta), auto-invokes train_classifier.py with 300s timeout, stages fresh joblib+meta via git commit --amend --no-edit, refreshes hypothesis_commit SHA. Claude prompt step 4 updated — 'wrapper auto-retrains; you do NOT need to manually run train_classifier.py'."
+    },
+    {
+      "id": "US-506",
+      "title": "Per-tunable exploration frontier injected into claude prompt",
+      "priority": 56,
+      "passes": true,
+      "note": "scripts/tunable_frontier.py parses `hypothesis: <TUNABLE> <old>-><new>` from results.tsv (GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S) + status, emits per-tunable kept/failed/range/current. Runs in 0.055s. Wrapper injects PER-TUNABLE EXPLORATION FRONTIER block into claude prompt."
+    },
+    {
+      "id": "US-507",
+      "title": "SHAP shift sentinel: detect structural vs local keeps",
+      "priority": 57,
+      "passes": true,
+      "note": "scripts/shap_shift.py compares top-3 features per domain between last 2 keep commits. Jaccard < 0.5 on any domain → STRUCTURAL SHIFT, else LOCAL KEEP. Wrapper invokes immediately after VERIFIED KEEP, appends single-line verdict to .omc/last_reflection.md as [auto] header so it enters the next iteration's research note."
     }
   ]
 }

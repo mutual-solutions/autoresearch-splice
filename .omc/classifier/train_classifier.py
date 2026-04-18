@@ -370,6 +370,19 @@ def train() -> dict:
     final.fit(X, y)
     joblib.dump(final, MODEL_OUT)
     meta_out = MODEL_OUT.with_suffix(".meta.json")
+
+    # US-505: record the git-blob sha of features.py at train time so
+    # the wrapper can detect drift and auto-retrain before evaluate.py.
+    import subprocess as _sp
+    _features_path = _HERE.parent.parent / "features.py"
+    try:
+        _features_sha = _sp.check_output(
+            ["git", "hash-object", str(_features_path)],
+            text=True, stderr=_sp.DEVNULL, timeout=2,
+        ).strip()
+    except Exception:
+        _features_sha = None
+    import datetime as _dt
     with open(meta_out, "w") as f:
         json.dump({
             "feature_names": FEATURE_NAMES,
@@ -380,6 +393,8 @@ def train() -> dict:
                 "n_samples": int(len(y)),
                 "class_counts": counts,
             },
+            "features_py_sha": _features_sha,
+            "training_timestamp": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }, f, indent=2)
     print(f"Saved model → {MODEL_OUT}")
     print(f"Saved metadata → {meta_out}")

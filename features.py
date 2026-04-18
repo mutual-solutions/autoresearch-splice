@@ -35,7 +35,11 @@ Performance model:
 
 from __future__ import annotations
 
+import hashlib
+import os
+import pickle
 import warnings
+from pathlib import Path
 from typing import Optional
 
 import librosa
@@ -51,6 +55,54 @@ from detector import (
     cpe_z_at,
     pairwise_proximity_at,
 )
+
+
+# US-504: on-disk feature cache. Gated by OMC_FEATURE_CACHE_DIR +
+# OMC_FEATURES_PY_SHA (set by run_autoresearch.sh only; stripped from
+# the claude subprocess via `env -u`). Invalidation is by directory:
+# each features.py sha lives in its own subdir, so any edit to
+# features.py ignores every old cache automatically.
+
+def _feature_cache_paths(audio: np.ndarray, sr: int) -> Optional[Path]:
+    cache_dir = os.environ.get("OMC_FEATURE_CACHE_DIR")
+    feat_sha = os.environ.get("OMC_FEATURES_PY_SHA")
+    if not cache_dir or not feat_sha:
+        return None
+    h = hashlib.sha256()
+    h.update(audio.tobytes())
+    h.update(np.int64(sr).tobytes())
+    return Path(cache_dir) / feat_sha / f"{h.hexdigest()[:16]}.pkl"
+
+
+def _try_load_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> bool:
+    path = _feature_cache_paths(audio, sr)
+    if path is None or not path.is_file():
+        return False
+    try:
+        with open(path, "rb") as f:
+            cached = pickle.load(f)
+    except Exception:
+        return False
+    if cached.get("feat_sr") != sr:
+        return False
+    cached_audio = cached.get("feat_audio")
+    if not isinstance(cached_audio, np.ndarray) or cached_audio.shape != audio.shape:
+        return False
+    ctx.update(cached)
+    return True
+
+
+def _save_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
+    path = _feature_cache_paths(audio, sr)
+    if path is None:
+        return
+    to_cache = {k: v for k, v in ctx.items() if k.startswith("feat_")}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump(to_cache, f, protocol=pickle.HIGHEST_PROTOCOL)
+    except Exception:
+        pass
 
 # ---------------------------------------------------------------------------
 # Module-level PCA fit (lazy; re-used across calls in one process)
@@ -107,8 +159,12 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
     All heavy computation (pyin, ENF filter, mel-PCA, frame FFTs for noise
     floor and codec, STFT for boundary phase) happens here exactly once.
     Per-t calls perform only cheap slicing on the cached arrays.
+
+    US-504: on-disk cache, env-gated. Pass-through if cache env unset.
     """
     if "feat_audio" in ctx:
+        return
+    if _try_load_feat_cache(audio, sr, ctx):
         return
 
     audio_f32 = audio.astype(np.float32)
@@ -375,6 +431,8 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
     ctx["feat_codec_dcs"] = dcs
     # mel-PCA
     ctx["feat_mel_pca_vec"] = mel_pca_vec   # list[float], length 20
+
+    _save_feat_cache(audio, sr, ctx)
 
 
 # ---------------------------------------------------------------------------
