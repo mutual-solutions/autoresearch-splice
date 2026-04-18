@@ -36,10 +36,24 @@ def get_agent_id() -> str:
     return f"{branch}_{os.getpid()}"
 
 
+def _resolve_data_dir(manifest_dataset: str) -> Path:
+    """Manifest records the dataset as `data/eval/<id>` relative to the repo.
+    When the wrapper has decrypted eval into a tmp dir and exported
+    OMC_EVAL_DATA_ROOT, rewrite `data/eval/<id>` → `<tmp>/<id>` so preflight
+    checks the live tree instead of the (missing) plaintext path.
+    """
+    repo_root = Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
+    override = os.environ.get("OMC_EVAL_DATA_ROOT")
+    prefix = "data/eval/"
+    if override and manifest_dataset.startswith(prefix):
+        return Path(override) / manifest_dataset[len(prefix):]
+    return repo_root / manifest_dataset
+
+
 def check_data_integrity(manifest: dict) -> list[str]:
     """Verify file counts and ground truth hash against manifest."""
     errors = []
-    data_dir = Path(os.path.dirname(os.path.realpath(__file__))).parent.parent / manifest["dataset"]
+    data_dir = _resolve_data_dir(manifest["dataset"])
 
     if not data_dir.exists():
         errors.append(f"Dataset directory not found: {data_dir}")
@@ -119,7 +133,7 @@ def run_preflight() -> bool:
     print(f"    Data integrity: PASS ({manifest.get('total_files', '?')} files)")
 
     # Advisory: permissions
-    data_dir = manifest["dataset"]
+    data_dir = str(_resolve_data_dir(manifest["dataset"]))
     warnings = check_permissions(data_dir)
     for w in warnings:
         print(f"    {w}")

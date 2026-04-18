@@ -10,14 +10,26 @@ LOG_FILE="$PROJECT_DIR/.omc/autoresearch.log"
 RESULTS="$PROJECT_DIR/results.tsv"
 MAX_CONSECUTIVE_DISCARDS=50
 
+_eval_cleanup() {
+    # Shred (best-effort) and remove the decrypted eval tree. Called on
+    # every loop exit path via the EXIT/HUP/INT/TERM trap so plaintext
+    # eval audio never outlives the loop process.
+    if [ -n "${EVAL_TMP_PARENT:-}" ] && [ -d "$EVAL_TMP_PARENT" ]; then
+        rm -rf "$EVAL_TMP_PARENT" 2>/dev/null || true
+        echo "$(date -Iseconds) Eval cleanup: removed $EVAL_TMP_PARENT" >> "$LOG_FILE"
+    fi
+}
+
 run_loop() {
     cd "$PROJECT_DIR"
     rm -f "$STOP_FILE"
     consecutive_discards=0
     rate_limit_backoff=300  # start at 5 min, double each time, cap at 5 hours
 
-    # Log crashes — if the process dies unexpectedly, record it
-    trap 'echo "$(date -Iseconds) CRASH: loop terminated unexpectedly (signal $?)" >> "$LOG_FILE"' EXIT HUP INT TERM
+    # Combined crash-log + eval-cleanup trap. Shred ordering matters: we
+    # cleanup AFTER logging the crash so the cleanup failure (if any)
+    # doesn't eat the crash signal.
+    trap '_trap_ec=$?; echo "$(date -Iseconds) CRASH: loop terminated (signal $_trap_ec)" >> "$LOG_FILE"; _eval_cleanup' EXIT HUP INT TERM
 
     echo "$(date -Iseconds) Autoresearch loop started" >> "$LOG_FILE"
 
@@ -33,6 +45,33 @@ run_loop() {
         echo "$(date -Iseconds) ORPHAN hypothesis detected at HEAD: $(git log -1 --format=%h). Resetting to HEAD~1 for clean baseline." >> "$LOG_FILE"
         git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
     fi
+
+    # ---- Eval dataset isolation ----------------------------------------
+    # The plaintext data/eval/ tree does NOT exist on disk — it's been
+    # encrypted into data/eval.tar.gz.enc and shredded (see
+    # scripts/eval_crypto.py). Decrypt once per loop into a fresh /tmp
+    # dir, export OMC_EVAL_DATA_ROOT for evaluate.py + preflight +
+    # verify_agent (dataset_registry resolves eval_path against this at
+    # import). The env var is explicitly UNSET in the claude subprocess's
+    # env via `env -u` below, so the claude-driven iteration cannot
+    # locate the decrypted tree; only this shell and its direct
+    # evaluate.py children see it.
+    if [ ! -f "$PROJECT_DIR/data/eval.tar.gz.enc" ]; then
+        echo "$(date -Iseconds) ERROR: data/eval.tar.gz.enc missing. Run: uv run python scripts/eval_crypto.py setup" >> "$LOG_FILE"
+        echo "ERROR: data/eval.tar.gz.enc missing. Run: uv run python scripts/eval_crypto.py setup" >&2
+        exit 1
+    fi
+    _decrypt_out=$(uv run python "$PROJECT_DIR/scripts/eval_crypto.py" decrypt --keep 2>&1)
+    _decrypt_rc=$?
+    if [ $_decrypt_rc -ne 0 ]; then
+        echo "$(date -Iseconds) ERROR: eval decrypt failed (rc=$_decrypt_rc): $_decrypt_out" >> "$LOG_FILE"
+        echo "ERROR: eval decrypt failed. See $LOG_FILE" >&2
+        exit 1
+    fi
+    EVAL_TMP_ROOT=$(echo "$_decrypt_out" | tail -1)
+    EVAL_TMP_PARENT="$(dirname "$EVAL_TMP_ROOT")"
+    export OMC_EVAL_DATA_ROOT="$EVAL_TMP_ROOT"
+    echo "$(date -Iseconds) Eval decrypted to $EVAL_TMP_ROOT (OMC_EVAL_DATA_ROOT set for wrapper children)" >> "$LOG_FILE"
 
     while true; do
         # Stop signal check
@@ -110,22 +149,27 @@ else:
         print(f'    {ds:<8}  combined={per[ds]:.6f}  clean_fp={fp.get(ds, \"?\")}')
 " 2>/dev/null)
 
-        iteration_output=$(claude -p "You are running autoresearch on the audio splice detection project.
+        head_before=$(git rev-parse HEAD)
 
-==== METRIC DEFINITION (what 'combined' actually measures) ================
-evaluate.py iterates every entry in dataset_registry.DATASETS (currently
-singing / korean / english) and for each dataset computes:
+        # Inverted flow: claude forms a hypothesis, edits code, commits,
+        # and exits. The wrapper — NOT claude — runs evaluate.py. This
+        # keeps the eval corpus (decrypted under $OMC_EVAL_DATA_ROOT)
+        # out of the claude subprocess's reach. `env -u` strips the env
+        # var before exec'ing claude so dataset_registry in the claude
+        # subprocess resolves the default (missing) data/eval/ paths.
+        iteration_output=$(env -u OMC_EVAL_DATA_ROOT claude -p "You are forming ONE hypothesis for the audio splice detection project.
+
+==== METRIC DEFINITION (what 'combined' measures) =========================
+evaluate.py iterates dataset_registry.DATASETS (singing / korean / english)
+and for each dataset computes:
     splice_f1   = harmonic_mean(precision, recall) over spliced files
     clean_score = 1 - clean_fp / n_clean_files          (clamped to [0,1])
     dataset_combined = splice_f1 * clean_score
-Then the aggregate:
-    combined = geometric_mean_with_floor(per_dataset_combined, floor=0.01)
-              = exp(mean(log(max(v, 0.01)) for v in per_ds_values))
-Because it's a geometric mean: the WEAKEST domain dominates the aggregate.
-Bounds: clean_fp_<domain> <= 15 per dataset, total clean_fp <= 45 across
-all 3 domains. Exceeding either fails verify_agent's Clean FP bound check.
+    combined    = geometric_mean_with_floor(per_ds, floor=0.01)
+The GEOMETRIC MEAN is dominated by the WEAKEST domain. Bounds:
+clean_fp_<domain> <= 15 per dataset, total clean_fp <= 45.
 
-==== CURRENT STATE (authoritative — from baseline_metrics.json) ===========
+==== CURRENT STATE (authoritative — baseline_metrics.json) ================
 combined (aggregate GM): ${current_best}
 per-domain:
 ${per_domain_state}
@@ -134,59 +178,58 @@ ${iter_summary:+Progress: $iter_summary}
 
 ==== ARCHITECTURE & TUNABLE SURFACE =======================================
 detect_splices runs a GBM-first dense scan.
-  PRIMARY tunables (instant, no retrain) — detector.py:
-      GBM_THRESHOLD         P(splice)>thr is an emit; higher = fewer FP
+  PRIMARY (instant) — detector.py:
+      GBM_THRESHOLD         P(splice)>thr is an emit (higher = fewer FP)
       GBM_MIN_SEP_S         dedupe distance for adjacent emits
       ANALYSIS_STRIDE_S     dense-scan stride (smaller = denser, slower)
-  RETRAIN-required tunables (~3 min retrain) — .omc/classifier/train_classifier.py:
-      make_pipeline() GradientBoostingClassifier hyperparams
-      (n_estimators, max_depth, learning_rate, subsample).
+  RETRAIN (~3 min) — .omc/classifier/train_classifier.py:
+      GradientBoostingClassifier hyperparams (n_estimators, max_depth,
+      learning_rate, subsample).
   Feature engineering: features.py (extend FEATURE_NAMES). Requires retrain.
-  DO NOT tune ml_config.py — its params drive a legacy path that no longer
-  runs. Edits have ZERO effect on combined.
-  DO NOT tune the _detect_phase/_detect_crossfade/_detect_cpe/_detect_pairwise
-  internal thresholds — they're only called in the DSP-fallback path which
-  is not exercised by evaluate.py.
+  DO NOT tune ml_config.py — legacy path, zero effect on combined.
+  DO NOT tune _detect_phase/_detect_crossfade/_detect_cpe/_detect_pairwise
+  internal thresholds — DSP fallback path, not exercised by evaluate.py.
 
 ==== HISTORY ==============================================================
-
 RECENT FAILED HYPOTHESES (last 30; per-domain combined in brackets):
 ${recent_failures:-  (none yet)}
 
-TOP-5 KEEPS (by combined — what has actually worked):
+TOP-5 KEEPS (by combined):
 ${recent_keeps:-  (none yet)}
 
-For deeper history use the Read tool on these READ-ONLY artifacts:
-  - results.tsv                                  full iteration ledger
-  - .omc/autoresearch.log                        wrapper/verify narrative
-  - .omc/classifier/versions.json                keep-only version history
+Read-only artifacts for deeper context:
+  - results.tsv                               full iteration ledger
+  - .omc/autoresearch.log                     wrapper/verify narrative
+  - .omc/classifier/versions.json             keep-only version history
   - git log --oneline --grep='hypothesis:\|baseline:' | head -40
 
-==== ONE EXPERIMENT ITERATION =============================================
-1. Read baseline_metrics.json and any history artifacts you need. Decide
-   which domain most needs improvement (check per-domain table above —
-   the GM is dragged down by the WEAKEST domain, so target it).
-2. Form a hypothesis to improve combined. Prefer PRIMARY tunables
-   (instant loop). Touch RETRAIN tunables only when primary feels exhausted.
+==== ACCESS RULES =========================================================
+- The plaintext eval corpus (data/eval/) is NOT on disk and is NOT
+  accessible to you. Do not attempt to read it or infer its location.
+  The wrapper will run evaluate.py against an encrypted-then-decrypted
+  copy after you commit.
+- Do NOT run evaluate.py — the wrapper does this and parses the result.
+- Do NOT write to results.tsv or .omc/coordination/baseline_metrics.json
+  — the wrapper owns both.
+- Do NOT edit evaluate.py, .omc/coordination/manifest.json,
+  .omc/coordination/preflight.py — protected.
 
+==== ONE ITERATION ========================================================
+1. Read baseline_metrics.json and any history you need. Target the
+   WEAKEST domain (GM is dragged down by it).
+2. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
+   tunables only when primary feels exhausted.
    CRITICAL: Do NOT repeat a hypothesis from RECENT FAILED HYPOTHESES.
-3. Edit detector.py (or features.py / train_classifier.py if retraining)
-   with the smallest viable change. If retraining, also run
-   train_classifier.py in this step AND stage the refreshed model with:
+3. Edit detector.py / features.py / train_classifier.py with the smallest
+   viable change. If retraining, run train_classifier.py in this step AND
+   stage the refreshed model:
      git add .omc/classifier/fp_classifier.joblib .omc/classifier/fp_classifier.meta.json
-   (without staging the joblib, a later iteration's reset reverts it and
-   train_classifier.py's hyperparams to different commits — silent skew.)
 4. git add <touched files> ; git commit -m \"hypothesis: <one-line description>\"
-5. Run (REDIRECT REQUIRED — the wrapper parses the file, not your narrative):
-   uv run python evaluate.py --shap 2>&1 | tee .omc/last_eval.log
-6. Parse combined from the LAST 'combined:' line in the output.
-7. CURRENT BEST (authoritative): ${current_best}
-   If combined > ${current_best} (strictly):   print RESULT:keep-pending
-   If combined <= ${current_best}:             git reset --hard HEAD~1 ; print RESULT:discard
-8. Do NOT run verify_agent.py yourself — the wrapper handles it.
-9. Do NOT write to results.tsv — the wrapper handles it.
-10. Do NOT delete or rename .omc/last_eval.log — the wrapper reads it.
-    It is in .gitignore and will never enter a commit.
+5. Print RESULT:ready and exit. The wrapper will run evaluate.py, compare
+   to current_best, and decide keep vs discard.
+   If you made NO change (unusual — only when every plausible hypothesis
+   is ruled out by recent failures), print RESULT:skip and exit without
+   committing.
 
 Do NOT loop. Execute exactly ONE iteration and exit." \
             --allowedTools "Bash Edit Read Write Grep Glob" \
@@ -206,7 +249,6 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             minutes=$((rate_limit_backoff / 60))
             echo "$(date -Iseconds) API limit detected. Exponential backoff: ${minutes}m..." >> "$LOG_FILE"
             sleep "$rate_limit_backoff"
-            # Double backoff, cap at 5 hours (18000s)
             rate_limit_backoff=$((rate_limit_backoff * 2))
             [ "$rate_limit_backoff" -gt 18000 ] && rate_limit_backoff=18000
             continue
@@ -216,12 +258,11 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         rate_limit_backoff=300
 
         if [ $claude_exit -ne 0 ] && ! echo "$last_output" | grep -q "RESULT:"; then
-            echo "$(date -Iseconds) Claude failed (exit $claude_exit). Backing off 60 seconds..." >> "$LOG_FILE"
+            echo "$(date -Iseconds) Claude failed (exit $claude_exit). Backing off 60s." >> "$LOG_FILE"
             sleep 60
             continue
         fi
 
-        # Parse result from claude output
         last_status=$(echo "$last_output" | grep -o 'RESULT:[a-z-]*' | tail -1 | cut -d: -f2 || echo "unknown")
 
         # Auto-log every iteration to results.tsv. The contract: every metric
@@ -285,55 +326,92 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
                 >> "$RESULTS"
         }
 
-        case "$last_status" in
-            keep-pending)
-                # STRUCTURAL VERIFICATION: shell runs verify_agent.py directly (not Claude)
-                echo "$(date -Iseconds) Keep pending — running structural verification..." >> "$LOG_FILE"
+        head_after=$(git rev-parse HEAD)
 
-                # Extract reported combined from Claude's output.
-                # Match "combined: 0.X", "combined=0.X", "Combined dropped to 0.X", "combined score of 0.X", etc.
-                reported=$(echo "$last_output" | grep -oiE '\bcombined[^0-9\n]{0,30}[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
+        if [ "$last_status" = "skip" ]; then
+            echo "$(date -Iseconds) Claude reported RESULT:skip — no commit. Moving on." >> "$LOG_FILE"
+            sleep 5
+            continue
+        fi
 
-                # Wrapper-side strict-improvement gate. Claude's own keep/discard
-                # decision can be wrong when the prompt-provided current_best
-                # lags a recent baseline update, so we re-check here.
-                strictly_better=$(python3 -c "print(1 if float('$reported') > float('$current_best') + 1e-9 else 0)" 2>/dev/null || echo 0)
-                if [ "$strictly_better" != "1" ]; then
-                    echo "$(date -Iseconds) NO-OP KEEP REJECTED: reported=$reported not > current_best=$current_best" >> "$LOG_FILE"
-                    log_to_results_tsv "verify-fail"
-                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
-                    consecutive_discards=$((consecutive_discards + 1))
-                    # Brief pause then continue to next iteration
-                    sleep 2
-                    continue
-                fi
+        if [ "$head_before" = "$head_after" ]; then
+            echo "$(date -Iseconds) Claude made no commit this iteration (status=$last_status). Treating as skip." >> "$LOG_FILE"
+            sleep 5
+            continue
+        fi
 
-                # verify_agent.py enforces a 240s timeout on evaluate.py internally.
-                # Capture exit code separately — `|| true` would mask LOW confidence failures.
-                set +e
-                verify_output=$(uv run python .omc/coordination/verify_agent.py \
-                    --agent-name autoresearch \
-                    --reported-combined "$reported" 2>&1)
-                verify_exit=$?
-                set -e
-                echo "$verify_output" >> "$LOG_FILE"
+        hypothesis_commit="$head_after"
+        hypothesis_subject=$(git log -1 --format=%s "$hypothesis_commit" | sed 's/^hypothesis: //' | tr '\t' ' ')
 
-                if [ $verify_exit -eq 0 ]; then
-                    consecutive_discards=0
-                    echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported, prev best=$current_best)" >> "$LOG_FILE"
-                    log_to_results_tsv "keep"
+        # Wrapper runs evaluate.py — claude never sees the decrypted
+        # eval tree. OMC_EVAL_DATA_ROOT is already exported in this
+        # shell, so evaluate.py + its subprocess children (preflight,
+        # verify_agent) inherit it.
+        echo "$(date -Iseconds) Running evaluate.py on hypothesis $(git log -1 --format=%h "$hypothesis_commit")" >> "$LOG_FILE"
+        set +e
+        uv run python evaluate.py --shap > "$PROJECT_DIR/.omc/last_eval.log" 2>&1
+        eval_exit=$?
+        set -e
 
-                    # Version management
-                    VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
-                    git tag "detector-v$VERSION"
-                    SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
-                    cp "$PROJECT_DIR/detector.py" "$SNAP"
+        if [ $eval_exit -ne 0 ]; then
+            echo "$(date -Iseconds) evaluate.py exited $eval_exit. Reverting hypothesis (last 20 lines of eval log):" >> "$LOG_FILE"
+            tail -20 "$PROJECT_DIR/.omc/last_eval.log" >> "$LOG_FILE" 2>&1 || true
+            log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            consecutive_discards=$((consecutive_discards + 1))
+            continue
+        fi
 
-                    # Update baseline_metrics.json so the NEXT iteration sees
-                    # the new current_best. Written from RESULTS_TSV on disk
-                    # (the authoritative source) so per-dataset fields are
-                    # captured too — not just the aggregate `combined`.
-                    python3 - "$PROJECT_DIR" <<'PYEOF'
+        # Parse combined from the deterministic RESULTS_TSV line.
+        reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
+        if [ -z "$reported" ]; then
+            echo "$(date -Iseconds) Could not parse combined from RESULTS_TSV. Reverting." >> "$LOG_FILE"
+            log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            consecutive_discards=$((consecutive_discards + 1))
+            continue
+        fi
+
+        strictly_better=$(python3 -c "print(1 if float('$reported') > float('$current_best') + 1e-9 else 0)" 2>/dev/null || echo 0)
+
+        if [ "$strictly_better" != "1" ]; then
+            echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
+            log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
+            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            consecutive_discards=$((consecutive_discards + 1))
+            continue
+        fi
+
+        # Strict improvement — run verify_agent for structural checks.
+        echo "$(date -Iseconds) Strict improvement (combined=$reported > $current_best). Running verify_agent..." >> "$LOG_FILE"
+        set +e
+        verify_output=$(uv run python .omc/coordination/verify_agent.py \
+            --agent-name autoresearch \
+            --reported-combined "$reported" 2>&1)
+        verify_exit=$?
+        set -e
+        echo "$verify_output" >> "$LOG_FILE"
+
+        if [ $verify_exit -ne 0 ]; then
+            log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            consecutive_discards=$((consecutive_discards + 1))
+            echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+            continue
+        fi
+
+        # VERIFIED KEEP.
+        consecutive_discards=0
+        echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported, prev best=$current_best)" >> "$LOG_FILE"
+        log_to_results_tsv "keep" "$hypothesis_commit" "$hypothesis_subject"
+
+        VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
+        git tag "detector-v$VERSION"
+        SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
+        cp "$PROJECT_DIR/detector.py" "$SNAP"
+
+        # Update baseline_metrics.json from the RESULTS_TSV line on disk.
+        python3 - "$PROJECT_DIR" <<'PYEOF'
 import json, os, subprocess, sys, re, datetime
 proj = sys.argv[1]
 bf = os.path.join(proj, '.omc/coordination/baseline_metrics.json')
@@ -393,19 +471,12 @@ data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime(
 json.dump(data, open(bf, "w"), indent=2)
 PYEOF
 
-                    # Durability: commit the baseline update as its own
-                    # commit so subsequent `git reset --hard HEAD~1` on a
-                    # discard reverts only the failed hypothesis, not the
-                    # latest keep's baseline. Without this commit step the
-                    # wrapper's baseline write lives as an unstaged change
-                    # and gets wiped by the next discard's reset.
-                    if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
-                        git add .omc/coordination/baseline_metrics.json
-                        git commit -m "baseline: combined=$reported after keep $(git log -1 --format=%h)" >> "$LOG_FILE" 2>&1
-                    fi
+        if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
+            git add .omc/coordination/baseline_metrics.json
+            git commit -m "baseline: combined=$reported after keep $(git log -1 --format=%h "$hypothesis_commit")" >> "$LOG_FILE" 2>&1
+        fi
 
-                    # Update versions.json
-                    python3 -c "
+        python3 -c "
 import json, subprocess, datetime, os
 vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
 try:
@@ -423,72 +494,6 @@ data['versions'].append({
 data['latest'] = $VERSION
 json.dump(data, open(vf, 'w'), indent=2)
 "
-                else
-                    # Verification failed — log BEFORE reverting (otherwise git HEAD changes)
-                    log_to_results_tsv "verify-fail"
-                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
-                    consecutive_discards=$((consecutive_discards + 1))
-                    echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
-                fi
-                ;;
-            keep)
-                # Legacy: if Claude outputs "keep" instead of "keep-pending", still verify
-                echo "$(date -Iseconds) Keep (legacy) — running structural verification..." >> "$LOG_FILE"
-                reported=$(echo "$last_output" | grep -oE 'combined[: ]+[0-9]+\.[0-9]+' | tail -1 | grep -oE '[0-9]+\.[0-9]+' || echo "0")
-                verify_output=$(uv run python .omc/coordination/verify_agent.py \
-                    --agent-name autoresearch --reported-combined "$reported" 2>&1)
-                verify_exit=$?
-                echo "$verify_output" >> "$LOG_FILE"
-                if [ $verify_exit -eq 0 ]; then
-                    consecutive_discards=0
-                    echo "$(date -Iseconds) VERIFIED KEEP" >> "$LOG_FILE"
-
-                    # Version management
-                    VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
-                    git tag "detector-v$VERSION"
-                    SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
-                    cp "$PROJECT_DIR/detector.py" "$SNAP"
-
-                    # Update versions.json
-                    python3 -c "
-import json, subprocess, datetime, os
-vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
-try:
-    data = json.load(open(vf))
-except:
-    data = {'versions': [], 'latest': 0, 'production': 0}
-sha = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
-data['versions'].append({
-    'version': $VERSION, 'git_tag': 'detector-v$VERSION', 'git_sha': sha,
-    'detector_snapshot': 'detector_v${VERSION}.py',
-    'classifier': 'classifier_v${VERSION}.joblib',
-    'combined_dsp': float('$reported'), 'combined_full': None,
-    'timestamp': datetime.datetime.now().isoformat()
-})
-data['latest'] = $VERSION
-json.dump(data, open(vf, 'w'), indent=2)
-"
-
-                    # Classifier training now happens in-loop via evaluate.py --shap
-                else
-                    git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
-                    consecutive_discards=$((consecutive_discards + 1))
-                    echo "$(date -Iseconds) VERIFY-FAIL (legacy keep)" >> "$LOG_FILE"
-                fi
-                ;;
-            discard)
-                consecutive_discards=$((consecutive_discards + 1))
-                echo "$(date -Iseconds) Iteration: discard (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
-                # Recover reverted hypothesis from reflog (agent already did git reset)
-                discard_commit=$(git rev-parse --short "HEAD@{1}" 2>/dev/null || echo "")
-                discard_subject=$(git log -1 --format=%s "HEAD@{1}" 2>/dev/null | sed 's/^hypothesis: //' | tr '\t' ' ' || echo "")
-                log_to_results_tsv "discard" "$discard_commit" "$discard_subject"
-                ;;
-            unknown)
-                echo "$(date -Iseconds) Iteration: unknown output (not counting toward circuit breaker)" >> "$LOG_FILE"
-                sleep 30
-                ;;
-        esac
 
         # Brief pause between iterations
         sleep 2
@@ -549,7 +554,8 @@ case "${1:-help}" in
             vfails=$(grep -c "verify-fail" "$RESULTS" 2>/dev/null || true)
             keeps=${keeps:-0}; discards=${discards:-0}; vfails=${vfails:-0}
             echo "Experiments: $total (keep: $keeps, discard: $discards, verify-fail: $vfails)"
-            echo "Last: $(tail -1 "$RESULTS" | cut -f9,10)"
+            # cols 13=status, 14=description in the post-parser-fix schema.
+            echo "Last: $(tail -1 "$RESULTS" | cut -f13,14)"
         fi
         if [ -f "$PROJECT_DIR/.omc/classifier/versions.json" ]; then
             latest=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/.omc/classifier/versions.json'))['latest'])" 2>/dev/null || echo "?")

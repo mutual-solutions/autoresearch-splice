@@ -12,6 +12,7 @@ so its `train_weight` is 0 here — its training data comes from a separate path
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -24,6 +25,21 @@ _PROJECT_ROOT = Path(__file__).resolve().parent
 #   data/test/<id>/    ← held-out, run with test_eval.py (20-min budget)
 #   data/sources/...   ← source audio pools (not directly consumed at eval time)
 _DATA = _PROJECT_ROOT / "data"
+
+# Eval-set isolation (see scripts/eval_crypto.py + run_autoresearch.sh).
+# The wrapper decrypts data/eval.tar.gz.enc into a fresh /tmp dir and sets
+# OMC_EVAL_DATA_ROOT before invoking evaluate.py so the plaintext corpus
+# never lives on disk in the repo. Claude-subprocess iterations are spawned
+# without this env var (via `env -u`), so they see the default
+# data/eval/<id>/ paths — which do not exist on disk post-setup — and
+# cannot locate the decrypted tree. Resolved once at import.
+_EVAL_ROOT_OVERRIDE = os.environ.get("OMC_EVAL_DATA_ROOT") or None
+
+
+def _eval_path(default: Path, ds_id: str) -> Path:
+    if _EVAL_ROOT_OVERRIDE:
+        return Path(_EVAL_ROOT_OVERRIDE) / ds_id
+    return default
 
 
 @dataclass(frozen=True)
@@ -46,19 +62,19 @@ class Dataset:
 DATASETS: list[Dataset] = [
     Dataset(
         id="singing",
-        eval_path=_DATA / "eval" / "singing",
+        eval_path=_eval_path(_DATA / "eval" / "singing", "singing"),
         train_path=_DATA / "train" / "singing",
         test_path=_DATA / "test" / "singing",
     ),
     Dataset(
         id="korean",
-        eval_path=_DATA / "eval" / "korean",
+        eval_path=_eval_path(_DATA / "eval" / "korean", "korean"),
         train_path=_DATA / "train" / "korean",
         test_path=_DATA / "test" / "korean",
     ),
     Dataset(
         id="english",
-        eval_path=_DATA / "eval" / "english",
+        eval_path=_eval_path(_DATA / "eval" / "english", "english"),
         train_path=_DATA / "train" / "english",
         test_path=_DATA / "test" / "english",
     ),

@@ -55,6 +55,15 @@ scripts/test_unlock
 # (auto-invokes scripts/test_crypto.py setup/encrypt post-regen).
 data/test.tar.gz.enc
 
+# Encrypted eval blob — ~310 MB. Regenerable via
+#   uv run python data_synth/regenerate_datasets.py --domain all --split eval
+# then `uv run python scripts/eval_crypto.py encrypt`. Kept out of git so
+# the authenticated encrypted corpus isn't re-uploaded to remotes; the key
+# lives only in the local macOS login keychain. Claude-subprocess iterations
+# never see plaintext — the wrapper decrypts to a /tmp dir and sets
+# OMC_EVAL_DATA_ROOT only when invoking evaluate.py itself.
+data/eval.tar.gz.enc
+
 # Autoresearch debug sink (rotates, regrows per run)
 .omc/autoresearch-debug.log
 .omc/autoresearch-debug.log.1
