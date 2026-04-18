@@ -319,3 +319,67 @@ per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=
     is the lower-precision class and most singing FPs likely
     classify as crossfade (smoother, more chord-transition-like).
 
+## 2026-04-18T16:07:40+09:00 — ec9bfb8 (discard, combined=0.425240)
+subject: curriculum hard-negative mining via librosa.onset.onset_detect — for each CLEAN training file add up to HARD_NEG_PER_CLEAN=3 extra not_splice examples at onset times (min 3s apart, inside 0.8..dur-0.8 window), on top of the 4 uniform-random NEG_PER_CLEAN negatives. Class counts shift 600/300/300 -> 780/300/300 (+180 hard negs: 20 clean × 3 domains × 3 onsets). Orthogonal to all 4 prior training-data-composition failures (NEG_MIN_DIST 3.5 / POS_OFFSETS narrowed / NEG_PER_CLEAN 8 / NEG_PER_SPLICED 6), which all moved COUNT or DISTANCE while keeping UNIFORM RANDOM sampling over (0.8, dur-0.8). This is the first SAMPLING DISTRIBUTION change — onsets are exactly the song-natural transients that fire top singing SHAP features (spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta) at magnitudes indistinguishable from real splices, driving clean_fp=6 and singing 0.272 weakest-domain plateau. Clean files only (english/korean clean_fp=0 so not hurting them). Retrained in-place and joblib+meta committed alongside so the staleness gate sees matched features.py sha and skips re-retrain (guards against the 0.463218 plateau across recent feature-add attempts). OOF weighted F1 0.625 (from ~0.65) and splice-class recall drops are expected — this is precisely the intended precision-for-recall trade on CLEAN files.
+per-domain: combined_english=0.674419 combined_korean=0.436364 combined_singing=0.261290
+
+# Iteration reflection
+
+(a) HYPOTHESIS. Add CURRICULUM HARD-NEGATIVE MINING to train_classifier.py:
+    for each CLEAN training file only, supplement the 4 uniform-random
+    NEG_PER_CLEAN negatives with up to 3 additional not_splice examples
+    placed at librosa.onset.onset_detect() times within the chunk.
+    Class counts shift ~600/300/300 → ~660/300/300 (add ~60 hard negs:
+    20 clean files × 3 domains × ~1 qualifying onset each).
+
+(b) WHY this direction. Every prior training-data-composition change was
+    about COUNT / DISTANCE with UNIFORM RANDOM sampling:
+      * NEG_MIN_DIST_S 2.0→3.5 (distance)
+      * POS_OFFSETS narrowed to ±0.3 (positive offsets)
+      * NEG_PER_CLEAN 4→8 (count)
+      * NEG_PER_SPLICED 3→6 (count)
+    All failed. NONE changed the DISTRIBUTION from which negatives are
+    drawn — each drew uniformly from (0.8, dur-0.8). Uniform random
+    sampling in clean audio hits quiet mid-phrase / stable-timbre /
+    silence positions where ALL features are naturally low — easy
+    negatives that don't teach the classifier anything about its actual
+    eval-time failure mode. That failure mode is very specific: song-
+    natural chord TRANSITIONS / onsets firing spec_rolloff_delta /
+    spec_centroid_delta / spec_bandwidth_delta (top-3 singing SHAP
+    features, 3-5x higher magnitude than korean/english) at
+    distributions indistinguishable from real splices, driving singing
+    clean_fp=6 plateau at weakest-domain combined=0.272.
+
+    librosa.onset.onset_detect is specifically calibrated to find these
+    transients. Labelling them as not_splice forces GBM to learn a
+    boundary that SEPARATES musical onsets from cross-source splices —
+    something the classifier has never been asked to do because it has
+    never seen an onset labelled not_splice.
+
+    Orthogonal to every prior axis:
+      * 6 primary tunables bracketed (detector.py)
+      * 8 GBM hyperparam axes failed (capacity / regularization /
+        stochasticity / depth both directions / learning_rate /
+        n_estimators)
+      * 4 training-data-COUNT axes failed (all uniform random)
+      * feature additions (mfcc_cosine, hpss_perc, local_novelty_spec,
+        sample_weight 2x) verify-failed
+      * post-processing filters (plateau, class-margin) verify-failed
+    None touched the SAMPLING DISTRIBUTION. This is the first
+    stratified / curriculum negative-mining attempt.
+
+    To guarantee effect (recent 0.463218 plateau across feature adds
+    suggests stale-retrain risk), I retrain explicitly before
+    committing and include the refreshed joblib + meta in the same
+    commit, so the wrapper's staleness gate sees matched features.py
+    sha and skips re-retrain (using MY freshly-trained model).
+
+(c) IF THIS FAILS. Escalate to DIRECT feature-score hard-negative
+    mining: compute spec_rolloff_delta (top SHAP feature) on an
+    evenly-spaced grid in each clean chunk, select the top-K
+    magnitudes satisfying NEG_MIN_DIST_S, add as not_splice. Even
+    more aggressive: two-pass training — train baseline, predict on
+    all training files, find positions where p_splice > 0.7 on known-
+    not_splice locations, add those exact positions as hard negatives
+    for a second-pass retrain.
+
