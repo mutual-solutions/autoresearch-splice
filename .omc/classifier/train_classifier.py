@@ -23,7 +23,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import soundfile as sf
-from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import classification_report, f1_score
 from sklearn.model_selection import GroupKFold
 from sklearn.pipeline import Pipeline
@@ -63,16 +63,19 @@ DATASET_META_OUT = _HERE.parent / "training_manifest.json"
 
 
 def make_pipeline():
-    """Multi-class GBM pipeline. Edit the hyperparameters here to adjust
-    model capacity or regularization, then rerun the script to retrain.
+    """Multi-class HistGBM pipeline. Edit the hyperparameters here to
+    adjust model capacity or regularization, then rerun the script to
+    retrain.
     """
     return Pipeline([
         ("scaler", StandardScaler()),
-        ("clf", GradientBoostingClassifier(
-            n_estimators=200,
+        ("clf", HistGradientBoostingClassifier(
+            max_iter=200,
             max_depth=3,
+            max_leaf_nodes=8,
             learning_rate=0.07,
-            subsample=0.9,
+            l2_regularization=1.0,
+            min_samples_leaf=20,
             random_state=RANDOM_STATE,
         )),
     ])
