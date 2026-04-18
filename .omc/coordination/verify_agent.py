@@ -62,8 +62,13 @@ def check_git_diff_audit() -> tuple[str, str]:
           protected-file edit inside its hypothesis commit — invisible
           to (a)+(b) after commit).
     head_before read from env OMC_HEAD_BEFORE (wrapper exports it).
-    Missing env → fall back to (a)+(b) only with a WARN; wrapper should
-    always export it for hypothesis-iteration verify calls.
+    Missing env → commit-level audit is skipped. WARN is returned in the
+    otherwise-clean (a)+(b) case so the degraded audit is visible; any
+    (a)+(b) protected-file hit still FAILs regardless of env. The
+    retest subcommand (US-514) explicitly calls this without the
+    wrapper's env wrapping, so the WARN surfaces the degraded-audit
+    mode without blocking legitimate recoveries (main()'s WARN→MEDIUM
+    rule is preserved).
     """
     try:
         unstaged = subprocess.run(
@@ -104,6 +109,8 @@ def check_git_diff_audit() -> tuple[str, str]:
 
     if violations:
         return "FAIL", f"protected files modified: {violations}"
+    if not head_before:
+        return "WARN", "OMC_HEAD_BEFORE unset; commit-level audit skipped"
     return "PASS", "clean"
 
 
