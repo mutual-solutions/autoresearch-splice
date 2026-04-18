@@ -1142,3 +1142,105 @@ per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=
         signal-level subspace never attempted (all prior features
         used STFT magnitude or chroma).
 
+## 2026-04-18T19:10:25+09:00 — b39dbc9 (discard, combined=0.010000)
+subject: per-bin phase residual pre/post distance feature (2-8 kHz)
+per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=0.000000
+
+# 2026-04-18 — hypothesis: per-bin phase-residual signature distance (2-8 kHz, ±2s pre/post)
+
+(a) HYPOTHESIS. Add ONE feature `phase_residual_pre_post_dist` to features.py.
+    The existing `_ensure_feat_cache` already computes `bnd_residual` (per-bin
+    per-frame deviation of unwrapped STFT phase advance from the chunk-mean
+    advance) but only stores its per-frame std `feat_bnd_res_std` (consumed
+    by `boundary_phase_coherence` over ±200 ms). Store the band-restricted
+    residual matrix `feat_bnd_residual_band` (2000–8000 Hz, float32, ~5 MB
+    per 60 s chunk). New block computes per-bin mean residual over [t-2, t]
+    (pre) and [t, t+2] (post), wraps the per-bin difference to [-π, π], and
+    returns the RMS as a single scalar. FEATURE_NAMES grows 75 → 76 so the
+    classifier auto-retrains via the US-505 sha gate. Zero detector.py /
+    train_classifier.py / hyperparam edits.
+
+(b) WHY this over the 50+ prior failures. The clean-singing FP plateau
+    (clean_fp=6, singing combined=0.272) is driven by chord transitions
+    that fire spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta
+    (top-3 SHAP everywhere, 3-5x higher magnitude in singing) at values
+    indistinguishable from real splices because those features are pure
+    STFT-magnitude statistics. EVERY feature added so far operates on
+    magnitude / envelope / chroma / MFCC subspaces (spec_*_delta,
+    hf_*_delta, hpss_perc_*_delta, local_novelty_*, mfcc_cosine,
+    chroma_key_cosine_distance) — all of which shift at within-song chord
+    transitions because chord transitions DO change the magnitude spectrum.
+    Phase information is currently used only at ±200 ms in
+    boundary_phase_coherence — a single AGGREGATE coherence scalar over a
+    narrow window. NO feature compares per-bin phase signatures across the
+    standard ±2 s pre/post windows where every magnitude delta operates.
+
+    Why phase residual at 2-8 kHz: the per-bin phase advance after
+    subtracting the chunk-mean per-bin advance (= bnd_residual) factors
+    out the constant harmonic structure and isolates the source-specific
+    deviation (mic transfer function, room reverb early reflections, codec
+    quantization) which is INVARIANT across chord transitions of the same
+    source. 2000–8000 Hz is the band where mic high-end response, room
+    presence, and codec rolloff dominate; below 2 kHz the band is
+    chord-driven (vocal harmonics), above 8 kHz it is mostly noise that
+    hf_codec features already capture. Within-song chord transition: pre
+    and post per-bin signatures are similar (same source, same
+    deviation pattern) → diff small → dist ~ 0.05. Cross-song splice:
+    different mic/room/codec → per-bin signatures shift → dist > 0.2.
+
+    Orthogonal to all 50+ prior axes: 6 primary tunables bracketed,
+    8 GBM hyperparam axes failed, HistGBM kept, ExtraTrees catastrophic,
+    bootstrap-adversarial failed, isotonic catastrophic, 5 training-data
+    axes failed, 12+ magnitude-feature add/ablation failed, 7+ post-filters
+    failed, singing-specialized routing failed, gated tonality+persistence
+    catastrophic. The very last calibration post-mortem explicitly cited
+    "phase-coherence features — the only signal-level subspace never
+    attempted" as the next direction. Risk-bounded: 1 new feature, ~5 MB
+    extra ctx memory per chunk, ~0.1 ms per call. classifier retrains
+    automatically on FEATURE_NAMES sha change. Even if the feature is
+    uninformative, GBM gives it low SHAP and ignores it.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Widen / shift the band: 4-12 kHz (mic HF response only) or
+        500-2000 Hz (room mode resonances). Or stack 3 features at
+        non-overlapping bands (low/mid/high) and let GBM learn which
+        band carries source-identity for each domain.
+    (2) Switch from per-bin mean residual to per-bin VARIANCE of
+        residual: |std(post) - std(pre)| per bin then RMS across bins.
+        Stable sources have low residual variance; splices spike one
+        side's variance. Final escalation if all phase axes fail:
+        wavelet-based instantaneous-frequency features (different
+        time-frequency localization than STFT, may catch transient
+        source signatures invisible to fixed-window STFT phase).
+
+(d) Information gaps in this prompt. The 3 most recent attempts ALL
+    landed at combined=0.010 (GM floor → at least one domain produced
+    splice_f1=0 or clean_fp≥15). That pattern is suspicious — suggests
+    something other than the hypothesis content broke eval (classifier
+    failed to load, detector crashed, scaler rejected new feature shape,
+    etc). The prompt does NOT include the wrapper's stderr / verify
+    diagnostic for those 0.010 runs. Without that, I cannot tell whether
+    isotonic calibration's collapse was a CalibratedClassifierCV
+    integration bug vs the calibration itself being wrong direction.
+    A `RECENT_CATASTROPHIC_FAILURES` block surfacing the wrapper's
+    crash report (or a flag like "catastrophic_reason: pipeline_load_error
+    | feature_count_mismatch | ...") for the last few 0.010 attempts
+    would prevent me from misattributing those failures to hypothesis
+    content and re-trying axes that were actually killed by a wrapper
+    issue.
+
+(e) Wrapper enhancements that would accelerate this research. (i) A
+    `--diagnose-last` mode on verify_agent.py that prints, for the most
+    recent FAIL/0.010 run, which check (metric / git diff / anomaly /
+    preflight) tripped + the actual evaluate.py stderr tail. Catastrophic
+    0.010s become much faster to diagnose. (ii) A new SHAP-DELTA block in
+    the prompt: alongside the rolling sum_|shap| top-6, show the
+    per-feature SHAP CHANGE between the most recent KEPT classifier and
+    the prior KEPT classifier. New features with near-zero SHAP signal
+    they're being ignored regardless of metric outcome — much faster to
+    pivot. (iii) A `data/train/sample_eval_misses/` directory that the
+    wrapper auto-populates with the 6 clean-singing FP positions from
+    each KEPT classifier (file path + t_sec). I could load those exact
+    audio segments to smoke-test new features against the ACTUAL
+    failure cases, instead of guessing from data/train/singing/tier1.
+
