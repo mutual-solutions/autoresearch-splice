@@ -485,11 +485,22 @@ Read-only artifacts for deeper context:
    tried, why, and what to try next. If 5+ recent entries all failed on
    the same tunable axis, seriously consider a structural change
    (features.py / train_classifier.py) instead of another tweak.
-1. Write 3-5 lines to .omc/last_reflection.md (the wrapper will capture
+1. Write 5-8 lines to .omc/last_reflection.md (the wrapper will capture
    this into the permanent research notebook regardless of keep/discard):
      (a) what hypothesis you're about to try
      (b) WHY this direction over the recent failures
      (c) what you'd try next if this one fails
+     (d) In your perspective, is there any information that is NOT given
+         or is conflicting in this prompt that is degrading your
+         performance? Be specific — name the gap or the contradiction.
+         If nothing is missing, write \"(no gaps noted)\".
+     (e) From YOUR perspective as the claude agent performing autoresearch:
+         what design improvements / tool enhancements / feature additions
+         to the wrapper, prompt, or available scripts would accelerate
+         your research? Be concrete (a function signature, a new prompt
+         block, a new wrapper subcommand). If nothing comes to mind,
+         write \"(no enhancements noted)\". The human operator reads these
+         periodically to decide what to build next.
 2. Read baseline_metrics.json and any history you need. Target the
    WEAKEST domain (GM is dragged down by it).
 3. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
@@ -665,9 +676,27 @@ except Exception:
             fi
             # Stage the refreshed model so a later discard's reset
             # doesn't revert the joblib to a features-mismatched version.
+            # AMEND-SAFETY: only amend if HEAD is still the hypothesis
+            # commit. If the user (or anything else) landed a commit on
+            # top of the hypothesis in the meantime, amending would fold
+            # claude's retrain artifacts into that user commit — which a
+            # later discard reset would then wipe, orphaning the user's
+            # work. Detected bug: my own wrapper-prompt commit got
+            # amended into a hypothesis and then lost on discard (reflog
+            # 2026-04-18). When this guard fires, commit the joblib+meta
+            # as a separate commit instead.
             git add .omc/classifier/fp_classifier.joblib \
                     .omc/classifier/fp_classifier.meta.json >> "$LOG_FILE" 2>&1 || true
-            git commit --amend --no-edit >> "$LOG_FILE" 2>&1 || true
+            _head_subj=$(git log -1 --format=%s 2>/dev/null)
+            case "$_head_subj" in
+                hypothesis:*)
+                    git commit --amend --no-edit >> "$LOG_FILE" 2>&1 || true
+                    ;;
+                *)
+                    echo "$(date -Iseconds) WARN: HEAD is not a hypothesis commit ('$_head_subj'). Not amending; committing retrain artifacts as separate commit." >> "$LOG_FILE"
+                    git commit -m "retrain: auto-refresh classifier for features.py sha $_features_sha_now" >> "$LOG_FILE" 2>&1 || true
+                    ;;
+            esac
             # Refresh hypothesis_commit since amend changed the SHA.
             head_after=$(git rev-parse HEAD)
             hypothesis_commit=$(git log -1 --format=%h "$head_after")
