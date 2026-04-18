@@ -479,3 +479,44 @@ per-domain: combined_english=0.775000 combined_korean=0.500000 combined_singing=
     between two classifiers trained separately on
     singing-vs-speech subsets of the training manifest.
 
+## 2026-04-18T16:37:07+09:00 — 4404f29 (discard, combined=0.439526)
+subject: add chroma_key_cosine_distance (+-8s pre/post) — genuinely untried PITCH-CLASS subspace orthogonal to all prior STFT-magnitude/timbre feature-addition failures, targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Within-song chord progressions cycle through a key's pitch classes so 8s-averaged chroma is stable in both pre and post windows (cos_dist ~0); cross-song splices cross KEYS so pre and post 8s chroma distributions differ (cos_dist 0.3-0.8). Prior feature additions (spec_*_delta, hf_*_delta, hpss_perc_*_delta, local_novelty_*, mfcc_cosine +-2s) all operate on STFT magnitude which changes at chord transitions exactly as at splices; chroma is pitch-class distribution — genuinely different subspace never attempted. Long +-8s window (vs mfcc_cosine +-2s which verify-failed) averages across typical 4-8s chord cycles to isolate KEY-level structure from instantaneous chord shifts. FEATURE_NAMES 75->76 so classifier auto-retrains (US-505). Minimal blast radius: one librosa.feature.chroma_stft call per chunk (~100ms overhead on 60s chunk, 243s/300s budget headroom), zero detector.py / train_classifier.py edits. Smoke test on data/train/singing/tier1/splice_t1_001.wav: chroma_key_cosine_distance=0.2843 at GT splice t=30 vs 0.0153 at stable t=10 (~19x SNR).
+per-domain: combined_english=0.734177 combined_korean=0.475000 combined_singing=0.243478
+
+(a) Hypothesis: add ONE new feature `chroma_key_cosine_distance` to a new
+    `_block_chroma` in features.py. Compute chromagram
+    (`librosa.feature.chroma_stft`, 12 pitch classes) once per chunk and
+    cache to ctx. Feature at t = 1 - cos(pre_chroma_8s_mean,
+    post_chroma_8s_mean) where pre is [t-8, t] and post is [t, t+8].
+    FEATURE_NAMES grows 75 -> 76 so classifier auto-retrains (US-505).
+    Zero detector.py / train_classifier.py changes.
+
+(b) WHY. All 10+ feature-addition failures operate on STFT-magnitude /
+    timbre / envelope subspaces (spec_*_delta, hf_*_delta,
+    hpss_perc_*_delta, local_novelty_*, mfcc_cosine at +-2s). Every one
+    fires at singing chord transitions because chord transitions
+    CHANGE the spectral envelope. Chroma is PITCH-CLASS distribution
+    -- a genuinely different subspace never attempted. The critical
+    twist vs mfcc_cosine at +-2s is the WINDOW LENGTH: at +-8s, a
+    within-song chord progression (I-IV-V-I cycle every 4-8s) averages
+    to the KEY's prominent pitch classes in both pre and post windows,
+    so cosine distance is small (~0.05). A cross-song splice typically
+    crosses KEYS, so pre and post 8s-averaged chroma distributions
+    differ substantially (cosine distance 0.3-0.8). This is the exact
+    signal that distinguishes singing's song-natural chord transitions
+    (within-key, chroma stable) from real splices (across-key, chroma
+    shifts) -- precisely the failure mode driving clean_fp=6 and
+    weakest-domain singing combined=0.272. Speech (korean/english) has
+    weak tonal structure so chroma is noisy but bounded; classifier
+    can learn to downweight it. Minimal blast radius: one new feature,
+    one librosa.feature.chroma_stft call per chunk (~100ms overhead
+    on 60s chunk), well within 243s/300s budget headroom.
+
+(c) If this fails: retry with chroma_cens (constant-Q + median
+    smoothing) which is more robust to transients and harmonic
+    variation. Alternative: compute chroma_cosine at two separate
+    scales (+-2s AND +-8s) as two features so the classifier can
+    cross-reference short-term vs long-term tonal change. Final
+    escalation: per-domain classifier routing by inferring domain
+    from audio (voicing fraction + harmonic ratio proxies).
+
