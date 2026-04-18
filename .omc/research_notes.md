@@ -1049,3 +1049,96 @@ per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=
         untried move from the ExtraTrees post-mortem that targets
         probability over-confidence rather than rank error.
 
+## 2026-04-18T18:52:50+09:00 — d25f455 (discard, combined=0.010000)
+subject: wrap HistGradientBoostingClassifier with CalibratedClassifierCV(method='isotonic', cv=3) — first CALIBRATION axis attacked in 50+ iterations. Every prior axis attacked MEMORIZATION (8 GBM hyperparam, 5 training-data, 12+ feature add/ablation, HistGBM swap, ExtraTrees swap catastrophic 0.010, bootstrap-adversarial, singing-specialized routing, 7+ post-filters, gated tonality+persistence catastrophic 0.010) and all failed; the clean-singing FP failure (clean_fp=6, p_splice~0.982 just above gate at chord-transition windows whose top SHAP features match training-clean clusters) has TWO possible causes (memorization or calibration) and only memorization has ever been targeted. Tree ensembles are notoriously over-confident in upper-decile probability tails — known weakness of HistGBM logistic-loss output. With over-confident scores, chord-transition clusters that ought to score 0.7-0.9 (suspicious but below 0.982) score 0.98-0.99 and cross the gate. Isotonic recalibration fits a non-parametric monotone score->frequency mapping per fold then averages 3 calibrated estimators; works on SAME training data with NO new feature, NO new hyperparam, NO new sampling — purely redistributes scores so emits with p>0.982 are positions that achieved >98%% frequency on similar held-out data, not just 'scored high in boost-residual space'. Explicit untried-next-step in two prior post-mortems. Orthogonal to every prior axis. ExtraTrees catastrophic failure de-risks this — shows that swapping AWAY from boosting destroys splice recall, so the right move is KEEP HistGBM and fix only probability scaling. Risk-bounded: isotonic is monotone so rank ordering preserved; intersection of {true splices, p>0.982} can only shrink not gain new TPs missing from prior gate. Singing TPs typically score >0.99+ on hard cuts and >0.95 on crossfades so headroom exists. cv=3 (vs cv=5 default) keeps total retrain inside ~5min budget. Pure train_classifier.py change (CalibratedClassifierCV import + wrapper around HistGBM in make_pipeline); detector.py model.named_steps['clf'].classes_ and model.predict_proba() byte-identical since CalibratedClassifierCV exposes both with same semantics. OOF weighted F1=0.5956 (vs uncalibrated HistGBM ~0.577) modestly higher — calibration adds discrimination on top of the existing boost-residual scoring.
+per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=0.000000
+
+# 2026-04-18 — hypothesis: isotonic-calibrate HistGBM
+
+(a) HYPOTHESIS. Pure train_classifier.py change. Wrap the existing
+    HistGradientBoostingClassifier inside
+    CalibratedClassifierCV(estimator=HistGBM(...), method='isotonic',
+    cv=5) as the pipeline's "clf" step. No detector.py edits, no
+    features.py edits, no hyperparam edits, no training-data edits.
+    Sklearn's CalibratedClassifierCV exposes predict_proba and
+    classes_ with identical semantics so detector.py's
+    model.named_steps["clf"].classes_ lookup and
+    model.predict_proba(X) call work byte-identically. Internally
+    each of 5 GroupKFold-style folds fits HistGBM on 4/5 of the data
+    then fits an isotonic regressor on the held-out 1/5 against the
+    true labels; final predictions average the 5 calibrated
+    estimators. Manual retrain (~150s for 5x the ~30s HistGBM fit),
+    joblib + meta + cv_results committed alongside.
+
+(b) WHY this over the 40+ failures.
+    Every prior axis attacked MEMORIZATION (capacity, sampling,
+    feature engineering, model class, post-filters, routing). The
+    weakest-domain failure mode (singing clean_fp=6, p_splice ~0.982
+    just above the gate at chord-transition windows whose top SHAP
+    features match training-clean clusters) has TWO possible causes
+    and only ONE has ever been attacked:
+      - MEMORIZATION (attacked 40+ times, all failed): training rows
+        get baked into specific decision boundaries. Tried hyperparam
+        regularization (8 axes), training-data resampling (5 axes),
+        feature ablation/addition (12+), HistGBM swap, ExtraTrees
+        swap (catastrophic 0.010), bootstrap-adversarial,
+        singing-specialized routing, gated post-filters.
+      - CALIBRATION (never attacked): the model's predicted
+        probabilities don't reflect actual frequencies. Tree
+        ensembles are notoriously over-confident at the extreme tails
+        — known weakness of HistGBM's logistic-loss output in the
+        upper-decile region. With an over-confident classifier, the
+        chord-transition clusters that ought to score 0.7-0.9 (still
+        suspicious, but below 0.982) instead score 0.98-0.99 and
+        cross the gate.
+    Isotonic recalibration fits a non-parametric monotone mapping
+    from raw scores to true frequencies, learned per-fold then
+    averaged. Critically it operates on the SAME training data with
+    NO new feature, NO new hyperparam, NO new sampling — just
+    redistributes the existing scores. The 0.982 threshold then
+    selects from a different distribution: emits with p>0.982 are
+    the ones that actually achieved >98% frequency on similar
+    held-out positions during training, not just "scored high in
+    boost-residual space."
+
+    Explicit untried-next-step in two post-mortems:
+      - ExtraTrees post-mortem (43944a6): "Wrap HistGBM with
+        CalibratedClassifierCV(method='isotonic', cv=5). If
+        clean-singing FPs are a CALIBRATION issue rather than a
+        MEMORIZATION issue, isotonic regression fit OOF
+        recalibrates the p_splice > 0.982 tail. Complementary axis
+        to model-family swap; never tried."
+
+    Orthogonal to every prior axis. ExtraTrees catastrophic failure
+    actually de-risks this hypothesis: it shows that swapping AWAY
+    from boosting destroys splice-class recall, so the right move
+    is to KEEP HistGBM and fix only the probability scaling.
+
+    Risk-bounded: isotonic calibration is monotone so the rank
+    ordering of scores is preserved. Eval-time emits that were
+    above 0.982 may shift to a different value but their RANK
+    relative to other windows is unchanged. The intersection of
+    {true splices, p>0.982} can only shrink, not contain new TPs
+    that weren't above the prior gate. Singing clean_fp=6 is the
+    target for shrinkage.
+
+    Best case: isotonic squashes the chord-transition cluster
+    below 0.982 (clean_fp drops from 6 toward 0) without dropping
+    real splices below the gate (TPs were already at p>0.99 with
+    headroom). Singing combined improves materially.
+
+(c) IF THIS FAILS. Three paths.
+    (1) Switch isotonic -> sigmoid (Platt scaling) which fits a
+        parametric two-parameter logistic to the calibration
+        curve. More stable on small held-out folds but assumes
+        the calibration curve is sigmoid-shaped, which may not
+        match HistGBM's actual miscalibration shape.
+    (2) Reduce cv to 3 (fewer folds, more rows per fold for
+        better isotonic estimate).
+    (3) If calibration genuinely doesn't help, the failure mode
+        is structural feature confusion (chord transitions
+        produce IDENTICAL feature vectors to splices) and the
+        next move is phase-coherence features — the only
+        signal-level subspace never attempted (all prior features
+        used STFT magnitude or chroma).
+
