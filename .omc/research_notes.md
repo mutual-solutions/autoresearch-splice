@@ -520,3 +520,56 @@ per-domain: combined_english=0.734177 combined_korean=0.475000 combined_singing=
     escalation: per-domain classifier routing by inferring domain
     from audio (voicing fraction + harmonic ratio proxies).
 
+## 2026-04-18T16:50:02+09:00 — abbff6a (discard, combined=0.459525)
+subject: ablate LOW-SHAP spec_flux/contrast/flatness deltas (75->72 feats)
+per-domain: combined_english=0.883117 combined_korean=0.492308 combined_singing=0.223188
+
+# 2026-04-18 — hypothesis: ablate LOW-SHAP spec_*_delta noise-feature trio
+
+(a) HYPOTHESIS. Second feature-ABLATION attempt, but targeting a
+    different sub-strategy than the first. Delete three spec_*_delta
+    features that appear in NO domain's top-6 SHAP list:
+    `spec_flux_delta`, `spec_contrast_delta`, `spec_flatness_delta`.
+    Remove both their FEATURE_NAMES entries and their `_block_spectral`
+    dict entries. FEATURE_NAMES shrinks 75 -> 72. Classifier auto-
+    retrains (US-505 on features.py sha).
+
+(b) WHY this over recent failures. The first ablation
+    (spec_bandwidth_delta, the #3 top-SHAP singing predictor) failed at
+    combined=0.447181 with singing REGRESSING 0.272 -> 0.231. That
+    tells us ablating a TOP-SHAP feature hurts singing TPs at least as
+    much as FPs: GBM's top predictors are genuinely useful for both.
+    This attempt takes the orthogonal strategy -- ablate LOW-SHAP
+    features to REDUCE NOISE in the 75-dim input on a 1200-row
+    training set, rather than to force top-cluster redistribution.
+    The SHAP rolling sums show that for ALL THREE domains the top-6
+    predictors are: spec_rolloff_delta / spec_centroid_delta /
+    spec_bandwidth_delta / nf_rolloff_delta / dsp_t2_z /
+    dsp_pairwise_proximity / nf_centroid_delta -- NONE of the three
+    ablated features appear in any top-6 list. They are dead weight
+    that GBM spends split budget on during training, producing splits
+    on noise that don't generalize. Removing them concentrates tree
+    splits onto informative features. Blast risk bounded because
+    every domain's top predictors are preserved:
+      * english top-6 -- none ablated
+      * korean  top-6 -- none ablated
+      * singing top-6 -- none ablated
+    Orthogonal to every prior failed axis: primary tunables
+    bracketed, 8 GBM hyperparam axes failed, 5 training-data-
+    composition axes failed, 10+ feature-addition attempts failed,
+    one top-SHAP ablation failed. No prior attempt has removed
+    LOW-SHAP features as a noise-reduction move. Min blast radius:
+    3 line deletions in FEATURE_NAMES, 3 dict-entry deletions in
+    `_block_spectral`, zero detector.py / train_classifier.py
+    changes, classifier retrains automatically on sha change.
+
+(c) IF THIS FAILS. Two consecutive ablation directions failed ->
+    the correlated-cluster/noise-reduction theories are both wrong
+    and the next move is per-audio domain heuristic routing:
+    compute a single per-audio scalar like mean spectral_flatness
+    or voicing fraction at the top of detect_splices, route to a
+    per-domain GBM_THRESHOLD (music/singing uses tighter
+    threshold 0.985, speech uses current 0.982). Audio-based
+    domain detection is the explicit next direction from the
+    HPSS-percussive post-mortem and has never been attempted.
+
