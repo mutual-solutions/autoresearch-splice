@@ -830,3 +830,72 @@ per-domain: combined_english=0.740741 combined_korean=0.483871 combined_singing=
         uniform-random NEG_PER_CLEAN and onset-based hard-negative attempts
         that both failed.
 
+## 2026-04-18T18:02:15+09:00 — eae9936 (discard, combined=0.399085)
+subject: bootstrap-adversarial hard-negative mining — stage 2 after initial fit scans the 60 clean training files at stride=1.0s with the just-trained classifier and harvests the top-K positions per file where p_splice>0.5 (min mutual distance 3.0s, K=4) as additional not_splice rows, then refits on the augmented set. Stage-1 run added 94 bootstrap negatives shifting class counts 600/300/300 -> 694/300/300. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Every prior training-data axis used FIXED SAMPLING DISTRIBUTION picked a-priori (uniform random NEG_PER_CLEAN/NEG_PER_SPLICED, NEG_MIN_DIST, POS_OFFSETS geometry, onset-based curriculum via librosa.onset.onset_detect, sample_weight 2.0x) — none used the CLASSIFIER'S OWN predictions to select which positions to add. This is self-distillation for the decision boundary: positions above 0.5 on clean audio are by construction the classifier's own FP budget, so labelling them as not_splice forces the next fit to push the boundary through them. Direction explicitly called out as next escalation in the last reflection (global-half centroid divergence discard 0.456093). Orthogonal to every prior axis: features.py unchanged (sha stable, no wrapper re-retrain), detector.py unchanged, all 6 primary tunables at current-best values, only training data changes via a genuinely novel mechanism. Joblib+meta committed alongside code so the wrapper's staleness gate sees matched sha and deploys the stage-2 model.
+per-domain: combined_english=0.794521 combined_korean=0.400000 combined_singing=0.200000
+
+# 2026-04-18 — hypothesis: bootstrap-adversarial hard-negative mining
+
+(a) HYPOTHESIS. Two-stage training in train_classifier.py.
+    Stage 1: run the existing training pipeline to fit `final` on the
+    standard 600/300/300 rows.
+    Stage 2: iterate CLEAN training files (20 per domain, 60 total),
+    extract features at stride=1.0s across the midpoint chunk, predict
+    with `final`, and harvest the top-K positions where p_splice>0.5
+    (min mutual distance 3.0s) as additional not_splice rows.
+    With K=4 per clean file the training set grows
+    600/300/300 → up to 840/300/300 (+60 files * <=4 = <=240 rows,
+    typically ~150 in practice since many clean files will have <4
+    positions above 0.5). Refit the pipeline on the augmented set and
+    save that as the deployed model. No detector.py / features.py
+    changes.
+
+(b) WHY this over 30+ recent failures. Every prior training-data
+    axis used a FIXED SAMPLING DISTRIBUTION picked a-priori:
+      * uniform random (NEG_PER_CLEAN 4->8, NEG_PER_SPLICED 3->6)
+      * splice-adjacent distance (NEG_MIN_DIST 2.0->3.5)
+      * positive-offset geometry (POS_OFFSETS +-0.6->+-0.3)
+      * onset-based curriculum (librosa.onset.onset_detect)
+      * sample_weight singing 2.0x (loss rebalancing, not sampling)
+    NONE used the CLASSIFIER'S OWN predictions to select which
+    positions to add. Onset-based mining was the closest prior and
+    failed because generic transients fire everywhere in music
+    (musical onsets are abundant) — the classifier doesn't care about
+    onsets specifically, it cares about the feature vectors at
+    positions it's ABOUT TO GET WRONG. Bootstrap-adversarial picks
+    exactly those positions by running the model and sorting by
+    p_splice on files where the ground truth is KNOWN to be
+    not_splice everywhere (clean files only). This is
+    self-distillation for the decision boundary: positions above
+    0.5 on clean audio are by construction the classifier's own FP
+    budget, and labelling them as not_splice forces the next fit
+    to push the boundary right through them. For singing's
+    clean_fp=6 plateau — where spec_rolloff_delta / centroid_delta /
+    bandwidth_delta fire on song-natural chord transitions at
+    magnitudes matching real splices — the classifier at inference
+    time produces p_splice ~ 0.982 at those 6 positions; during
+    training, the first-pass model will score similar positions
+    on the clean training files just as highly, and those will be
+    exactly the rows that enter the augmented training set. The
+    direction was called out as the next escalation in the very
+    last reflection (global-half centroid divergence) and never
+    attempted. Orthogonal to every prior axis: feature-set
+    unchanged (features.py sha stable so detector.py loads the
+    same feature order), detector geometry unchanged, all 6 primary
+    tunables stay at their current-best values. Only the training
+    data changes, via a genuinely novel mechanism.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Tighten/loosen the bootstrap cutoff: 0.5 -> 0.3 (more
+        negatives) or 0.7 (fewer, more conservative). Also try
+        K=2 or K=6. If the bootstrap set is too noisy the
+        classifier over-tightens on clean singing and drops
+        splice recall; if too sparse, little changes.
+    (2) Iterate 3+ rounds of bootstrap (each round's model finds
+        residual FPs on clean files, adds them, retrains). This
+        is a stability test — convergence confirms the boundary
+        is settling, divergence suggests the feature space
+        genuinely cannot separate song-natural transitions
+        from splices and the final escalation is per-domain
+        classifier training (three separate GBMs).
+
