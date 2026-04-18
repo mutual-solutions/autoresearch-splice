@@ -705,3 +705,76 @@ per-domain: combined_english=0.759494 combined_korean=0.426230 combined_singing=
         scalar at the top of detect_splices. Explicit next step in
         multiple prior post-mortems; never attempted.
 
+## 2026-04-18T17:37:52+09:00 — 8fb79e5 (discard, combined=0.356651)
+subject: singing-specialized GBM with audio-flatness routing
+per-domain: combined_english=0.756098 combined_korean=0.500000 combined_singing=0.120000
+
+# 2026-04-18 — hypothesis: singing-specialized classifier with audio-flatness routing
+
+(a) HYPOTHESIS. Train a SECOND classifier on singing-only training rows
+    (200 not_splice / 100 hard_cut / 100 crossfade) and save to
+    `.omc/classifier/fp_classifier_singing.joblib`. In `detect_splices`,
+    compute mean spectral_flatness on a few sampled 1-second windows of
+    the input audio. If mean flatness < 0.06, route to the singing
+    classifier; otherwise use the existing unified classifier
+    unchanged. Detector caches both bundles; speech domains
+    (english/korean) hit the unified path with byte-identical behaviour
+    to current best (0.468623).
+
+(b) WHY this over the 30+ failures.
+    Every prior post-filter applied UNIFORMLY across all files:
+    plateau-filter, class-margin, onset-local-pct, asymmetric-class,
+    persistence, tonality-conditioned threshold — all hurt korean and
+    english because their tightening was not actually targeted to the
+    singing FP population. Tonality-conditioned threshold (0.446512)
+    was closest in spirit (gated on per-emit flatness) but the
+    per-emit flatness scalar misclassified some korean voiced segments
+    as "tonal" and tightened them too. Routing at the FILE level using
+    a global audio scalar avoids that confusion: a Korean speech file
+    averages flatness ~0.10-0.30 and never falls below 0.06; a singing
+    file averages 0.02-0.05 and always falls below 0.06. The two
+    populations are well-separated at the file level even when
+    individual frames overlap.
+
+    Per-domain classifier routing is the explicit "next escalation"
+    cited in five different post-mortems (HPSS-percussive,
+    spec_bandwidth ablation, tonality-conditioned threshold,
+    persistence post-filter, onset hard-negative mining) and has
+    NEVER been attempted. It is structurally orthogonal to every
+    prior axis: 6 primary tunables bracketed; 8 GBM hyperparam axes
+    failed; 5 training-data-composition axes failed; 12+ feature
+    add/ablation hypotheses failed; 7 post-filter hypotheses failed.
+    None changed the architectural assumption that ONE GBM serves
+    all three domains. Singing FPs are a structural problem (top
+    SHAP features fire equally on chord transitions and splices) and
+    need a structurally different classifier — one whose decision
+    boundary was learned on singing-only patterns without
+    english/korean class-balance pressure.
+
+    Risk-bounded design choice: the singing classifier replaces the
+    unified one ONLY for singing-flagged audio. Speech files use the
+    unchanged unified classifier so english (0.756) / korean (0.500)
+    do not regress. Worst case is that the singing-specialized
+    classifier's small training set (400 rows) overfits and singing
+    drops further; even then the GM penalty is bounded because
+    weakest-domain singing 0.272 already dominates the GM. Best case
+    is the singing classifier learns a tighter decision boundary on
+    singing patterns and singing combined improves materially.
+
+    Definitely takes effect (avoids the suspect 0.463218 plateau):
+    detector.py loads BOTH bundles, the singing joblib is committed
+    alongside the code change, and the routing decision happens at
+    runtime per audio. No reliance on the wrapper's staleness gate
+    for the new bundle.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Adjust the routing threshold (0.05 stricter or 0.08 looser)
+        or use a different audio scalar (mean voicing fraction,
+        mean harmonic-to-percussive ratio).
+    (2) Bootstrap-double the singing rows (effective 2x sample weight
+        at dataset level) for the singing classifier to address
+        small-N overfitting; or relax GBM hyperparams for the
+        singing model (max_depth=2). If THAT also fails, escalate
+        to three classifiers (singing / korean / english) with a
+        more nuanced speech-vs-speech scalar.
+
