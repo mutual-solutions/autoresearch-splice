@@ -504,13 +504,41 @@ def main() -> None:
     ap.add_argument("--domain", choices=(*DOMAINS, "all"), required=True)
     ap.add_argument("--split", choices=(*SPLITS, "all"), required=True)
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument(
+        "--skip-test-encrypt", action="store_true",
+        help="Do NOT auto-encrypt data/test/ after generating the test "
+             "split. Default is to invoke scripts/test_crypto.py encrypt "
+             "(requires Touch ID) so the plaintext never sits on disk.",
+    )
     args = ap.parse_args()
 
     doms = DOMAINS if args.domain == "all" else (args.domain,)
     splits = SPLITS if args.split == "all" else (args.split,)
+    generated_splits: set = set()
     for d in doms:
         for s in splits:
             regenerate(d, s, seed=args.seed)
+            generated_splits.add(s)
+
+    # Auto-encrypt test split when we just regenerated it. Plaintext
+    # data/test/ must never linger on disk — any downstream script could
+    # accidentally leak it into autoresearch's evaluation loop.
+    if "test" in generated_splits and not args.skip_test_encrypt:
+        import subprocess
+        from pathlib import Path
+        script = Path(__file__).resolve().parents[1] / "scripts" / "test_crypto.py"
+        blob = Path(__file__).resolve().parents[1] / "data" / "test.tar.gz.enc"
+        mode = "setup" if not blob.exists() else "encrypt"
+        print(f"\n[post-regen] Encrypting data/test/ via {script.name} {mode}")
+        print("             (Touch ID prompt expected)")
+        r = subprocess.run(
+            ["uv", "run", "python", str(script), mode],
+            check=False,
+        )
+        if r.returncode != 0:
+            print(f"[post-regen] test encryption FAILED (exit {r.returncode}). "
+                  "data/test/ was left in plaintext — encrypt it manually before "
+                  "starting autoresearch.")
 
 
 if __name__ == "__main__":

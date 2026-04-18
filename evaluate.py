@@ -565,13 +565,49 @@ if __name__ == "__main__":
             from ml_eval import export_shap_reports
 
         split_label = "test" if args.test else "eval"
+
+        # If --test and the plaintext tree is missing but the encrypted
+        # blob exists, invoke scripts/test_crypto.py decrypt to materialize
+        # the dataset into a fresh /tmp dir gated by Touch ID. Register
+        # cleanup so the plaintext is shredded on any exit path.
+        test_root_override = None
+        if args.test:
+            _repo = os.path.dirname(os.path.abspath(__file__))
+            _enc_blob = os.path.join(_repo, "data", "test.tar.gz.enc")
+            _plain_any = any(
+                os.path.isdir(str(ds.test_path)) for ds in DATASETS
+            )
+            if not _plain_any and os.path.exists(_enc_blob):
+                import atexit
+                import shutil as _shutil
+                _script = os.path.join(_repo, "scripts", "test_crypto.py")
+                print("Test dataset is encrypted. Triggering Touch ID prompt "
+                      "to decrypt...", file=sys.stderr)
+                _r = subprocess.run(
+                    ["uv", "run", "python", _script, "decrypt", "--keep"],
+                    capture_output=True, text=True,
+                )
+                if _r.returncode != 0:
+                    print(f"test decrypt failed: {_r.stderr}", file=sys.stderr)
+                    sys.exit(1)
+                test_root_override = _r.stdout.strip()
+                _parent_tmp = os.path.dirname(test_root_override)
+                atexit.register(
+                    lambda: _shutil.rmtree(_parent_tmp, ignore_errors=True)
+                )
+                print(f"decrypted test root: {test_root_override}",
+                      file=sys.stderr)
+
         per_dataset: dict[str, float] = {}
         per_dataset_clean_fp: dict[str, int] = {}
 
         for ds in DATASETS:
             if ds.eval_weight <= 0:
                 continue
-            ds_path = str(ds.test_path if args.test else ds.eval_path)
+            if args.test and test_root_override:
+                ds_path = os.path.join(test_root_override, ds.id)
+            else:
+                ds_path = str(ds.test_path if args.test else ds.eval_path)
             if not os.path.isdir(ds_path):
                 print(f"combined_{ds.id}: MISSING (no such directory: {ds_path})")
                 continue

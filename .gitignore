@@ -47,6 +47,9 @@ data/test/*/tier1/
 data/test/*/tier2/
 data/test/*/clean/
 
+# Compiled Swift binaries — rebuild from source on clone
+scripts/test_unlock
+
 # Autoresearch debug sink (rotates, regrows per run)
 .omc/autoresearch-debug.log
 .omc/autoresearch-debug.log.1
