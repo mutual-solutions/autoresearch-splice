@@ -168,7 +168,219 @@ def check_clean_fp_bound(output: str) -> tuple[str, str]:
     return "PASS", f"total={total} per-dataset({detail}) bounds {per_ds_bound}/ds, {total_bound} total"
 
 
+# ---------------------------------------------------------------------------
+# US-508 Phase 1: --diagnose subcommand
+# ---------------------------------------------------------------------------
+# On eval/retrain crash the wrapper invokes `verify_agent.py --diagnose`.
+# The subcommand reads .omc/last_eval.log, finds the last Traceback, extracts
+# exception class + message + top-3 frames, classifies into 6 categories,
+# redacts oracle signals, and APPENDS a structured block to
+# .omc/last_reflection.md (NOT overwrite — claude's hypothesis reflection from
+# the same iteration lives there and must survive the wrapper's capture into
+# research_notes.md). Completes in <1s on a 1 MB log.
+
+_DIAGNOSE_LOG = ".omc/last_eval.log"
+_DIAGNOSE_OUT = ".omc/last_reflection.md"
+_DIAGNOSE_TOP_FRAMES = 3
+_DIAGNOSE_TIME_BUDGET_S = 1.0
+_DIAGNOSE_SEPARATOR = "\n\n---\n## [auto-diagnosis]\n"
+
+# Denylist: oracle tokens that MUST NOT leak into claude's context via the
+# diagnosis. Pattern anchors on token names; strips numeric RHS only. Accepts
+# at most 3 _<domain> suffixes to cover combined_singing etc. Legitimate
+# error floats (AssertionError: x=1.5 ...) are preserved because x, threshold,
+# etc. are not in the denylist.
+_ORACLE_DENYLIST_RE = re.compile(
+    r"\b(combined(?:_[a-z]+)?|splice_f1|clean_score)\s*=\s*[0-9.]+"
+)
+
+
+def _redact_oracle(text: str) -> str:
+    return _ORACLE_DENYLIST_RE.sub(r"\1=<REDACTED>", text)
+
+
+def _extract_last_traceback(log_text: str) -> str | None:
+    marker = "Traceback (most recent call last):"
+    last = log_text.rfind(marker)
+    if last == -1:
+        return None
+    # Walk forward until the first non-indented, non-blank line AFTER the
+    # stack frames — that's the exception line. Everything through that
+    # line is the traceback block.
+    tail = log_text[last:]
+    lines = tail.splitlines()
+    block: list[str] = [lines[0]]  # the marker itself
+    in_frames = True
+    for ln in lines[1:]:
+        block.append(ln)
+        if in_frames and ln and not ln.startswith((" ", "\t")) and not ln.startswith("Traceback"):
+            # This is the exception line — block ends here.
+            break
+    return "\n".join(block)
+
+
+def _parse_traceback(tb_text: str) -> tuple[str, str, list[str]]:
+    """Return (exception_class, message, top_frames[]). Graceful on malformed."""
+    lines = tb_text.splitlines()
+    frames: list[str] = []
+    for ln in lines:
+        m = re.search(r'File "([^"]+)", line (\d+)', ln)
+        if m:
+            frames.append(f"{m.group(1)}:{m.group(2)}")
+    # Exception line: last non-blank line.
+    exc_class = "Unknown"
+    exc_msg = ""
+    for ln in reversed(lines):
+        s = ln.strip()
+        if not s or s.startswith("File ") or s.startswith("Traceback"):
+            continue
+        # Form: "ExceptionClass: message"
+        parts = s.split(":", 1)
+        exc_class = parts[0].strip()
+        exc_msg = parts[1].strip() if len(parts) > 1 else ""
+        break
+    return exc_class, exc_msg, frames[:_DIAGNOSE_TOP_FRAMES]
+
+
+def _classify(exc_class: str, exc_msg: str) -> tuple[str, str]:
+    """Return (category, suggested_action_note)."""
+    if exc_class == "KeyError":
+        # If the missing key name looks like a feature-cache slot missing
+        # from _ensure_feat_cache, flag that specifically.
+        key_match = re.search(r"'([^']+)'", exc_msg)
+        key = key_match.group(1) if key_match else ""
+        if key.startswith("feat_"):
+            return (
+                "KeyError-missing-ctx",
+                f"Key '{key}' is referenced but never assigned. Add "
+                f"ctx['{key}'] = ... in _ensure_feat_cache.",
+            )
+        return ("KeyError-other", f"Dict key '{key}' missing. Verify the key is populated before read.")
+    if exc_class in ("SyntaxError", "IndentationError"):
+        return (exc_class, "Python parse error. Fix syntax before next iteration.")
+    if exc_class == "ImportError" or exc_class == "ModuleNotFoundError":
+        return (exc_class, "Unresolved import. Check module path and spelling.")
+    if exc_class == "NameError":
+        return ("NameError", "Undefined identifier. Likely a typo or missing assignment.")
+    if exc_class == "AssertionError":
+        return ("AssertionError", "Runtime invariant violated. Review the assertion's preconditions.")
+    return ("Other", f"{exc_class}: unexpected failure — read the traceback for next-step signal.")
+
+
+def run_diagnose(log_path: str = _DIAGNOSE_LOG, out_path: str = _DIAGNOSE_OUT) -> int:
+    import time
+    t0 = time.monotonic()
+    try:
+        log_text = open(log_path).read()
+    except OSError:
+        # Log missing — still append a 2-line stub so the wrapper's
+        # iteration-note pipeline sees *something*.
+        with open(out_path, "a") as f:
+            f.write(_DIAGNOSE_SEPARATOR + f"diagnose: log-missing\nnote: {log_path} not readable; nothing to classify.\n")
+        print("diagnose: log-missing", flush=True)
+        return 0
+
+    tb = _extract_last_traceback(log_text)
+    if tb is None:
+        with open(out_path, "a") as f:
+            f.write(_DIAGNOSE_SEPARATOR + f"diagnose: no-traceback\nnote: eval log contains no Python traceback; crash cause unknown from log alone.\n")
+        print("diagnose: no-traceback", flush=True)
+        return 0
+
+    tb_redacted = _redact_oracle(tb)
+    exc_class, exc_msg, frames = _parse_traceback(tb_redacted)
+    category, action_note = _classify(exc_class, exc_msg)
+
+    block = [f"diagnose: {category}",
+             f"exception: {exc_class}: {exc_msg}"[:300],
+             "top_frames:"]
+    for fr in frames:
+        block.append(f"  {fr}")
+    block.append(f"note: {action_note}")
+
+    with open(out_path, "a") as f:
+        f.write(_DIAGNOSE_SEPARATOR + "\n".join(block) + "\n")
+
+    elapsed = time.monotonic() - t0
+    if elapsed > _DIAGNOSE_TIME_BUDGET_S:
+        print(f"diagnose: {category} (warning: {elapsed:.2f}s exceeds {_DIAGNOSE_TIME_BUDGET_S}s budget)",
+              file=sys.stderr)
+    print(f"diagnose: {category}", flush=True)
+    return 0
+
+
+def _diagnose_self_test() -> int:
+    """Two synthetic cases pinning the denylist regex behavior."""
+    import tempfile
+    failures: list[str] = []
+
+    # Case A: oracle tokens MUST be stripped.
+    case_a_log = """\
+Traceback (most recent call last):
+  File "/a/b/evaluate.py", line 42, in run
+    assert per_dataset["singing"] > 0, f"combined=0.47 splice_f1=0.33 clean_score=0.91 combined_singing=0.55"
+AssertionError: combined=0.47 splice_f1=0.33 clean_score=0.91 combined_singing=0.55
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as lf, \
+         tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as of:
+        lf.write(case_a_log); lf.flush()
+        # Start with an existing claude-reflection so we can assert APPEND.
+        of.write("hypothesis: CLAUDE WROTE THIS FIRST\n"); of.flush()
+        a_log, a_out = lf.name, of.name
+    run_diagnose(a_log, a_out)
+    out_text = open(a_out).read()
+    for tok in ("combined=0.47", "splice_f1=0.33", "clean_score=0.91", "combined_singing=0.55"):
+        if tok in out_text:
+            failures.append(f"Case A: oracle token '{tok}' not redacted")
+    for tok in ("combined=<REDACTED>", "splice_f1=<REDACTED>",
+                "clean_score=<REDACTED>", "combined_singing=<REDACTED>"):
+        if tok not in out_text:
+            failures.append(f"Case A: expected redacted marker '{tok}' missing")
+    if "CLAUDE WROTE THIS FIRST" not in out_text:
+        failures.append("Case A: APPEND broken — claude's prior reflection lost")
+    if "[auto-diagnosis]" not in out_text:
+        failures.append("Case A: missing [auto-diagnosis] separator")
+
+    # Case B: legitimate error floats MUST survive.
+    case_b_log = """\
+Traceback (most recent call last):
+  File "/c/d/detector.py", line 100, in check
+    assert x < 0.5
+AssertionError: x=1.5 not in (0, 1)
+
+Traceback (most recent call last):
+  File "/c/d/detector.py", line 200, in gate
+    raise ValueError(f"threshold=0.72 outside [0, 1]")
+ValueError: threshold=0.72 outside [0, 1]
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".log", delete=False) as lf, \
+         tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as of:
+        lf.write(case_b_log); lf.flush()
+        b_log, b_out = lf.name, of.name
+    run_diagnose(b_log, b_out)
+    out_text_b = open(b_out).read()
+    for tok in ("threshold=0.72",):  # last traceback's message
+        if tok not in out_text_b:
+            failures.append(f"Case B: legitimate float '{tok}' incorrectly stripped")
+
+    if failures:
+        print("--self-test FAILURES:")
+        for f in failures:
+            print(f"  - {f}")
+        return 1
+    print("--self-test: PASS (Case A oracle-strip + Case B float-preserve + APPEND)")
+    return 0
+
+
 def main():
+    # --diagnose / --self-test short-circuit the original argparse so the
+    # wrapper's existing `--agent-name X --reported-combined Y` call shape
+    # is unaffected.
+    if "--diagnose" in sys.argv:
+        sys.exit(run_diagnose())
+    if "--self-test" in sys.argv:
+        sys.exit(_diagnose_self_test())
+
     parser = argparse.ArgumentParser(description="Verify agent work")
     parser.add_argument("--agent-name", required=True, help="Name of the agent being verified")
     parser.add_argument("--reported-combined", required=True, type=float, help="Combined score reported by agent")

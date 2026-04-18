@@ -614,6 +614,7 @@ except Exception:
             set -e
             if [ $_retrain_rc -ne 0 ]; then
                 echo "$(date -Iseconds) AUTO-RETRAIN FAILED (rc=$_retrain_rc). Treating as verify-fail." >> "$LOG_FILE"
+                uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
                 _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
@@ -647,6 +648,7 @@ except Exception:
         if [ $eval_exit -ne 0 ]; then
             echo "$(date -Iseconds) evaluate.py exited $eval_exit. Reverting hypothesis (last 20 lines of eval log):" >> "$LOG_FILE"
             tail -20 "$PROJECT_DIR/.omc/last_eval.log" >> "$LOG_FILE" 2>&1 || true
+            uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
@@ -658,6 +660,7 @@ except Exception:
         reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
         if [ -z "$reported" ]; then
             echo "$(date -Iseconds) Could not parse combined from RESULTS_TSV. Reverting." >> "$LOG_FILE"
+            uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
