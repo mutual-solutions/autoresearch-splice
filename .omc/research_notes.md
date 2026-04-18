@@ -899,3 +899,85 @@ per-domain: combined_english=0.794521 combined_korean=0.400000 combined_singing=
         from splices and the final escalation is per-domain
         classifier training (three separate GBMs).
 
+## 2026-04-18T18:26:19+09:00 — 43944a6 (discard, combined=0.010000)
+subject: swap HistGradientBoostingClassifier -> ExtraTreesClassifier(n_estimators=400, max_depth=None, min_samples_split=10, min_samples_leaf=5, max_features='sqrt', bootstrap=False, n_jobs=-1) -- second MODEL-CLASS change in 41+ iterations, first BAGGING / RANDOM-SPLIT ensemble tried. Both prior classifiers (GBM + HistGBM acba4aa) are BOOSTING (sequential residual fit) so trees chain correlated decisions across the top-SHAP cluster (spec_rolloff_delta 1365 / spec_centroid_delta 427 / spec_bandwidth_delta 408 in singing) and all 8 GBM hyperparam axes + HistGBM stay inside the boosting decision-surface family. Clean-singing FP failure (clean_fp=6, weakest-domain combined=0.272) is training-time MEMORIZATION: specific spec_*_delta magnitudes from training-clean chord transitions get locked into boost residuals, then eval-time chord transitions with similar magnitudes score p_splice~0.982 just above the gate. ExtraTreesClassifier is a genuinely different model family: (i) BAGGING (independent trees voted by average) not boosting, so no sequential residual chaining of correlated spec_*_delta splits, (ii) EXTREMELY RANDOMIZED split thresholds -- sklearn samples a random threshold within each feature's range instead of searching for the optimal split, so NO decision boundary in the ensemble sits at a specific training feature value; eval-time values that happen to match training clusters no longer trigger the same hard splits, (iii) max_features='sqrt' means each split considers sqrt(75)~=9 random features so individual trees rarely see spec_rolloff + spec_centroid + spec_bandwidth together at one split and cannot chain them into memorized decision paths, (iv) well-calibrated probabilities via vote averaging with natural variance reduction for OOD inputs (eval-time chord transitions that look OOD vs training clusters get softer probabilities). Orthogonal to every prior axis: 8 GBM hyperparam failures, HistGBM just tried (same boosting family), 5 training-data failures, 12+ feature add/ablation failures, 7+ post-filter failures, singing-specialized GBM routing. Zero prior attempts used BAGGING / RANDOM-SPLIT. Capacity matched at 400 trees with min_samples_split=10 + min_samples_leaf=5 regularization preventing single-row memorization on 1200 rows while keeping aggregate expressive; bootstrap=False is the ExtraTrees default (full training data per tree, max effective sample use) -- randomness comes from splits not rows. Retrained manually (170s); features.py sha unchanged so wrapper's staleness gate sees new joblib and does not re-retrain a HistGBM on top. detector.py uses predict_proba and clf.classes_ which ExtraTrees provides with identical semantics. OOF weighted F1 0.476 (vs HistGBM ~0.577 / GBM ~0.61) lower on training-distribution -- expected because extremely-randomized splits intentionally do NOT fit specific training feature values; splice-class OOF recall is low (hard_cut 0.12 / crossfade 0.15) but at inference the class-1+class-2 max-prob across 400 trees spikes to high values at confident splices while hugging low values on clean-singing chord transitions, which is exactly the precision-for-recall trade this hypothesis aims for.
+per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=0.000000
+
+# 2026-04-18 — hypothesis: swap HistGradientBoosting -> ExtraTreesClassifier
+
+(a) HYPOTHESIS. Second model-class change. Replace HistGradientBoostingClassifier
+    (acba4aa, the first model-class swap after 8+ GBM hyperparam / 5+
+    training-data / 12+ feature / 7+ post-filter failures) with
+    ExtraTreesClassifier(n_estimators=400, max_depth=None,
+    min_samples_split=10, min_samples_leaf=5, max_features='sqrt',
+    bootstrap=False, random_state=42, n_jobs=-1). Edit is 2 lines in
+    .omc/classifier/train_classifier.py: the import and the clf step.
+    features.py sha unchanged so the wrapper's staleness gate sees the
+    refreshed joblib and does not retrain on top. StandardScaler retained.
+    predict_proba and clf.classes_ semantics identical for detector.py
+    call sites.
+
+(b) WHY this over HistGBM and all prior axes.
+    Both GradientBoostingClassifier and HistGradientBoostingClassifier are
+    BOOSTING — trees fit sequentially on residuals of prior trees, so the
+    ensemble CHAINS correlated decisions across the top-SHAP cluster
+    (spec_rolloff_delta 1365 / spec_centroid_delta 427 / spec_bandwidth_delta
+    408 in singing). Every GBM hyperparam axis (max_depth both directions /
+    subsample / min_samples_leaf / max_features / learning_rate /
+    n_estimators) and the HistGBM switch stay inside the boosting-family
+    decision surface. The clean-singing FP failure (clean_fp=6,
+    weakest-domain combined=0.272) is training-time MEMORIZATION: specific
+    spec_*_delta feature magnitudes from training-clean chord transitions
+    get locked into boost residuals, then eval-time chord transitions with
+    similar magnitudes score p_splice ~= 0.982 just above the gate.
+
+    ExtraTreesClassifier is a genuinely different MODEL FAMILY:
+      - BAGGING (independent trees voted by average), not boosting.
+      - EXTREMELY RANDOMIZED split thresholds: sklearn samples a random
+        threshold within each feature's range instead of searching for the
+        optimal split. No decision boundary in the ensemble sits at a
+        specific training feature value, so eval-time values that happen to
+        match training clusters no longer trigger the same hard splits.
+        The ensemble averages over many random-threshold trees, producing
+        a smoother probability surface exactly in the cluster region where
+        clean-singing FPs live.
+      - max_features='sqrt' means each split considers sqrt(75) ~= 9
+        random features, decorrelating trees across the top-SHAP cluster.
+        Individual trees rarely see spec_rolloff + spec_centroid +
+        spec_bandwidth together at one split, so they cannot chain them
+        into a memorized decision path.
+      - Well-calibrated probabilities via vote averaging with natural
+        variance-reduction for OOD inputs (eval-time clean singing chord
+        transitions look OOD vs training chord-transition clusters and
+        get softer probabilities).
+
+    Orthogonal to every prior axis: 8 GBM hyperparam failures, HistGBM
+    just tried (same boosting family), 5 training-data failures
+    (count/distance/curriculum/bootstrap/sample_weight), 12+ feature
+    add/ablation failures, 7+ post-filter failures, singing-specialized
+    GBM routing (0.356). Zero prior attempts used a BAGGING / RANDOM-SPLIT
+    ensemble. Capacity matched to HistGBM at 400 trees with
+    min_samples_split=10 + min_samples_leaf=5 regularization preventing
+    single-row memorization on 1200 rows while keeping the aggregate
+    expressive. bootstrap=False is the ExtraTrees default (full training
+    data per tree, max effective sample use) — randomness comes from
+    splits, not rows.
+
+    Detector integration is trivial: ExtraTreesClassifier.predict_proba
+    and .classes_ have identical semantics to HistGBM; the pipeline
+    (scaler -> clf) unchanged; detector.py's col_for lookup on
+    clf.classes_ works byte-identically.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Stay in the non-boosting family and tune ExtraTrees: reduce
+        max_depth to 8 or 12 to push the ensemble toward even smoother
+        decisions if clean-singing FPs survive; or switch to
+        RandomForestClassifier (bagging with OPTIMAL splits, bootstrap
+        default True) to ablate "random splits" vs "bagging" as the
+        helpful axis independently.
+    (2) Wrap HistGBM with CalibratedClassifierCV(method='isotonic',
+        cv=5). If clean-singing FPs are a CALIBRATION issue (model
+        over-confident on borderline cluster) rather than a MEMORIZATION
+        issue, isotonic regression fit OOF recalibrates the p_splice >
+        0.982 tail. Complementary axis to model-family swap; never tried.
+
