@@ -3,6 +3,16 @@
 Always includes the 4 DSP scores in top_features so the forensic context
 is preserved even when they are not in the top-k by |SHAP|. Falls back to
 `feature_importances_` * |x| when the `shap` package is absent.
+
+Robust-to-classifier-swap: not every classifier exposes
+`feature_importances_` (HistGradientBoostingClassifier, ExtraTrees with
+bootstrap=False and random splits, calibrated ensembles wrapping opaque
+base estimators). Falling through to that attribute unconditionally
+raises AttributeError which evaluate.py catches as a per-domain ERROR —
+silently collapsing reported combined to the 0.01 GM floor and making
+classifier-swap hypotheses look catastrophic when they were actually
+producing valid detections. Guarded fallback uses uniform weights when
+neither SHAP nor feature_importances_ is available.
 """
 
 from __future__ import annotations
@@ -55,9 +65,23 @@ def _shap_values_per_sample(model, X: np.ndarray):
         _diag("INFO", "shap", "using_importance_fallback",
               cause="tree_explainer_failed", error=str(e))
 
-    imp = np.asarray(clf.feature_importances_, dtype=np.float64)
+    try:
+        imp = np.asarray(clf.feature_importances_, dtype=np.float64)
+        strategy = "importance_weighted_magnitude"
+    except AttributeError:
+        # Classifier exposes neither a TreeExplainer-compatible booster
+        # nor feature_importances_ (HistGradientBoostingClassifier,
+        # bootstrap-free ExtraTreesClassifier, some CalibratedClassifierCV
+        # wrappings). Use uniform weights so |X| magnitude alone drives
+        # the ranking — informative enough for top-k picks and prevents
+        # the silent collapse-to-0.01-floor failure.
+        _diag("WARN", "shap", "no_feature_importances",
+              classifier_type=type(clf).__name__,
+              fallback="uniform_weights")
+        imp = np.ones(X.shape[1], dtype=np.float64)
+        strategy = "uniform_weighted_magnitude"
     X_arr = np.asarray(X, dtype=np.float64)
-    return np.abs(X_arr) * imp[np.newaxis, :], "importance_weighted_magnitude"
+    return np.abs(X_arr) * imp[np.newaxis, :], strategy
 
 
 def _pick_top_features(

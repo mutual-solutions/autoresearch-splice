@@ -7,6 +7,7 @@ Usage: uv run python .omc/coordination/verify_agent.py --agent-name <name> --rep
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -51,7 +52,19 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
 
 
 def check_git_diff_audit() -> tuple[str, str]:
-    """Check that no protected files are modified."""
+    """Check that no protected files are modified.
+
+    Covers THREE diff surfaces:
+      (a) unstaged working-tree changes
+      (b) staged-but-uncommitted changes
+      (c) COMMITTED changes since the wrapper's captured head_before
+          (US-511: catches the case where the agent committed a
+          protected-file edit inside its hypothesis commit — invisible
+          to (a)+(b) after commit).
+    head_before read from env OMC_HEAD_BEFORE (wrapper exports it).
+    Missing env → fall back to (a)+(b) only with a WARN; wrapper should
+    always export it for hypothesis-iteration verify calls.
+    """
     try:
         unstaged = subprocess.run(
             ["git", "diff", "--name-only"],
@@ -64,7 +77,18 @@ def check_git_diff_audit() -> tuple[str, str]:
     except Exception as e:
         return "FAIL", f"git error: {e}"
 
-    changed = set(unstaged + staged)
+    committed: list[str] = []
+    head_before = os.environ.get("OMC_HEAD_BEFORE", "").strip()
+    if head_before:
+        try:
+            committed = subprocess.run(
+                ["git", "diff", "--name-only", f"{head_before}..HEAD"],
+                capture_output=True, text=True, timeout=10,
+            ).stdout.strip().splitlines()
+        except Exception as e:
+            return "FAIL", f"git commit-level diff error: {e}"
+
+    changed = set(unstaged + staged + committed)
     changed.discard("")
 
     violations = []
@@ -282,8 +306,61 @@ def run_diagnose(log_path: str = _DIAGNOSE_LOG, out_path: str = _DIAGNOSE_OUT) -
 
     tb = _extract_last_traceback(log_text)
     if tb is None:
+        # US-510: no Python traceback — but evaluate.py's exception
+        # handler may have absorbed per-domain failures, emitting
+        # `combined_<domain>: ERROR (ExceptionClass: message)` lines
+        # and collapsing the aggregate to the 0.01 GM floor. Root
+        # cause of 4+ consecutive catastrophic discards this session
+        # (HistGBM AttributeError on feature_importances_). Surface
+        # these along with any DIAG WARN/ERROR and the RESULTS_TSV.
+        silent_errs = []
+        for line in log_text.splitlines():
+            m = re.match(r"\s*combined_([a-z]+):\s*ERROR\s*\((.*)\)\s*$", line)
+            if m:
+                silent_errs.append((m.group(1), _redact_oracle(m.group(2))))
+        diag_lines = [
+            ln for ln in log_text.splitlines()
+            if re.search(r"\bDIAG\b.*(WARN|ERROR)", ln)
+        ][-3:]
+        tsv_line = ""
+        for ln in log_text.splitlines():
+            if ln.startswith("RESULTS_TSV: "):
+                tsv_line = _redact_oracle(ln)
+
+        if silent_errs:
+            block = ["diagnose: silent-per-domain-exception",
+                     f"count: {len(silent_errs)} domain(s) with ERROR"]
+            for dom, msg in silent_errs:
+                block.append(f"  {dom}: {msg[:200]}")
+            if diag_lines:
+                block.append("diag_tail:")
+                for d in diag_lines:
+                    block.append(f"  {_redact_oracle(d)[:160]}")
+            if tsv_line:
+                block.append(f"tsv: {tsv_line}")
+            block.append(
+                "note: per-domain ERROR means evaluate.py's exception "
+                "handler absorbed the failure; the aggregate combined "
+                "collapsed to the GM floor (0.01). Your hypothesis "
+                "likely worked — the SHAP/scoring code path broke. "
+                "Inspect the exception class + message to locate the "
+                "interface break (classifier attribute, shape mismatch, "
+                "missing method).")
+            with open(out_path, "a") as f:
+                f.write(_DIAGNOSE_SEPARATOR + "\n".join(block) + "\n")
+            print(f"diagnose: silent-per-domain-exception ({len(silent_errs)} domain)",
+                  flush=True)
+            return 0
+
+        # No traceback, no per-domain ERROR — probably a normal
+        # non-improvement discard or rate-limit/backoff. Emit terse stub.
         with open(out_path, "a") as f:
-            f.write(_DIAGNOSE_SEPARATOR + f"diagnose: no-traceback\nnote: eval log contains no Python traceback; crash cause unknown from log alone.\n")
+            f.write(_DIAGNOSE_SEPARATOR
+                    + "diagnose: no-traceback\n"
+                    + (f"tsv: {tsv_line}\n" if tsv_line else "")
+                    + "note: eval log has no Python traceback; likely a "
+                    + "normal discard. If combined collapsed below 0.05, "
+                    + "check wrapper log for PIPELINE_FAILURE lines.\n")
         print("diagnose: no-traceback", flush=True)
         return 0
 

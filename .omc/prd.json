@@ -283,6 +283,45 @@
       "note": "scripts/shap_shift.py compares top-3 features per domain between last 2 keep commits. Jaccard < 0.5 on any domain → STRUCTURAL SHIFT, else LOCAL KEEP. Wrapper invokes immediately after VERIFIED KEEP, appends single-line verdict to .omc/last_reflection.md as [auto] header so it enters the next iteration's research note."
     },
     {
+      "id": "US-510",
+      "title": "Surface all pipeline failure points (maintainer pass)",
+      "priority": 60,
+      "passes": false,
+      "acceptanceCriteria": [
+        "Root bug fixed: .omc/classifier/shap_report.py's fallback path no longer unconditionally touches `clf.feature_importances_` — guarded with try/except AttributeError, uniform-weights fallback when attribute missing. This was the cause of 4+ consecutive combined=0.010 discards (HistGBM produced singing=0.20/korean=0.31/english=0.60 but SHAP export crashed and evaluate.py zeroed per-domain scores).",
+        "verify_agent.py --diagnose handles non-crash logs: when no Python traceback but `combined_<domain>: ERROR (...)` lines exist, surface those + last 3 DIAG WARN/ERROR lines + the RESULTS_TSV into .omc/last_reflection.md. Previously emitted '(no-traceback)' stub — too terse.",
+        "run_autoresearch.sh's discard branch invokes `--diagnose` on CATASTROPHIC discards (combined ≤ 0.05), not just on crashes. Precise gate: normal drops (0.45 < 0.47) do NOT fire diagnose.",
+        "Silent `|| true` swallows on shap_rollup.py / tunable_frontier.py / notebook_digest.py / shap_shift.py replaced with `|| echo '<ts> PIPELINE_FAILURE: <tool> rc=$?'` — tools still non-blocking, failures no longer invisible.",
+        "Bash -n passes; verify_agent.py --self-test passes; scripts/phase_stats.py runs."
+      ]
+    },
+    {
+      "id": "US-511",
+      "title": "Commit-level protected-file audit (prevent silent agent writes)",
+      "priority": 61,
+      "passes": false,
+      "acceptanceCriteria": [
+        "verify_agent.py's check_git_diff_audit() inspects THREE diff surfaces now: unstaged, staged, AND committed-since-OMC_HEAD_BEFORE. Catches protected-file edits committed inside the hypothesis commit that are invisible to the working-tree diff.",
+        "Wrapper exports OMC_HEAD_BEFORE=$head_before when invoking verify_agent for strict-improvement path.",
+        "Protected list unchanged: evaluate.py, program.md, data/eval/*, data/test/*, manifest.json, preflight.py.",
+        "Synthetic test: a commit touching evaluate.py causes audit to return FAIL. Clean iteration still returns PASS."
+      ]
+    },
+    {
+      "id": "US-512",
+      "title": "SHAP-DELTA block in autoresearch prompt",
+      "priority": 62,
+      "passes": false,
+      "note": "QUEUED — defer until after US-510 ships. Per-feature SHAP change between last 2 kept classifiers would surface 'feature got 0 SHAP after addition' signal (classifier ignored it). Moderate value; primary blocker (catastrophic-floor opacity) is US-510."
+    },
+    {
+      "id": "US-513",
+      "title": "DEFERRED: sample_eval_misses (eval-oracle-isolation tension)",
+      "priority": 63,
+      "passes": false,
+      "note": "DEFERRED — NOT to implement as proposed. Tension with US-504 (eval corpus isolation is load-bearing). Train-audio proxy at same time-positions is wrong samples; extracting eval snippets leaks the oracle; numeric feature-value dumps add no info beyond existing SHAP. Redesign needed before any ship."
+    },
+    {
       "id": "US-509",
       "title": "Per-phase iteration timing instrumentation",
       "priority": 59,

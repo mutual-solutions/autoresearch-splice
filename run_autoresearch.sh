@@ -153,7 +153,8 @@ _append_note() {
     fi
 
     # Compact if we've grown past the threshold.
-    uv run python "$PROJECT_DIR/scripts/notebook_digest.py" >> "$LOG_FILE" 2>&1 || true
+    uv run python "$PROJECT_DIR/scripts/notebook_digest.py" >> "$LOG_FILE" 2>&1 \
+        || echo "$(date -Iseconds) PIPELINE_FAILURE: notebook_digest.py rc=$?" >> "$LOG_FILE"
     if ! git diff --quiet "$notes" 2>/dev/null; then
         git add "$notes"
         git commit -m "note: digest compaction" >> "$LOG_FILE" 2>&1 || true
@@ -359,12 +360,14 @@ else:
         # SHAP rollup (US-500): biases claude's feature-engineering
         # hypotheses toward slots actually driving keeps, not guesses.
         uv run python "$PROJECT_DIR/scripts/shap_rollup.py" --keeps 5 \
-            >/dev/null 2>>"$LOG_FILE" || true
+            >/dev/null 2>>"$LOG_FILE" \
+            || echo "$(date -Iseconds) PIPELINE_FAILURE: shap_rollup.py rc=$?" >> "$LOG_FILE"
 
         # Per-tunable exploration frontier (US-506).
         uv run python "$PROJECT_DIR/scripts/tunable_frontier.py" \
             --output "$PROJECT_DIR/.omc/tunable_frontier.txt" \
-            >/dev/null 2>>"$LOG_FILE" || true
+            >/dev/null 2>>"$LOG_FILE" \
+            || echo "$(date -Iseconds) PIPELINE_FAILURE: tunable_frontier.py rc=$?" >> "$LOG_FILE"
         tunable_frontier_block=""
         if [ -f "$PROJECT_DIR/.omc/tunable_frontier.txt" ]; then
             tunable_frontier_block=$(cat "$PROJECT_DIR/.omc/tunable_frontier.txt")
@@ -753,6 +756,17 @@ except Exception:
 
         if [ "$strictly_better" != "1" ]; then
             echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
+            # US-510: catastrophic-floor discard (combined ≤ 0.05) invokes
+            # --diagnose so per-domain ERROR lines (e.g. classifier-interface
+            # breaks that collapse the aggregate to the GM floor 0.01)
+            # reach claude via .omc/last_reflection.md. Normal discards
+            # (0.45 < 0.47) are routine research signal; skip diagnose.
+            _catastrophic=$(python3 -c "print(1 if float('$reported') <= 0.05 else 0)" 2>/dev/null || echo 0)
+            if [ "$_catastrophic" = "1" ]; then
+                echo "$(date -Iseconds) CATASTROPHIC-DISCARD: combined=$reported at or near GM floor — invoking --diagnose" >> "$LOG_FILE"
+                uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 \
+                    || echo "$(date -Iseconds) PIPELINE_FAILURE: --diagnose rc=$?" >> "$LOG_FILE"
+            fi
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _phase_start note; _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -767,7 +781,11 @@ except Exception:
         echo "$(date -Iseconds) Strict improvement (combined=$reported > $current_best). Running verify_agent..." >> "$LOG_FILE"
         _phase_start verify
         set +e
-        verify_output=$(uv run python .omc/coordination/verify_agent.py \
+        # US-511: export OMC_HEAD_BEFORE so verify_agent's diff audit
+        # catches committed protected-file edits (invisible to working-
+        # tree / staged diffs after the agent's commit).
+        verify_output=$(OMC_HEAD_BEFORE="$head_before" \
+            uv run python .omc/coordination/verify_agent.py \
             --agent-name autoresearch \
             --reported-combined "$reported" 2>&1)
         verify_exit=$?
@@ -884,7 +902,13 @@ json.dump(data, open(vf, 'w'), indent=2)
         # SHAP shift sentinel (US-507): classify the new keep as
         # STRUCTURAL or LOCAL so the next iteration's research note
         # picks up the verdict in its reflection preamble.
-        shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>/dev/null | head -1)
+        set +e
+        shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>>"$LOG_FILE" | head -1)
+        _shift_rc=$?
+        set -e
+        if [ $_shift_rc -ne 0 ]; then
+            echo "$(date -Iseconds) PIPELINE_FAILURE: shap_shift.py rc=$_shift_rc" >> "$LOG_FILE"
+        fi
         if [ -n "$shap_shift_line" ]; then
             echo "$(date -Iseconds) $shap_shift_line" >> "$LOG_FILE"
             echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
