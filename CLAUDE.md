@@ -60,3 +60,65 @@ It runs automatically as part of verify_agent.py.
 
 Baseline metrics are stored in `.omc/coordination/baseline_metrics.json`.
 Anomaly detection flags deltas > 0.15 from baseline combined score.
+
+## Retest (US-514)
+
+After a pipeline-bug fix, discards from the affected window can be
+systematically replayed against the fixed evaluator. This recovers
+legitimate hypotheses that were discarded for the wrong reason. The loop
+MUST be stopped before retest starts — retest shares the eval corpus
+lifecycle and the `baseline_metrics.json` writer with the loop.
+
+Operator workflow:
+
+1. Stop the loop:
+   ```
+   ./run_autoresearch.sh stop
+   ```
+2. Decrypt the eval corpus into a `/tmp` directory and export
+   `OMC_EVAL_DATA_ROOT`. Retest does **not** re-decrypt; the operator
+   owns the decrypt lifecycle.
+   ```
+   uv run python scripts/eval_crypto.py decrypt --keep
+   export OMC_EVAL_DATA_ROOT=<path-from-decrypt-tail>
+   ```
+3. Dry-run first to enumerate candidates and predicted deltas. <5 s;
+   writes `.omc/retest-report.md`; no mutation.
+   ```
+   uv run python .omc/coordination/verify_agent.py --retest <from-sha> --dry-run
+   ```
+4. Live run when the preview looks right. Replays discards in
+   chronological order against a disk-sourced rolling baseline and
+   invokes `run_autoresearch.sh _keep_path` on any real improvement.
+   ```
+   uv run python .omc/coordination/verify_agent.py --retest <from-sha> [--limit N]
+   ```
+
+Outcomes (in the report): `recovered`, `still-lower`, `conflict`,
+`eval-crash`, `retrain-crash`, `verify-fail`, `missing`,
+`corpus-purged`, `dry-run-skipped`.
+
+## Retest sentinel
+
+Between the main-tree `git cherry-pick` and the baseline commit,
+`--retest` writes `.omc/retest-in-progress` as a SIGKILL / OOM / crash
+guard. The wrapper's `start`, `_loop`, and `_loop_restart` refuse to
+run while the sentinel exists so a partial recovery cannot be
+overwritten by a fresh hypothesis iteration.
+
+If you find the sentinel on a stopped tree:
+
+1. Read `.omc/retest-report.md` for the last attempted candidate.
+2. `git log --oneline -10` — check whether the cherry-pick landed, the
+   baseline commit landed, or neither.
+3. If the cherry-pick is partial or wrong, `git reset --hard ORIG_HEAD`
+   (the cherry-pick sets ORIG_HEAD) to roll it back.
+4. Remove the sentinel so the loop can resume:
+   ```
+   rm -f .omc/retest-in-progress
+   ```
+
+Retest does NOT auto-delete the sentinel on abnormal exits — that
+would defeat the SIGKILL hole. The sentinel is only removed on the
+one happy path inside `_try_recover` after the `baseline:` commit is
+confirmed to have landed.
