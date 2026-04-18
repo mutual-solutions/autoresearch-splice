@@ -778,3 +778,55 @@ per-domain: combined_english=0.756098 combined_korean=0.500000 combined_singing=
         to three classifiers (singing / korean / english) with a
         more nuanced speech-vs-speech scalar.
 
+## 2026-04-18T17:49:50+09:00 — 6599055 (discard, combined=0.456093)
+subject: global-half spectral-centroid divergence post-filter
+per-domain: combined_english=0.740741 combined_korean=0.483871 combined_singing=0.264706
+
+(a) HYPOTHESIS. Pure detector.py post-dedupe filter: global-half spectral-centroid
+    divergence. Compute mean spectral_centroid over the WHOLE PRE-EMIT HALF
+    [0, t_emit] and WHOLE POST-EMIT HALF [t_emit, dur]. If
+    |cent_pre - cent_post| / global_cent_mean < GLOBAL_HALF_MIN_DIVERGENCE=0.03,
+    the file's two halves have essentially the same spectral profile — consistent
+    with a chord transition inside a single song — drop the emit. Otherwise keep
+    (real splice changed source → halves diverge). New constants
+    GLOBAL_HALF_MIN_DIVERGENCE=0.03 and GLOBAL_HALF_MIN_DUR_S=5.0 (skip filter
+    if either half <5s so noisy means don't cause false keeps). Single
+    librosa.feature.spectral_centroid call on full audio per file (~100ms),
+    per-emit filter is pure numpy means on the frame series. No retrain, no
+    feature change.
+
+(b) WHY this over the 35+ failures. EVERY prior post-filter used LOCAL context:
+    plateau (±stride), class-margin (per-emit classifier), onset-local-pct
+    (per-emit DSP), persistence (±6s far window), tonality-conditioned threshold
+    (±2s flatness), asymmetric-per-class threshold (per-emit proba), global
+    singing-routing via file-flatness (architectural). Feature additions mostly
+    used ±2s windows (spec/mfcc/hpss_perc/hf), two used ±4–±8s
+    (local_novelty, chroma_key_cosine). NONE used a FULL-FILE-SCALE divergence
+    check between pre-emit half and post-emit half. This is the longest time
+    scale possible for the filter and is structurally orthogonal to everything
+    tried. The theory is tight: clean files have zero splices, so both halves
+    are the same song and cent_pre ≈ cent_post ≈ global_mean → filter DROPS the
+    FP. Spliced files have one splice, so pre-half is source A and post-half is
+    source B with different mic/room/singer/song mix → cent_pre ≠ cent_post →
+    filter KEEPS the TP. English/korean already have clean_fp=0 so filter has
+    no negative effect on their clean scores; singing clean_fp=6 is the target.
+    Speech splices change speakers (different pitch, different formants) so
+    TPs have easily-distinguishable halves. Risk-bounded: MIN_DUR_S=5.0 skip
+    guards against noisy short-half means, 0.03 threshold is ~1.5x the typical
+    same-song half-to-half ratio (estimated ~0.01-0.02) so it's a gentle cut
+    that only bites on visibly-stable files. Cost: ~6s added to 243s/300s
+    headroom.
+
+(c) IF THIS FAILS. Two directions.
+    (1) Use MULTIPLE global statistics (centroid + rolloff + MFCC-1) and
+        require at least 2 of them to agree on divergence for keep — this
+        tightens the drop criterion if a single-scalar is too noisy.
+    (2) Switch to BOOTSTRAP-ADVERSARIAL training in train_classifier.py:
+        train once, predict on all clean training files at stride=0.12,
+        collect positions where p_splice > 0.5 (the classifier's own hard
+        negatives), add those exact positions as not_splice rows, retrain.
+        This targets the failure mode at training time instead of at detection
+        time. It's the directly-untried bootstrapped variant of the
+        uniform-random NEG_PER_CLEAN and onset-based hard-negative attempts
+        that both failed.
+
