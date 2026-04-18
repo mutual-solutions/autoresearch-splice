@@ -573,3 +573,80 @@ per-domain: combined_english=0.883117 combined_korean=0.492308 combined_singing=
     domain detection is the explicit next direction from the
     HPSS-percussive post-mortem and has never been attempted.
 
+## 2026-04-18T17:02:54+09:00 — 6ba5950 (discard, combined=0.454984)
+subject: persistence post-filter on spec_rolloff — drop GBM emits whose near-window shift (|d_near|>200Hz) does NOT persist into the +4..+6s far window (|d_far|<0.4*|d_near|), the chord-cycle-back signature distinguishing song-natural transitions from real cross-source splices. Pure detector.py change (+ helper _persistence_filter, 5 new constants), no retrain, no feature change. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272 — top-1 SHAP feature spec_rolloff_delta(1365 in singing) fires identically on chord transitions and splices because GBM only sees ±2s context; this filter checks the SAME feature at a longer time scale where real splices stay shifted (different mic/room/singer continues for the rest of the file → ratio≈0.7-1.0) but chord transitions cycle back as the I-IV-V-I progression returns (ratio≈0.0-0.3). Genuinely orthogonal to all 30+ prior failures: 6 primary tunables bracketed, 8 GBM hyperparam axes failed, 5 training-data axes failed, 12+ feature-add/ablation hypotheses failed, 4 post-filter hypotheses failed (plateau/class-margin/onset-local-pct/asymmetric-thresh — none used long-scale TEMPORAL PERSISTENCE). Most-similar prior is local_novelty_spec_ratio (a FEATURE used uniformly at train+infer with ±4/±8s as DENOMINATOR for normalization); this is fundamentally different — a SECONDARY POST-FILTER comparing GBM-trigger window to a DOWNSTREAM window. Conservative thresholds (200 Hz floor on d_near, 0.4 ratio) target only clearly transient shifts. Smoke test on data/train/singing/tier1/splice_t1_001.wav (splice at t=12.3, dur=30): d_near=-1539 d_far=-1104 ratio=0.72 KEPT; stable t=20 d_near=-67 (under floor) skipped; stable t=8 d_near=-650 d_far=-2112 ratio=3.2 KEPT (direction continues — not a chord cycle-back). Edge-window emits skipped (kept) when context extends past file bounds. Cost: 3 librosa.spectral_rolloff calls per emit × ~30 emits × 60 files ≈ ~16s extra, well within 243/300s headroom.
+per-domain: combined_english=0.727273 combined_korean=0.483871 combined_singing=0.267647
+
+# 2026-04-18 — hypothesis: persistence post-filter on spec_rolloff
+
+(a) HYPOTHESIS. Add a NEW POST-FILTER lane in detector.py that runs
+    AFTER GBM dedupe. For each surviving emit at file-global time t,
+    compute spec_rolloff over three windows on the FILE-LEVEL audio:
+        pre   = mean(spec_rolloff over [t-2.0, t])
+        near  = mean(spec_rolloff over [t,    t+2.0])     # what GBM saw
+        far   = mean(spec_rolloff over [t+4.0, t+6.0])    # 4s post-skip
+    delta_near = near - pre
+    delta_far  = far  - pre
+    Drop the emit if |delta_near| > 200 Hz AND
+                     |delta_far|  < 0.4 * |delta_near|
+    (i.e. the spectral shift the GBM keyed on did NOT persist 4-6s
+    later — it cycled back, signature of a chord transition not a
+    splice). New constants SECONDARY_PERSISTENCE_RATIO=0.4,
+    SECONDARY_DELTA_FLOOR_HZ=200, SECONDARY_NEAR_S=2.0,
+    SECONDARY_FAR_OFFSET_S=4.0, SECONDARY_FAR_DUR_S=2.0. Skip the
+    filter (keep emit) if pre/far windows extend past file edges. Pure
+    detector.py change, no retrain, no feature change.
+
+(b) WHY this over recent failures. The ENTIRE failure mode at singing
+    clean_fp=6 is: spec_rolloff_delta (top-1 SHAP across all 3 domains,
+    1365 in singing) fires at song-natural CHORD TRANSITIONS in clean
+    singing files at magnitudes indistinguishable from real splices.
+    Every prior post-filter axis was tried and failed:
+      * plateau-filter (consecutive hits at SAME scale)         verify-fail
+      * class-margin filter (within-splice probability balance) verify-fail
+      * onset-local-pct filter (DSP onset envelope check)       discard 0.285
+      * asymmetric per-class thresholds                         discard 0.427
+    NONE of them used a TEMPORAL-PERSISTENCE check at a DIFFERENT scale.
+    Real splices and chord transitions have a structural difference at
+    longer time scales:
+      * real splice: post-clip is from a DIFFERENT source (different
+        song / mic / room / singer), so spec_rolloff stays shifted
+        for the entire remainder of the file → |delta_far| ≈ |delta_near|
+      * chord transition: same song / mic / room / singer, the next
+        chord briefly shifts spec_rolloff but the I-IV-V-I cycle (or
+        any progression) brings the spectrum back within 4-6s →
+        |delta_far| ≪ |delta_near|, often near 0 with sign flip
+    Genuinely orthogonal to all 30+ prior failures:
+      * 6 primary tunables (THRESHOLD/MIN_SEP/STRIDE/STEP/WINDOW/EDGE)
+        bracketed
+      * 8 GBM hyperparam axes failed
+      * 5 training-data-composition axes failed
+      * 12+ feature-addition / ablation hypotheses failed
+      * 4 post-processing filter hypotheses failed (none used long-scale
+        temporal persistence)
+    Most-similar prior was local_novelty_spec_ratio (a FEATURE, used at
+    train and inference uniformly, where ±4s/±8s neighborhood sets a
+    DENOMINATOR for normalization). This is fundamentally different —
+    a SECONDARY POST-FILTER that compares the GBM-trigger window to a
+    DOWNSTREAM far window and rejects only when persistence is absent.
+    Conservative thresholds (200 Hz floor on delta_near, 0.4 ratio)
+    target only the most clearly transient shifts; real splices
+    typically produce delta_far ≥ 0.7 * delta_near. Cost: 3
+    librosa.feature.spectral_rolloff calls per emit × ~30 emits × 60
+    files ≈ 5400 calls × ~3ms = ~16 s extra, well within 243/300 s
+    headroom.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Loosen / tighten the ratio: try 0.3 (more permissive) if
+        english/korean recall took collateral damage, or try 0.6 if
+        the 0.4 cutoff didn't bite hard enough on singing FPs.
+    (2) Switch to a DIFFERENT feature for persistence: try
+        spec_centroid (singing #2 SHAP) instead of spec_rolloff, or
+        require persistence on EITHER feature (logical OR), or require
+        BOTH (logical AND) for a stricter filter. If neither
+        persistence-feature-axis works, the singing FPs aren't from
+        transient shifts → escalate to per-domain GBM routing
+        (compute audio scalar like voicing fraction / harmonic ratio
+        at the top of detect_splices, dispatch to one of N
+        per-domain-trained classifiers).
+
