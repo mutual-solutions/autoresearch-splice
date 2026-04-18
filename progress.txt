@@ -1,0 +1,28 @@
+autoresearch-splice — progress log
+==================================
+
+
+2026-04-18 — Ralph session: autopilot eval-isolation follow-ups
+----------------------------------------------------------------
+- Shipped inverted flow (commit fa61f05): wrapper owns evaluate.py;
+  claude's env has OMC_EVAL_DATA_ROOT stripped so it can't locate
+  the decrypted eval tree. Short-circuits accidental reads of the
+  oracle by the hypothesis-forming subprocess.
+- Eval corpus encrypted (scripts/eval_crypto.py setup) to
+  data/eval.tar.gz.enc; `security`-CLI-backed AES-256-GCM key in
+  Keychain service 'autoresearch-eval-aes-key' (no biometric — just
+  isolation from child processes).
+- Baseline restore of orphan acc0467 (GBM_MIN_SEP_S 3.0→3.25) at
+  commit 5276b66. Wrapper's first real iteration (8717fc5) re-proposed
+  the same change through the proper verify channel.
+- US-500: scripts/shap_rollup.py aggregates SHAP |shap| per feature
+  across last N keeps, per domain. Wrapper injects compact top-6 block
+  into claude's prompt so feature-engineering hypotheses are grounded
+  in what's actually driving predictions. spec_rolloff_delta dominates
+  all 3 domains; singing is unusually dependent on spec_bandwidth_delta.
+- US-501: deep orphan detector walks 20 commits back at loop start,
+  warns (no auto-revert) when hypothesis commits lack paired baseline
+  AND aren't in results.tsv. Filters pre-TSV-tracker history via
+  earliest-tracked-SHA cutoff.
+- Monitor scheduled on .omc/autoresearch.log for iteration boundaries,
+  keep/discard decisions, crashes, API-limit events.

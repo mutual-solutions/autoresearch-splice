@@ -20,6 +20,53 @@ _eval_cleanup() {
     fi
 }
 
+# Flag `hypothesis:` commits in the last N that lack a paired `baseline:`
+# in the next 3 commits AND are missing from results.tsv. Warn-only:
+# auto-reverting deep history would risk losing human-authored
+# maintenance commits layered on top (baseline-restore, refactors, docs).
+_detect_deep_orphans() {
+    local depth="${1:-20}"
+    local results_tsv="$PROJECT_DIR/results.tsv"
+    local branch_range="HEAD~${depth}..HEAD"
+    git rev-parse "HEAD~${depth}" >/dev/null 2>&1 || branch_range="HEAD"
+
+    # hypothesis: commits older than the earliest TSV row predate the
+    # tracker — flagging them is noise, not signal.
+    local cutoff_sha=""
+    if [ -f "$results_tsv" ]; then
+        cutoff_sha=$(awk -F'\t' 'NR>1 && $1 != "" && $1 != "NA" {print $1; exit}' "$results_tsv")
+    fi
+
+    local count=0
+    while IFS='|' read -r sha subject; do
+        case "$subject" in
+            hypothesis:*) ;;
+            *) continue ;;
+        esac
+        if [ -n "$cutoff_sha" ] \
+           && ! git merge-base --is-ancestor "$cutoff_sha" "$sha" 2>/dev/null; then
+            continue
+        fi
+        if git log --format=%s --reverse "${sha}..HEAD" 2>/dev/null \
+             | head -3 | grep -q "^baseline:"; then
+            continue
+        fi
+        if [ -f "$results_tsv" ] \
+           && grep -q "^${sha:0:7}	" "$results_tsv" 2>/dev/null; then
+            continue
+        fi
+        local msg="$(date -Iseconds) DEEP-ORPHAN: ${sha:0:7} \"${subject}\" — no paired baseline: in next 3 commits, no row in results.tsv"
+        echo "$msg" >&2
+        echo "$msg" >> "$LOG_FILE"
+        count=$((count + 1))
+    done < <(git log --format='%H|%s' "$branch_range" 2>/dev/null)
+
+    if [ $count -gt 0 ]; then
+        echo "$(date -Iseconds) DEEP-ORPHAN: found $count suspect commit(s) in last $depth; review with 'git log --oneline -$depth'" >> "$LOG_FILE"
+    fi
+    return 0
+}
+
 run_loop() {
     cd "$PROJECT_DIR"
     rm -f "$STOP_FILE"
@@ -45,6 +92,8 @@ run_loop() {
         echo "$(date -Iseconds) ORPHAN hypothesis detected at HEAD: $(git log -1 --format=%h). Resetting to HEAD~1 for clean baseline." >> "$LOG_FILE"
         git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
     fi
+
+    _detect_deep_orphans 20
 
     # ---- Eval dataset isolation ----------------------------------------
     # The plaintext data/eval/ tree does NOT exist on disk — it's been
@@ -149,6 +198,30 @@ else:
         print(f'    {ds:<8}  combined={per[ds]:.6f}  clean_fp={fp.get(ds, \"?\")}')
 " 2>/dev/null)
 
+        # SHAP rollup (US-500): biases claude's feature-engineering
+        # hypotheses toward slots actually driving keeps, not guesses.
+        uv run python "$PROJECT_DIR/scripts/shap_rollup.py" --keeps 5 \
+            >/dev/null 2>>"$LOG_FILE" || true
+        shap_rollup_block=$(python3 -c "
+import json, os
+p = os.path.join('$PROJECT_DIR', '.omc/shap_rollup.json')
+try:
+    d = json.load(open(p))
+except Exception:
+    print('  (shap rollup unavailable)')
+    raise SystemExit(0)
+per = d.get('per_domain', {})
+keeps = d.get('keeps_considered', [])
+if not per:
+    print('  (no keeps yet — rollup empty)')
+    raise SystemExit(0)
+print(f\"  rolled up from {len(keeps)} keep(s): {', '.join(keeps) if keeps else '(none)'}\")
+for dom in sorted(per):
+    rows = per[dom][:6]
+    names = ', '.join(f\"{r['name']}({r['sum_abs_shap']:.1f})\" for r in rows)
+    print(f'    {dom:<8}  {names}')
+" 2>/dev/null)
+
         head_before=$(git rev-parse HEAD)
 
         # Inverted flow: claude forms a hypothesis, edits code, commits,
@@ -173,6 +246,9 @@ clean_fp_<domain> <= 15 per dataset, total clean_fp <= 45.
 combined (aggregate GM): ${current_best}
 per-domain:
 ${per_domain_state}
+
+TOP PREDICTIVE FEATURES (rolling sum_|shap| over last 5 keeps, per domain):
+${shap_rollup_block}
 
 ${iter_summary:+Progress: $iter_summary}
 

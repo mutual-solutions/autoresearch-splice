@@ -202,6 +202,35 @@
         "verify_agent.py --agent-name registry-refactor --reported-combined <actual> exits 0 (HIGH or MEDIUM)",
         "grep-audit confirms no new silent fallbacks: every stub-value return in dataset_registry.py and ml_eval.py is preceded by a _diag or is a policy return"
       ]
+    },
+    {
+      "id": "US-500",
+      "title": "SHAP feature-importance rollup injected into autoresearch prompt",
+      "priority": 50,
+      "passes": true,
+      "note": "scripts/shap_rollup.py reads reports/<sha>/<domain>/*.json, sums |shap| per feature across last 5 keeps, writes .omc/shap_rollup.json. run_autoresearch.sh regenerates rollup per iteration and injects compact 'TOP PREDICTIVE FEATURES' block (top-6 per domain). Rollup runs in 0.07s. Empty-history and n<=0 edge cases handled.",
+      "acceptanceCriteria": [
+        "New script scripts/shap_rollup.py reads reports/<sha>/<group>/*.json across the last N (default 5) 'keep' commits from results.tsv and computes per-domain top-10 features by sum of |shap| across all detections in those commits",
+        "Rollup output is written deterministically to .omc/shap_rollup.json with keys: generated_at (ISO), keeps_considered (list of short shas), per_domain (dict of domain_id -> list of {name, sum_abs_shap, mean_value, n_detections, rank})",
+        "run_autoresearch.sh regenerates .omc/shap_rollup.json once per iteration (after keep/discard is logged, before next claude subprocess starts) and injects a 'TOP PREDICTIVE FEATURES (rolling sum_|shap| over last 5 keeps, per domain)' block into the claude prompt",
+        "Rollup script degrades gracefully: if fewer than N keeps exist in results.tsv, use what's available; if zero keeps, write empty per_domain={} and the wrapper's prompt block reads '(not enough history yet)'",
+        "Rollup script completes in <5s on the current reports/ tree (187 commits × up to ~110 files each)",
+        "A unit-style sanity run `uv run python scripts/shap_rollup.py --keeps 3 --stdout` prints a JSON object matching the schema above to stdout without writing to disk"
+      ]
+    },
+    {
+      "id": "US-501",
+      "title": "Deep orphan detection: scan history, not just HEAD",
+      "priority": 51,
+      "passes": true,
+      "note": "_detect_deep_orphans() walks last 20 commits, flags hypothesis: with no paired baseline: and no results.tsv row. Pre-TSV-tracker commits filtered via awk cutoff on earliest tracked SHA. Warn-only (no auto-revert). Standalone-callable via `source run_autoresearch.sh`. False-positive guard is structural: only `hypothesis:` subjects match.",
+      "acceptanceCriteria": [
+        "run_autoresearch.sh's orphan-detection step looks back up to N=20 commits (not just HEAD) for any 'hypothesis: …' commit that is NOT followed within 3 commits by a 'baseline: …' commit on the same branch AND does NOT appear in results.tsv as discard/keep/verify-fail",
+        "When such an orphan is found, wrapper logs a structured '.omc/autoresearch.log' entry with the orphan SHA, subject, and the detection reason (no paired baseline, not in results.tsv)",
+        "Wrapper DOES NOT auto-revert deep orphans (too dangerous — could discard human-authored commits like baseline-restore). Instead it writes a warning and continues. Only HEAD-level orphans (existing behavior) still auto-revert.",
+        "Unit-ish check: a shell helper function _detect_deep_orphans() is extracted and callable standalone; `bash -c 'source run_autoresearch.sh; _detect_deep_orphans 20'` prints zero or more warning lines to stderr and returns 0",
+        "False-positive guard: commits whose subject is 'baseline-restore:' or 'chore:' or 'refactor:' or 'feat:' or 'fix:' or 'test:' or 'docs:' are NEVER flagged (they're human-authored maintenance, not autoresearch hypotheses)"
+      ]
     }
   ]
 }
