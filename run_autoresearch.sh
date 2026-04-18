@@ -549,8 +549,17 @@ except Exception:
 " 2>/dev/null)
         if [ -n "$_features_sha_now" ] && [ "$_features_sha_now" != "$_features_sha_trained" ]; then
             echo "$(date -Iseconds) AUTO-RETRAIN: features.py drift (was $_features_sha_trained, now $_features_sha_now)" >> "$LOG_FILE"
+            # Portable 300s timeout: GNU `timeout` or brew's `gtimeout`
+            # when present, else unguarded. macOS ships neither by default.
+            if command -v timeout >/dev/null 2>&1; then
+                _retrain_cmd=(timeout 300 uv run python .omc/classifier/train_classifier.py)
+            elif command -v gtimeout >/dev/null 2>&1; then
+                _retrain_cmd=(gtimeout 300 uv run python .omc/classifier/train_classifier.py)
+            else
+                _retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
+            fi
             set +e
-            timeout 300 uv run python .omc/classifier/train_classifier.py >> "$LOG_FILE" 2>&1
+            "${_retrain_cmd[@]}" >> "$LOG_FILE" 2>&1
             _retrain_rc=$?
             set -e
             if [ $_retrain_rc -ne 0 ]; then
