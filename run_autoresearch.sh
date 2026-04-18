@@ -20,6 +20,56 @@ _eval_cleanup() {
     fi
 }
 
+# Paths that MUST survive every hypothesis rollback. Wrapper and
+# infrastructure — NOT the claude-editable hypothesis surface
+# (detector.py / features.py / classifier joblib+meta). Without
+# guarding, any in-flight edit to these files is wiped by the next
+# `git reset --hard` on a discard. Root cause of losses earlier in
+# this session (the portable-timeout fix, features.py cache code).
+_GUARD_PATHS=(
+    run_autoresearch.sh
+    scripts/
+    .gitignore
+    .omc/prd.json
+    progress.txt
+    CLAUDE.md
+)
+
+_guard_stash_push() {
+    if git diff --quiet -- "${_GUARD_PATHS[@]}" 2>/dev/null \
+       && git diff --cached --quiet -- "${_GUARD_PATHS[@]}" 2>/dev/null \
+       && [ -z "$(git ls-files --others --exclude-standard -- "${_GUARD_PATHS[@]}" 2>/dev/null)" ]; then
+        return 1
+    fi
+    git stash push --include-untracked --quiet \
+        -m "autoresearch-guard-$$-$RANDOM" \
+        -- "${_GUARD_PATHS[@]}" 2>> "$LOG_FILE" || return 1
+    return 0
+}
+
+_guard_stash_pop() {
+    local top_label
+    top_label=$(git stash list -1 2>/dev/null | grep -oE 'autoresearch-guard-[0-9]+-[0-9]+' | head -1)
+    [ -z "$top_label" ] && return 0
+    if ! git stash pop --quiet 2>>"$LOG_FILE"; then
+        echo "$(date -Iseconds) WARN: guard stash pop conflict — stash $top_label preserved; recover with 'git stash list / apply'" >> "$LOG_FILE"
+        return 1
+    fi
+    return 0
+}
+
+# Thin wrapper around `git reset --hard`. The ONLY function that should
+# call `git reset --hard` inside the autoresearch loop.
+_guarded_reset() {
+    local target="$1"
+    local stashed=0
+    _guard_stash_push && stashed=1 || stashed=0
+    git reset --hard "$target" >> "$LOG_FILE" 2>&1
+    local rc=$?
+    [ $stashed -eq 1 ] && _guard_stash_pop
+    return $rc
+}
+
 # Append an entry to .omc/research_notes.md and commit it as `note:`
 # AFTER any keep/discard tree mutation (reset for discard, baseline
 # commit for keep). Commit order keeps notes out of the hypothesis
@@ -146,7 +196,7 @@ run_loop() {
     orphan_subject=$(git log -1 --format=%s 2>/dev/null)
     if echo "$orphan_subject" | grep -q "^hypothesis:"; then
         echo "$(date -Iseconds) ORPHAN hypothesis detected at HEAD: $(git log -1 --format=%h). Resetting to HEAD~1 for clean baseline." >> "$LOG_FILE"
-        git reset --hard HEAD~1 >> "$LOG_FILE" 2>&1
+        _guarded_reset HEAD~1
     fi
 
     _detect_deep_orphans 20
@@ -565,7 +615,7 @@ except Exception:
             if [ $_retrain_rc -ne 0 ]; then
                 echo "$(date -Iseconds) AUTO-RETRAIN FAILED (rc=$_retrain_rc). Treating as verify-fail." >> "$LOG_FILE"
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
-                git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+                _guarded_reset "$head_before"
                 _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 consecutive_discards=$((consecutive_discards + 1))
                 continue
@@ -598,7 +648,7 @@ except Exception:
             echo "$(date -Iseconds) evaluate.py exited $eval_exit. Reverting hypothesis (last 20 lines of eval log):" >> "$LOG_FILE"
             tail -20 "$PROJECT_DIR/.omc/last_eval.log" >> "$LOG_FILE" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
-            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _guarded_reset "$head_before"
             _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
@@ -609,7 +659,7 @@ except Exception:
         if [ -z "$reported" ]; then
             echo "$(date -Iseconds) Could not parse combined from RESULTS_TSV. Reverting." >> "$LOG_FILE"
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
-            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _guarded_reset "$head_before"
             _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
@@ -620,7 +670,7 @@ except Exception:
         if [ "$strictly_better" != "1" ]; then
             echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
-            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _guarded_reset "$head_before"
             _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             continue
@@ -638,7 +688,7 @@ except Exception:
 
         if [ $verify_exit -ne 0 ]; then
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
-            git reset --hard "$head_before" >> "$LOG_FILE" 2>&1
+            _guarded_reset "$head_before"
             _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             consecutive_discards=$((consecutive_discards + 1))
             echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
