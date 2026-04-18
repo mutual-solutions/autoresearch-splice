@@ -50,6 +50,11 @@ data/test/*/clean/
 # Compiled Swift binaries — rebuild from source on clone
 scripts/test_unlock
 
+# Encrypted test blob — 1.1 GB. Regenerable via
+#   uv run python data_synth/regenerate_datasets.py --domain all --split test
+# (auto-invokes scripts/test_crypto.py setup/encrypt post-regen).
+data/test.tar.gz.enc
+
 # Autoresearch debug sink (rotates, regrows per run)
 .omc/autoresearch-debug.log
 .omc/autoresearch-debug.log.1
