@@ -47,7 +47,7 @@ GBM_THRESHOLD = 0.982
 # Must exceed evaluate.py's 1.0s tolerance so one real splice cannot inflate
 # into multiple detections when a high-probability plateau spans several
 # adjacent candidates.
-GBM_MIN_SEP_S = 3.0
+GBM_MIN_SEP_S = 3.25
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
