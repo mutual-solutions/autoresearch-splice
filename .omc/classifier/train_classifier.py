@@ -39,9 +39,7 @@ from detector import _build_chunk_context
 from features import FEATURE_NAMES, extract_features
 
 # US-515 phase 1: unified structured logger.
-import os as _us515_os
-import sys as _us515_sys
-_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), "..", "coordination"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "coordination"))
 from logger import get_logger  # noqa: E402
 
 LABEL_NOT_SPLICE = 0

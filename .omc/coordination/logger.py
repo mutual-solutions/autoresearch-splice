@@ -32,18 +32,29 @@ Canonical event names (dotted) per subsystem:
 
     eval.*
         eval.run                -- evaluator started / finished wrapping
-        eval.run.complete       -- final combined/elapsed tuple
+        eval.run.complete       -- final elapsed_s
         eval.crash              -- unhandled exception in evaluate.py
-        eval.dataset.result     -- per-dataset combined metric
+        eval.dataset.result     -- per-dataset combined / clean_fp rollup
         eval.dataset.error      -- per-dataset "ERROR" carrier (wrapper contract)
-        eval.metrics.splice     -- splice_f1/precision/recall tuple
-        eval.metrics.clean      -- clean_score summary
+        eval.metrics.splice     -- splice_f1/clean_score/combined for one
+                                   evaluate() run (per data_dir)
+        eval.metrics.clean      -- precision/recall/fp_rate + TP/FP/FN counts
+                                   for one evaluate() run (per data_dir)
         eval.fp.distribution    -- FP distribution breakdown
         eval.crossfade.breakdown-- per-crossfade-type metrics
         eval.loc_accuracy       -- localization accuracy rollup
-        eval.opus32k.metrics    -- opus-32k tier metrics
-        eval.opus32k.aggregate  -- opus-32k aggregate
-        eval.aggregate          -- cross-dataset aggregate tuple
+        eval.opus32k.metrics    -- opus-32k per-dir metrics
+        eval.opus32k.aggregate  -- opus-32k aggregate across dirs
+        eval.aggregate          -- cross-dataset aggregate. `mode` field
+                                   discriminates fields present:
+                                     mode="multi"         -> splice_f1,
+                                       clean_score, combined, precision,
+                                       recall, tp/fp/fn/clean_fp
+                                     mode="cross-dataset" -> combined,
+                                       combined_mean, combined_min,
+                                       clean_fp, per_dataset*
+                                   Readers querying by `event==eval.aggregate`
+                                   MUST branch on `mode` (or use .get()).
         eval.single.combined    -- single-dataset combined line
         eval.input.error        -- input file / arg / path error
 
@@ -79,10 +90,16 @@ Canonical event names (dotted) per subsystem:
 ORACLE REDACTION
 ----------------
 `_ORACLE_DENYLIST_RE` strips `combined=...`, `combined_<domain>=...`,
-`splice_f1=...`, `clean_score=...` from string kv values when either:
+`splice_f1=...`, `clean_score=...` from STRING kv values when either:
 
 - the caller passes `oracle_sensitive=True`, OR
 - the event name starts with `retest.diagnose.` (auto-enabled)
+
+**Redaction is top-level and string-only by design.** Numeric kwargs
+(`combined=0.47` as a float) flow through untouched. Do NOT pass raw
+metric floats on a path that could reach claude — either format them
+into the string message or omit them. Nested dicts/lists aren't
+recursed either; keep oracle-sensitive payloads flat and string-valued.
 
 Default is NO redaction: wrapper-owned events carry real metrics. This
 preserves the US-510 claude/oracle isolation contract for diagnose paths.
@@ -182,15 +199,29 @@ class Logger:
         }
         line = json.dumps(record, default=str) + "\n"
 
-        with open(path, "a", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        with open(path, "a", encoding="utf-8") as guard:
+            fcntl.flock(guard.fileno(), fcntl.LOCK_EX)
             try:
+                rotated = False
                 if path.stat().st_size + len(line) > MAX_SIZE_BYTES:
                     self._rotate_locked(path)
-                f.write(line)
-                f.flush()
+                    rotated = True
+                if rotated:
+                    # `guard`'s fd points at the renamed inode after
+                    # rotation. Writing to it would land in the rolled
+                    # archive instead of the live log. Open a new fd on
+                    # `path` for the record. LOCK_EX on `guard` continues
+                    # to serialize concurrent writers until this block
+                    # exits — no need to re-flock, since rotation is
+                    # rare and the live-log write is append-atomic.
+                    with open(path, "a", encoding="utf-8") as live:
+                        live.write(line)
+                        live.flush()
+                else:
+                    guard.write(line)
+                    guard.flush()
             finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                fcntl.flock(guard.fileno(), fcntl.LOCK_UN)
 
     @staticmethod
     def _rotate_locked(path: Path) -> None:

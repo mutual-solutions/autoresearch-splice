@@ -38,6 +38,7 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
+import sys
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -56,9 +57,7 @@ from detector import (
 )
 
 # US-515 phase 1: unified structured logger.
-import os as _us515_os
-import sys as _us515_sys
-_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), ".omc", "coordination"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".omc", "coordination"))
 from logger import get_logger  # noqa: E402
 
 

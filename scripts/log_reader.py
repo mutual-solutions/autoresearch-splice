@@ -87,7 +87,10 @@ def iter_events(
             continue
         if level is not None and rec.get("level") != level:
             continue
-        if since is not None and rec.get("ts", "") <= since:
+        if since is not None and rec.get("ts", "") < since:
+            # Strict less-than on microsecond-equal events so a caller
+            # capturing `since_ts = now_iso()` and then spawning a
+            # subprocess still sees that subprocess's first event.
             continue
         yield rec
 

@@ -341,7 +341,7 @@ def evaluate_codec(data_dir):
         print("ERROR: no test cases found", file=sys.stderr)
         _ev_log.emit("ERROR", "eval.input.error",
                      kind="no_test_cases", data_dir=str(data_dir),
-                     fn="evaluate_opus_32k")
+                     fn="evaluate_codec")
         sys.exit(1)
 
     total_tp = 0

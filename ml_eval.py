@@ -23,9 +23,7 @@ from detector import _load_gbm_bundle, get_detection_meta
 from shap_report import write_reports
 
 # US-515 phase 1: unified structured logger.
-import os as _us515_os
-import sys as _us515_sys
-_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), ".omc", "coordination"))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".omc", "coordination"))
 from logger import get_logger  # noqa: E402
 
 
