@@ -239,3 +239,83 @@ per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=
     (tier 1), since crossfades are the lower-precision class and
     most spurious singing FPs get classified as crossfade.
 
+## 2026-04-18T15:22:26+09:00 — 49034b1 (verify-fail, combined=0.463218)
+subject: GBM class-margin filter -- keep emit only if |p_hard - p_cross| > 0.2
+per-domain: combined_english=0.756098 combined_korean=0.476190 combined_singing=0.276056
+
+# Iteration reflection
+
+(a) HYPOTHESIS. Add a class-ambiguity filter in detector.py
+    `_gbm_detect_splices`: keep an emit only if the dominant splice
+    class (hard_cut vs crossfade) clearly outcompetes the other splice
+    class by at least `GBM_CLASS_MARGIN = 0.2`. Implementation is
+    additive to the existing `hit_mask = p_splice > GBM_THRESHOLD`:
+        class_margin = |proba[:, col_hard] - proba[:, col_cross]|
+        hit_mask &= (class_margin > GBM_CLASS_MARGIN)
+    Pure detector.py change, no retrain, no feature change.
+
+(b) WHY. The existing threshold is on `p_splice = 1 - p_not_splice`,
+    which is the SUM of the two splice classes. When GBM is uncertain
+    about WHICH splice it is (e.g. `p_hard_cut ~= 0.5`,
+    `p_crossfade ~= 0.49`, p_splice ~= 0.99 above 0.982), the current
+    code treats this as a high-confidence splice and emits it with the
+    max-probability class label. But class-ambiguous emits are
+    statistically more likely to be FPs: a real hard cut has a sharp
+    transient signature distinctive from crossfade, and a real
+    crossfade has sustained overlap characteristics distinctive from
+    hard cut. GBM's training data has clean class separation (tier 1
+    hard cuts vs tier 2 crossfades -- no in-between), so it should
+    produce confident class predictions on real splices. A
+    probability distribution evenly split between the two classes
+    means the input matches the "generically spliceish" feature
+    pattern shared by both classes -- which is exactly what
+    song-natural chord transitions in clean singing produce: they
+    elevate spec_rolloff_delta/centroid_delta/bandwidth_delta
+    (the top-3 SHAP features shared across both classes) without the
+    specific class-distinguishing features.
+
+    This is genuinely orthogonal to every prior failed axis:
+      * all 6 primary tunables bracketed;
+      * all 8 GBM hyperparam axes failed (max_depth both dirs,
+        subsample, min_samples_leaf, max_features, learning_rate,
+        n_estimators, class distribution via NEG_PER_*);
+      * all 4 training-data-composition axes failed;
+      * spec feature-window down failed;
+      * joint THRESHOLD+MIN_SEP failed;
+      * sample_weight 2.0x, local-novelty spec ratio,
+        mfcc_cosine_distance, HPSS-percussive deltas,
+        plateau-filter all verify-failed at identical 0.463218
+        (highly suspect in itself -- see (c)).
+    No prior hypothesis has touched the RELATIVE probability between
+    the two splice classes. The threshold and margin axes are
+    orthogonal: threshold controls overall splice confidence; margin
+    controls within-splice class confidence. At p_splice >= 0.982,
+    the minimum dominant class is 0.491 and minimum minor is 0.0,
+    giving a margin range [0, 0.982]. A 0.2 cutoff keeps any TP with
+    a clear class preference (minor < (0.982 - 0.2)/2 = 0.391,
+    dominant > 0.591) -- this is a very mild filter that targets only
+    truly split decisions. Real hard cuts typically produce margin
+    > 0.7 (p_hard ~= 0.95, p_cross ~= 0.05). Real crossfades
+    typically produce margin > 0.5 (p_cross ~= 0.85, p_hard ~= 0.1).
+    Both comfortably pass 0.2. Ambiguous "spliceish but not
+    clearly either" emits at p_hard ~= p_cross ~= 0.49 are the
+    targeted FP population.
+
+    Minimum blast radius: 1 new constant + 4 lines in the existing
+    hit_mask block, no retrain, no feature-extraction change,
+    deterministic, instant.
+
+(c) IF THIS FAILS. The identical 0.463218 outcome across 5 different
+    recent changes (4 feature additions + 1 detector post-filter)
+    points to a systemic issue -- perhaps stale classifier retrain,
+    or eval running against a cached state. Next move would be to
+    audit the retrain pipeline: inspect
+    `.omc/classifier/fp_classifier.meta.json` to confirm the
+    classifier was actually regenerated on the features.py changes,
+    and inspect `.omc/autoresearch.log` for retrain-skip messages.
+    If the retrain pipeline is confirmed working, the next direction
+    is to introduce label-specific thresholds
+    (`GBM_THRESHOLD_HARD` vs `GBM_THRESHOLD_CROSS`) since crossfade
+    is the lower-precision class and most singing FPs likely
+    classify as crossfade (smoother, more chord-transition-like).
+
