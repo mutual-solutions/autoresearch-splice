@@ -11,9 +11,11 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).parent
+REPO_ROOT = SCRIPT_DIR.parent.parent
 BASELINE_PATH = SCRIPT_DIR / "baseline_metrics.json"
 PROTECTED_FILES = [
     "evaluate.py",
@@ -24,9 +26,45 @@ PROTECTED_FILES = [
     ".omc/coordination/preflight.py",
 ]
 
+# US-515 phase 1: read eval results from the unified JSONL log instead of
+# parsing `combined: X.Y` prints from stdout. `RESULTS_TSV:` remains as a
+# bash-wrapper carve-out until phase 2.
+sys.path.insert(0, str(REPO_ROOT / ".omc" / "coordination"))
+sys.path.insert(0, str(REPO_ROOT / "scripts"))
+from log_reader import iter_events  # noqa: E402
+
+
+def _latest_combined_since(since_ts: str,
+                           log_override: str | None = None) -> float | None:
+    """Return the combined value from the newest `eval.aggregate` /
+    `eval.single.combined` / `eval.metrics.splice` event with ts > since_ts.
+    """
+    env_override = os.environ.get("OMC_LOG_OVERRIDE")
+    jsonl_path = None
+    if log_override is not None:
+        jsonl_path = Path(log_override)
+    elif env_override:
+        jsonl_path = Path(env_override)
+    picked: dict | None = None
+    for event_name in ("eval.aggregate", "eval.single.combined",
+                       "eval.metrics.splice"):
+        for rec in iter_events(event=event_name, since=since_ts,
+                               jsonl_path=jsonl_path):
+            if "combined" in rec:
+                if picked is None or rec.get("ts", "") > picked.get("ts", ""):
+                    picked = rec
+    return float(picked["combined"]) if picked else None
+
 
 def check_metric_rerun(reported: float) -> tuple[str, str, str]:
-    """Re-run evaluate.py and compare combined score to reported value."""
+    """Re-run evaluate.py and compare combined score to reported value.
+
+    Reads the fresh `combined` via `log_reader.iter_events()` from the
+    unified JSONL log instead of re-parsing evaluate.py's stdout. The
+    bash wrapper still relies on the `RESULTS_TSV:` string for its own
+    parsing; that carve-out migrates in phase 2.
+    """
+    since_ts = datetime.now(timezone.utc).isoformat()
     try:
         result = subprocess.run(
             ["uv", "run", "python", "evaluate.py", "--shap"],
@@ -37,15 +75,17 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     except Exception as e:
         return "FAIL", f"subprocess error: {e}", ""
 
-    if result.returncode != 0:
-        return "FAIL", f"evaluate.py exited {result.returncode}", ""
-
     output = result.stdout + result.stderr
-    matches = re.findall(r"^combined:\s*([\d.]+)", output, re.MULTILINE)
-    if not matches:
-        return "FAIL", "could not parse combined score from output", output
+    if result.returncode != 0:
+        return "FAIL", f"evaluate.py exited {result.returncode}", output
 
-    actual = float(matches[-1])
+    actual = _latest_combined_since(since_ts)
+    if actual is None:
+        return ("FAIL",
+                "no eval.aggregate / eval.single.combined event in JSONL log "
+                "since subprocess started",
+                output)
+
     delta = abs(actual - reported)
     status = "PASS" if delta < 0.005 else "FAIL"
     return status, f"reported: {reported:.3f}, actual: {actual:.3f}, delta: {delta:.4f}", output

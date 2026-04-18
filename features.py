@@ -48,13 +48,18 @@ from scipy import signal as sp_signal
 
 from detector import (
     _build_chunk_context,
-    _diag,
     _FitError,
     phase_z_at,
     t2_z_at,
     cpe_z_at,
     pairwise_proximity_at,
 )
+
+# US-515 phase 1: unified structured logger.
+import os as _us515_os
+import sys as _us515_sys
+_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), ".omc", "coordination"))
+from logger import get_logger  # noqa: E402
 
 
 # US-504: on-disk feature cache. Gated by OMC_FEATURE_CACHE_DIR +
@@ -206,7 +211,7 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
         edge_mask = (f0 <= 50.5) | (f0 >= 499.5)
         f0 = np.where(edge_mask, np.nan, f0)
     except Exception as e:
-        _diag("INFO", "features", "yin_degenerate",
+        get_logger("features.features").emit("INFO", "diag.features.yin_degenerate",
               dur=f"{n/sr:.1f}s", error=str(e))
         nf = max(1, n // hop_f0)
         f0 = np.full(nf, np.nan)
@@ -298,9 +303,9 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
                 enf_iphase = np.unwrap(np.angle(analytic))
                 enf_ifreq = np.diff(enf_iphase) / (2 * np.pi / sr)
             except Exception:
-                _diag("INFO", "features", "enf_filter_failed")
+                get_logger("features.features").emit("INFO", "diag.features.enf_filter_failed")
         else:
-            _diag("INFO", "features", "enf_absent",
+            get_logger("features.features").emit("INFO", "diag.features.enf_absent",
                   enf_hz=enf_hz, snr_db=f"{enf_snr_db:.1f}")
 
     # ---- Boundary phase coherence: precompute full-chunk STFT phase ----
@@ -380,7 +385,7 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
             import joblib
             _PCA_FIT = joblib.load(_MEL_PCA_PATH)
         except Exception:
-            _diag("INFO", "features", "mel_pca_self_fit",
+            get_logger("features.features").emit("INFO", "diag.features.mel_pca_self_fit",
                   fallback="joblib_load_failed_or_missing", path=_MEL_PCA_PATH)
             from sklearn.decomposition import PCA
             rs = np.random.RandomState(0)
@@ -865,7 +870,7 @@ def extract_features(
             feats[k] = 0.0
             n_scrubbed += 1
     if n_scrubbed:
-        _diag("INFO", "features", "nonfinite_scrubbed",
+        get_logger("features.features").emit("INFO", "diag.features.nonfinite_scrubbed",
               count=n_scrubbed, t_sec=f"{t_sec:.3f}")
     return feats
 

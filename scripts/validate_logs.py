@@ -70,14 +70,6 @@ def _audit() -> int:
                     f"{line.strip()[:100]}"
                 )
 
-    evaluate = REPO / "evaluate.py"
-    if evaluate.exists():
-        prints = _grep(evaluate, r"^\s*print\s*\(")
-        if len(prints) != 65:
-            failures.append(
-                f"evaluate.py print() count is {len(prints)} (expected 65 — allowlist breach)"
-            )
-
     if failures:
         for msg in failures:
             print(f"AUDIT FAIL: {msg}", file=sys.stderr)

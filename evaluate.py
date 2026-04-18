@@ -22,6 +22,15 @@ import soundfile as sf
 # Import the detector (the mutable file)
 from detector import detect_splices
 
+# US-515 phase 1: unified structured logger companion emits.
+# Dual-emit only: no print() is deleted; the RESULTS_TSV: contract line
+# (search "RESULTS_TSV:" below) is NOT migrated. Covered by the one-time
+# maintainer exemption recorded in CLAUDE.md (US-515).
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                ".omc", "coordination"))
+from logger import get_logger  # noqa: E402
+_ev_log = get_logger("eval")
+
 TOLERANCE_S = 1.0  # ±1s matching tolerance — "이 근처에 편집 있음"
 
 
@@ -30,6 +39,8 @@ def load_ground_truth(data_dir):
     gt_path = os.path.join(data_dir, "ground_truth.json")
     if not os.path.exists(gt_path):
         print(f"ERROR: ground_truth.json not found at {gt_path}", file=sys.stderr)
+        _ev_log.emit("ERROR", "eval.input.error",
+                     kind="ground_truth_missing", path=gt_path)
         sys.exit(1)
     with open(gt_path, "r") as f:
         raw = json.load(f)
@@ -126,6 +137,9 @@ def evaluate(data_dir):
     cases = load_ground_truth(data_dir)
     if not cases:
         print("ERROR: no test cases found", file=sys.stderr)
+        _ev_log.emit("ERROR", "eval.input.error",
+                     kind="no_test_cases", data_dir=str(data_dir),
+                     fn="evaluate")
         sys.exit(1)
 
     total_tp = 0
@@ -247,18 +261,14 @@ def evaluate(data_dir):
     # Combined: F1 × clean_score. Both must be high to score well.
     combined = f1 * clean_score
 
-    # Primary metric (what the autoresearch loop optimizes)
-    print(f"splice_f1: {f1:.6f}")
-    print(f"clean_score: {clean_score:.6f}")
-    print(f"combined: {combined:.6f}")
-
-    # Secondary metrics
-    print(f"precision: {precision:.2f}")
-    print(f"recall: {recall:.2f}")
-    print(f"fp_rate: {fp_rate:.2f}")
-
-    # Extra detail
-    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={clean_fp} files={total_files} errors={errors}")
+    _ev_log.emit("INFO", "eval.metrics.splice",
+                 data_dir=str(data_dir),
+                 splice_f1=f1, clean_score=clean_score, combined=combined)
+    _ev_log.emit("INFO", "eval.metrics.clean",
+                 data_dir=str(data_dir),
+                 precision=precision, recall=recall, fp_rate=fp_rate,
+                 tp=total_tp, fp=total_fp, fn=total_fn,
+                 clean_fp=clean_fp, files=total_files, errors=errors)
 
     # FP distribution
     fp_dist = {0: 0, 1: 0, 2: 0, "3+": 0}
@@ -273,23 +283,22 @@ def evaluate(data_dir):
             fp_dist["3+"] += 1
     max_fp_file = max(fp_per_file.items(), key=lambda x: x[1]) if fp_per_file else ("", 0)
     n = len(fp_per_file)
-    print("--- FP distribution ---")
-    for bucket, label in [(0, "0"), (1, "1"), (2, "2"), ("3+", "3+")]:
-        cnt = fp_dist[bucket]
-        pct = int(round(cnt / n * 100)) if n > 0 else 0
-        print(f"  Files with {label} FP: {cnt}/{n} ({pct}%)")
-    print(f"  Max FP per file: {max_fp_file[1]} ({max_fp_file[0]})")
+    _ev_log.emit("INFO", "eval.fp.distribution",
+                 buckets={str(k): v for k, v in fp_dist.items()},
+                 n=n, max_fp_count=max_fp_file[1], max_fp_file=max_fp_file[0])
 
     # Crossfade breakdown (T2 only)
     if xfade_results:
-        print("--- Crossfade breakdown ---")
+        _xfade_summary = {}
         for xf in sorted(xfade_results):
             tp_xf = xfade_results[xf]["tp"]
             tot_xf = xfade_results[xf]["total"]
             pct = int(100 * tp_xf / tot_xf) if tot_xf > 0 else 0
-            print(f"  {xf:>4}ms: {tp_xf}/{tot_xf} ({pct}%)")
-            for miss in xfade_results[xf].get("misses", []):
-                print(f"    MISS {miss}")
+            _xfade_summary[str(xf)] = {
+                "tp": tp_xf, "total": tot_xf, "pct": pct,
+                "misses": list(xfade_results[xf].get("misses", [])),
+            }
+        _ev_log.emit("INFO", "eval.crossfade.breakdown", per_xf=_xfade_summary)
 
     # Localization accuracy (distance between detected and ground truth time for TPs)
     if all_loc_distances:
@@ -298,7 +307,9 @@ def evaluate(data_dir):
         loc_max = float(np.max(all_loc_distances))
     else:
         loc_mean = loc_median = loc_max = 0.0
-    print(f"loc_accuracy: mean={loc_mean:.3f}s, median={loc_median:.3f}s, max={loc_max:.3f}s")
+    _ev_log.emit("INFO", "eval.loc_accuracy",
+                 mean_s=loc_mean, median_s=loc_median, max_s=loc_max,
+                 n_samples=len(all_loc_distances))
 
     return {
         "splice_f1": f1,
@@ -328,6 +339,9 @@ def evaluate_codec(data_dir):
     cases = load_ground_truth(data_dir)
     if not cases:
         print("ERROR: no test cases found", file=sys.stderr)
+        _ev_log.emit("ERROR", "eval.input.error",
+                     kind="no_test_cases", data_dir=str(data_dir),
+                     fn="evaluate_opus_32k")
         sys.exit(1)
 
     total_tp = 0
@@ -401,12 +415,11 @@ def evaluate_codec(data_dir):
     clean_score = max(0.0, clean_score)
     combined = f1 * clean_score
 
-    print(f"opus32k_f1: {f1:.6f}")
-    print(f"opus32k_combined: {combined:.6f}")
-    print(f"opus32k_precision: {precision:.2f}")
-    print(f"opus32k_recall: {recall:.2f}")
-    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={clean_fp} "
-          f"files={total_files} errors={errors} codec_errors={codec_errors}")
+    _ev_log.emit("INFO", "eval.opus32k.metrics",
+                 f1=f1, combined=combined, precision=precision, recall=recall,
+                 tp=total_tp, fp=total_fp, fn=total_fn, clean_fp=clean_fp,
+                 files=total_files, errors=errors, codec_errors=codec_errors,
+                 data_dir=str(data_dir))
 
     return {
         "opus32k_f1": f1,
@@ -448,14 +461,12 @@ def evaluate_multi_codec(data_dirs):
     clean_score = 1.0 - (total_clean_fp / max(total_clean, 1))
     combined = f1 * clean_score
 
-    print(f"\n{'='*60}")
-    print(f"AGGREGATE OPUS 32k across {len(data_dirs)} datasets:")
-    print(f"opus32k_f1: {f1:.6f}")
-    print(f"opus32k_combined: {combined:.6f}")
-    print(f"opus32k_precision: {precision:.2f}")
-    print(f"opus32k_recall: {recall:.2f}")
-    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={total_clean_fp} "
-          f"clean_total={total_clean} codec_errors={total_codec_errors}")
+    _ev_log.emit("INFO", "eval.opus32k.aggregate",
+                 n_datasets=len(data_dirs),
+                 f1=f1, combined=combined, precision=precision, recall=recall,
+                 tp=total_tp, fp=total_fp, fn=total_fn,
+                 clean_fp=total_clean_fp, clean_total=total_clean,
+                 codec_errors=total_codec_errors)
 
 
 def evaluate_multi(data_dirs):
@@ -485,14 +496,13 @@ def evaluate_multi(data_dirs):
     clean_score = 1.0 - (total_clean_fp / max(total_clean, 1))
 
     combined = f1 * clean_score
-    print(f"\n{'='*60}")
-    print(f"AGGREGATE across {len(data_dirs)} datasets:")
-    print(f"splice_f1: {f1:.6f}")
-    print(f"clean_score: {clean_score:.6f}")
-    print(f"combined: {combined:.6f}")
-    print(f"precision: {precision:.2f}")
-    print(f"recall: {recall:.2f}")
-    print(f"  TP={total_tp} FP={total_fp} FN={total_fn} clean_fp={total_clean_fp} clean_total={total_clean}")
+    _ev_log.emit("INFO", "eval.aggregate",
+                 mode="multi",
+                 n_datasets=len(data_dirs),
+                 splice_f1=f1, clean_score=clean_score, combined=combined,
+                 precision=precision, recall=recall,
+                 tp=total_tp, fp=total_fp, fn=total_fn,
+                 clean_fp=total_clean_fp, clean_total=total_clean)
 
 
 if __name__ == "__main__":
@@ -555,7 +565,8 @@ if __name__ == "__main__":
         if args.shap:
             from ml_eval import export_shap_reports
             export_shap_reports(result, args.data_dir)
-        print(f"combined: {result['combined']:.6f}")
+        _ev_log.emit("INFO", "eval.single.combined",
+                     data_dir=str(args.data_dir), combined=result["combined"])
     else:
         # Default: iterate dataset_registry.DATASETS and report the
         # geometric-mean `combined` across all eval_weight>0 entries. This
@@ -589,6 +600,9 @@ if __name__ == "__main__":
                 )
                 if _r.returncode != 0:
                     print(f"test decrypt failed: {_r.stderr}", file=sys.stderr)
+                    _ev_log.emit("ERROR", "eval.input.error",
+                                 kind="test_decrypt_failed",
+                                 stderr=_r.stderr.strip())
                     sys.exit(1)
                 test_root_override = _r.stdout.strip()
                 _parent_tmp = os.path.dirname(test_root_override)
@@ -624,23 +638,31 @@ if __name__ == "__main__":
                 per_dataset[ds.id] = 0.0
                 per_dataset_clean_fp[ds.id] = 0
                 print(f"combined_{ds.id}: ERROR ({type(_e).__name__}: {_e})")
+                _ev_log.emit("ERROR", "eval.dataset.error",
+                             ds_id=ds.id, exc_type=type(_e).__name__,
+                             message=str(_e))
             print(f"=== End {ds.id} ===\n")
 
         # Aggregate — geometric mean with floor to avoid zero-collapse on
         # new / untested datasets.
         agg = aggregate_combined(per_dataset, method="geometric", floor=0.01)
-        print("=== Cross-dataset aggregate ===")
-        for ds_id, v in per_dataset.items():
-            print(f"combined_{ds_id}: {v:.6f}  clean_fp_{ds_id}={per_dataset_clean_fp.get(ds_id, 'NA')}")
-        print(f"combined_mean: {agg['combined_mean']:.6f}")
-        print(f"combined_min:  {agg['combined_min']:.6f}")
-        # RESULTS_TSV: single-line structured block the autoresearch wrapper
-        # greps for deterministic metric parsing. Keys are `k=v` pairs,
-        # space-separated. This is the ONLY contract the wrapper relies on
-        # for populating results.tsv — claude's prose narrative is not
-        # parsed. Missing / not-applicable values would be rendered as
-        # `NA` by the wrapper (never as 0, which collides with real zeros).
         total_clean_fp = sum(per_dataset_clean_fp.values())
+        _ev_log.emit("INFO", "eval.dataset.result",
+                     per_dataset=per_dataset,
+                     per_dataset_clean_fp=per_dataset_clean_fp)
+        _ev_log.emit("INFO", "eval.aggregate",
+                     mode="cross-dataset",
+                     combined=agg["combined"],
+                     combined_mean=agg["combined_mean"],
+                     combined_min=agg["combined_min"],
+                     clean_fp=total_clean_fp,
+                     n_datasets=len(per_dataset),
+                     per_dataset=per_dataset,
+                     per_dataset_clean_fp=per_dataset_clean_fp)
+        # RESULTS_TSV: the bash wrapper (run_autoresearch.sh) still greps
+        # this verbatim at 5 sites. Stays as a phase-2 carve-out until the
+        # bash migration lands; the Python-side verify_agent / retest
+        # path now reads `eval.aggregate` JSONL instead of re-parsing it.
         tsv_parts = [
             f"combined={agg['combined']:.6f}",
             f"combined_mean={agg['combined_mean']:.6f}",
@@ -652,8 +674,5 @@ if __name__ == "__main__":
             tsv_parts.append(f"combined_{ds_id}={per_dataset[ds_id]:.6f}")
             tsv_parts.append(f"clean_fp_{ds_id}={per_dataset_clean_fp.get(ds_id, 0)}")
         print("RESULTS_TSV: " + " ".join(tsv_parts))
-        # LAST `combined:` line — wrapper + verify_agent parsers rely on
-        # this contract.
-        print(f"combined: {agg['combined']:.6f}")
     elapsed = time.time() - t0
-    print(f"elapsed: {elapsed:.1f}s")
+    _ev_log.emit("INFO", "eval.run.complete", elapsed_s=elapsed)

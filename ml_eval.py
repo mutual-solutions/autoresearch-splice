@@ -19,8 +19,14 @@ _classifier_dir = os.path.join(_proj, ".omc", "classifier")
 if _classifier_dir not in sys.path:
     sys.path.insert(0, _classifier_dir)
 
-from detector import _diag, _load_gbm_bundle, get_detection_meta
+from detector import _load_gbm_bundle, get_detection_meta
 from shap_report import write_reports
+
+# US-515 phase 1: unified structured logger.
+import os as _us515_os
+import sys as _us515_sys
+_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), ".omc", "coordination"))
+from logger import get_logger  # noqa: E402
 
 
 def _git_sha_short() -> str:
@@ -47,7 +53,7 @@ def export_shap_reports(dsp_results, data_dir) -> dict:
     """
     bundle = _load_gbm_bundle()
     if bundle is None:
-        _diag("ERROR", "ml.eval", "bundle_missing",
+        get_logger("ml.eval").emit("ERROR", "diag.ml.eval.bundle_missing",
               hint="retrain via .omc/classifier/train_classifier.py")
         raise RuntimeError("Multi-class GBM bundle missing or invalid; "
                            "retrain via .omc/classifier/train_classifier.py")

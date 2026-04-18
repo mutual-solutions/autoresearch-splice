@@ -25,6 +25,13 @@ from scipy import signal as sp_signal
 from scipy.ndimage import uniform_filter1d
 from scipy.stats import genpareto
 
+# US-515 phase 1: unified structured logger. `.omc` has a leading dot,
+# so `python -m omc.coordination.logger` is impossible — callers must
+# sys.path.insert and import directly.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                ".omc", "coordination"))
+from logger import get_logger  # noqa: E402
+
 # Sliding analysis-window geometry.
 # All detectors run inside a fixed-size chunk so GPD thresholds, n_tests
 # Bonferroni terms, and pairwise N stay bounded regardless of total file
@@ -103,7 +110,7 @@ def _load_gbm_bundle() -> dict | None:
     if _GBM_BUNDLE_UNAVAILABLE:
         return None
     if not os.path.exists(_GBM_MODEL_PATH):
-        _diag("INFO", "gbm", "model_missing", path=_GBM_MODEL_PATH)
+        get_logger("detector.gbm").emit("INFO", "diag.gbm.model_missing", path=_GBM_MODEL_PATH)
         _GBM_BUNDLE_UNAVAILABLE = True
         return None
 
@@ -112,7 +119,7 @@ def _load_gbm_bundle() -> dict | None:
         import joblib
         model = joblib.load(_GBM_MODEL_PATH)
     except Exception as e:
-        _diag("WARN", "gbm", "load_failed",
+        get_logger("detector.gbm").emit("WARN", "diag.gbm.load_failed",
               path=_GBM_MODEL_PATH, error=str(e))
         _GBM_BUNDLE_UNAVAILABLE = True
         return None
@@ -120,7 +127,7 @@ def _load_gbm_bundle() -> dict | None:
     if isinstance(model, dict):
         model = model.get("model")
         if model is None:
-            _diag("INFO", "gbm", "legacy_dict_missing_model",
+            get_logger("detector.gbm").emit("INFO", "diag.gbm.legacy_dict_missing_model",
                   path=_GBM_MODEL_PATH)
             _GBM_BUNDLE_UNAVAILABLE = True
             return None
@@ -132,7 +139,7 @@ def _load_gbm_bundle() -> dict | None:
             with open(meta_path) as f:
                 meta = _json.load(f)
         except Exception as e:
-            _diag("WARN", "gbm", "meta_load_failed",
+            get_logger("detector.gbm").emit("WARN", "diag.gbm.meta_load_failed",
                   path=meta_path, error=str(e))
 
     try:
@@ -141,7 +148,7 @@ def _load_gbm_bundle() -> dict | None:
     except Exception:
         classes = []
     if not classes or 0 not in classes or not any(c in classes for c in (1, 2)):
-        _diag("INFO", "gbm", "legacy_bundle_ignored",
+        get_logger("detector.gbm").emit("INFO", "diag.gbm.legacy_bundle_ignored",
               path=_GBM_MODEL_PATH, classes=str(classes),
               hint="retrain via .omc/classifier/train_classifier.py for 3-class")
         _GBM_BUNDLE_UNAVAILABLE = True
@@ -191,7 +198,7 @@ def _iter_chunks(audio: np.ndarray, sr: int):
     for start in _chunk_starts(len(audio), sr):
         chunk = audio[start:start + W]
         if len(chunk) < min_chunk:
-            _diag("INFO", "slider", "chunk_too_small",
+            get_logger("detector.slider").emit("INFO", "diag.slider.chunk_too_small",
                   start=f"{start/sr:.1f}", samples=len(chunk), min=min_chunk)
             continue
         yield start, start / sr, chunk
@@ -227,7 +234,7 @@ def _gbm_detect_splices(
         try:
             ctx = _build_chunk_context(chunk, sr)
         except Exception as e:
-            _diag("WARN", "gbm", "ctx_build_failed",
+            get_logger("detector.gbm").emit("WARN", "diag.gbm.ctx_build_failed",
                   start=f"{offset_s:.2f}", error=str(e))
             continue
         t_ctx = _time.perf_counter() - t0
@@ -251,7 +258,7 @@ def _gbm_detect_splices(
         try:
             proba = model.predict_proba(X)
         except Exception as e:
-            _diag("WARN", "gbm", "predict_failed",
+            get_logger("detector.gbm").emit("WARN", "diag.gbm.predict_failed",
                   start=f"{offset_s:.2f}", error=str(e))
             continue
         t_pred = _time.perf_counter() - t0
@@ -261,7 +268,7 @@ def _gbm_detect_splices(
         col_for = {int(c): i for i, c in enumerate(clf.classes_)}
         splice_cols = [(c, col_for[c]) for c in (1, 2) if c in col_for]
         if 0 not in col_for or not splice_cols:
-            _diag("WARN", "gbm", "unexpected_classes",
+            get_logger("detector.gbm").emit("WARN", "diag.gbm.unexpected_classes",
                   classes=sorted(col_for), start=f"{offset_s:.2f}")
             continue
         p_splice = 1.0 - proba[:, col_for[0]]
@@ -281,7 +288,7 @@ def _gbm_detect_splices(
                 X[i].tolist(),
             ))
 
-        _diag("INFO", "gbm", "chunk_scan_done",
+        get_logger("detector.gbm").emit("INFO", "diag.gbm.chunk_scan_done",
               start=f"{offset_s:.2f}",
               scan_count=len(t_grid),
               gbm_emit=gbm_emit_count,
@@ -289,7 +296,7 @@ def _gbm_detect_splices(
               t_feat_ms=int(t_feat * 1000),
               t_pred_ms=int(t_pred * 1000))
 
-    _diag("INFO", "gbm", "file_summary",
+    get_logger("detector.gbm").emit("INFO", "diag.gbm.file_summary",
           chunks=n_chunks,
           scan_total=scan_total,
           gbm_emit_total=gbm_emit_total,
@@ -298,7 +305,7 @@ def _gbm_detect_splices(
           t_pred_total_ms=int(t_pred_sum * 1000),
           t_wall_ms=int((_time.perf_counter() - file_t0) * 1000))
 
-    _diag("INFO", "gbm", "scan_summary",
+    get_logger("detector.gbm").emit("INFO", "diag.gbm.scan_summary",
           scan_total=scan_total, emit_total=len(all_emits), chunks=n_chunks)
 
     # Greedy dedupe: pick highest-probability emissions first, suppress any
@@ -350,7 +357,7 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
     duration_s = len(audio) / sr
     N = int(duration_s / segment_s)
     if N < 4:
-        _diag("INFO", "pairwise", "audio_too_short",
+        get_logger("detector.pairwise").emit("INFO", "diag.pairwise.audio_too_short",
               duration_s=f"{duration_s:.2f}", n_segments=N, required=4)
         return 0.0, None
     # O(N²) duration gate removed: the sliding orchestrator in detect_splices
@@ -368,7 +375,7 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
         try:
             bp = _cqt_band_powers(seg, sr, K, frame_s=0.050, hop_s=0.020)
         except _FitError as e:
-            _diag("WARN", "pairwise", "cqt_skipped", segment=i,
+            get_logger("detector.pairwise").emit("WARN", "diag.pairwise.cqt_skipped", segment=i,
                   cause=e.reason, **e.context)
             bp = np.zeros((K, 2))  # 2 frames so _hotelling_t2 n_min==2 holds
         segment_features.append(bp.T)  # (n_frames, K)
@@ -383,7 +390,7 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
             try:
                 t2 = _hotelling_t2(segment_features[i], segment_features[j])
             except _FitError as e:
-                _diag("INFO", "pairwise", "t2_failed", i=i, j=j,
+                get_logger("detector.pairwise").emit("INFO", "diag.pairwise.t2_failed", i=i, j=j,
                       cause=e.reason, **e.context)
                 t2 = 0.0
                 n_failed += 1
@@ -391,7 +398,7 @@ def _detect_pairwise(audio: np.ndarray, sr: int,
             dist_matrix[j, i] = t2
     total_pairs = N * (N - 1) // 2
     if n_failed and n_failed / total_pairs > 0.1:
-        _diag("WARN", "pairwise", "t2_mass_failure",
+        get_logger("detector.pairwise").emit("WARN", "diag.pairwise.t2_mass_failure",
               n_failed=n_failed, n_total=total_pairs)
 
     # Find best split point via block structure score
@@ -520,7 +527,7 @@ def _hotelling_t2(X: np.ndarray, Y: np.ndarray) -> float:
     # Near-singular pooled covariance is a warning, not a failure.
     cond = float(np.linalg.cond(Sp))
     if cond > 1e8:
-        _diag("INFO", "hotelling", "near_singular_cov",
+        get_logger("detector.hotelling").emit("INFO", "diag.hotelling.near_singular_cov",
               cond=f"{cond:.1e}", ridge=ridge, p=p)
 
     try:
@@ -589,7 +596,7 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
     lo = max(0, center - radius)
     hi = min(len(audio), center + radius)
     if hi - lo < 100:
-        _diag("INFO", "refine", "window_too_small",
+        get_logger("detector.refine").emit("INFO", "diag.refine.window_too_small",
               at_sec=f"{coarse_time:.3f}", window_samples=hi - lo)
         return coarse_time
 
@@ -605,86 +612,6 @@ def _refine_splice_point(audio: np.ndarray, sr: int, coarse_time: float,
 # GPD tail threshold
 # ---------------------------------------------------------------------------
 
-# ===== Diagnostic infrastructure =====
-#
-# All degradation paths (fallback thresholds, singular covariance, degenerate
-# variance, skipped segments, classifier fallbacks) must emit a DIAG line so
-# the full evaluation is observable from stderr alone.
-#
-# Format: 'DIAG <LEVEL>.<component>.<reason> k=v k=v ...'
-#   Example: 'DIAG WARN.crossfade.gpd_unfit fallback=conservative_percentile n=29 min_required=50'
-#
-# Level hierarchy (higher number = noisier): OFF=0 < ERROR=1 < WARN=2 < INFO=3.
-# Set OMC_DIAG_LEVEL env var to filter. Default WARN (shows ERROR+WARN, hides INFO).
-
-_DIAG_ORDER = {"OFF": 0, "ERROR": 1, "WARN": 2, "INFO": 3}
-_DIAG_LEVEL = _DIAG_ORDER.get(
-    os.environ.get("OMC_DIAG_LEVEL", "WARN").upper(), _DIAG_ORDER["WARN"]
-)
-
-
-_DEBUG_LOG_PATH = os.environ.get(
-    "OMC_DIAG_FILE",
-    os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                 ".omc", "autoresearch-debug.log"),
-)
-_DEBUG_LOG_FP = None  # lazy-opened on first emit
-# Rotate when the sink exceeds this many bytes. One .1 backup is kept so
-# callers can still grep the previous iteration after rotation.
-_DEBUG_LOG_MAX_BYTES = int(os.environ.get("OMC_DIAG_FILE_MAX_BYTES", 10 * 1024 * 1024))
-
-
-def _debug_log_rotate_if_needed() -> None:
-    try:
-        if os.path.exists(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > _DEBUG_LOG_MAX_BYTES:
-            global _DEBUG_LOG_FP
-            if _DEBUG_LOG_FP is not None:
-                _DEBUG_LOG_FP.close()
-                _DEBUG_LOG_FP = None
-            backup = _DEBUG_LOG_PATH + ".1"
-            if os.path.exists(backup):
-                os.remove(backup)
-            os.rename(_DEBUG_LOG_PATH, backup)
-    except OSError:
-        pass
-
-
-def _debug_log_write(line: str) -> None:
-    """Append a DIAG line to the forensic debug log (best-effort).
-
-    Captures every DIAG regardless of OMC_DIAG_LEVEL so autoresearch
-    iterations can be diffed later. Stderr filtering still applies.
-    Rotates at OMC_DIAG_FILE_MAX_BYTES (default 10 MB), keeping one
-    `.1` backup. Set OMC_DIAG_FILE="" to disable the sink entirely.
-    """
-    global _DEBUG_LOG_FP
-    if not _DEBUG_LOG_PATH:
-        return
-    _debug_log_rotate_if_needed()
-    try:
-        if _DEBUG_LOG_FP is None:
-            os.makedirs(os.path.dirname(_DEBUG_LOG_PATH), exist_ok=True)
-            _DEBUG_LOG_FP = open(_DEBUG_LOG_PATH, "a", buffering=1)
-        _DEBUG_LOG_FP.write(line + "\n")
-    except OSError:
-        # If disk write fails (read-only fs, quota), silently skip; don't
-        # break the detector over a log file.
-        pass
-
-
-def _diag(level: str, component: str, reason: str, **context) -> None:
-    """Emit a structured diagnostic line to stderr (level-filtered) and,
-    unconditionally, to `.omc/autoresearch-debug.log` for post-hoc forensics.
-    """
-    ctx = " ".join(f"{k}={v}" for k, v in context.items())
-    tail = f" {ctx}" if ctx else ""
-    line = f"DIAG {level}.{component}.{reason}{tail}"
-    # Forensic sink: record every DIAG regardless of OMC_DIAG_LEVEL.
-    _debug_log_write(line)
-    # Stderr: respect the filter so the evaluate.py output stays clean.
-    if _DIAG_ORDER.get(level, _DIAG_ORDER["ERROR"]) > _DIAG_LEVEL:
-        return
-    print(line, file=sys.stderr)
 
 
 class _FitError(Exception):
@@ -724,7 +651,7 @@ def _zscore(x: np.ndarray) -> np.ndarray:
     mu = np.mean(x)
     sd = np.std(x)
     if sd < 1e-8:
-        _diag("WARN", "zscore", "degenerate_variance", n=len(x), std=f"{sd:.2e}")
+        get_logger("detector.zscore").emit("WARN", "diag.zscore.degenerate_variance", n=len(x), std=f"{sd:.2e}")
         return np.zeros_like(x)
     return (x - mu) / sd
 
@@ -736,7 +663,7 @@ def _robust_zscore(x: np.ndarray) -> np.ndarray:
     med = np.median(x)
     mad = np.median(np.abs(x - med))
     if mad < 1e-8:
-        _diag("WARN", "robust_zscore", "degenerate_mad", n=len(x), mad=f"{mad:.2e}")
+        get_logger("detector.robust_zscore").emit("WARN", "diag.robust_zscore.degenerate_mad", n=len(x), mad=f"{mad:.2e}")
         return np.zeros_like(x)
     return (x - med) / (mad * 1.4826)  # 1.4826 scales MAD to std for normal
 

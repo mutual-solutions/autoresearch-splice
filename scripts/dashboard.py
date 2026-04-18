@@ -24,6 +24,18 @@ BASELINE = REPO / ".omc" / "coordination" / "baseline_metrics.json"
 SHAP_ROLLUP = REPO / ".omc" / "shap_rollup.json"
 VERSIONS = REPO / ".omc" / "classifier" / "versions.json"
 
+# US-515 phase 1: optional recent-events augmentation via the unified log.
+# The dashboard's primary surface (results.tsv + baseline + shap_rollup +
+# versions + git log) is unchanged; iter_events() is an additional overlay.
+sys.path.insert(0, str(REPO / "scripts"))
+from log_reader import iter_events  # noqa: E402
+
+
+def _recent_pipeline_failures(limit: int = 3) -> list[dict]:
+    """Return the last `limit` pipeline.failure events (from either source)."""
+    events = list(iter_events(event="pipeline.failure"))
+    return events[-limit:] if events else []
+
 
 def _read_json(p: Path) -> dict:
     try:

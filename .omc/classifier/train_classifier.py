@@ -35,8 +35,14 @@ if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
 from dataset_registry import DATASETS
-from detector import _build_chunk_context, _diag
+from detector import _build_chunk_context
 from features import FEATURE_NAMES, extract_features
+
+# US-515 phase 1: unified structured logger.
+import os as _us515_os
+import sys as _us515_sys
+_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), "..", "coordination"))
+from logger import get_logger  # noqa: E402
 
 LABEL_NOT_SPLICE = 0
 LABEL_HARD_CUT = 1
@@ -131,7 +137,7 @@ def _iter_training_files():
     for ds in DATASETS:
         gt_path = ds.train_path / "ground_truth.json"
         if not gt_path.exists():
-            _diag("WARN", "train", "gt_missing",
+            get_logger("classifier.train").emit("WARN", "diag.train.gt_missing",
                   dataset=ds.id, path=str(gt_path))
             continue
         with open(gt_path) as f:
@@ -139,7 +145,7 @@ def _iter_training_files():
         for name, info in sorted(gt.items()):
             audio_path = ds.train_path / info["path"]
             if not audio_path.exists():
-                _diag("INFO", "train", "audio_missing",
+                get_logger("classifier.train").emit("INFO", "diag.train.audio_missing",
                       dataset=ds.id, name=name)
                 continue
             yield ds.id, name, str(audio_path), info
@@ -222,13 +228,13 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
         try:
             audio, sr = _load_mono(audio_path)
         except Exception as e:
-            _diag("WARN", "train", "load_failed",
+            get_logger("classifier.train").emit("WARN", "diag.train.load_failed",
                   dataset=ds_id, name=name, error=str(e))
             continue
 
         if len(audio) < int(CHUNK_S * sr * 0.5):
             n_skip_short += 1
-            _diag("INFO", "train", "audio_too_short",
+            get_logger("classifier.train").emit("INFO", "diag.train.audio_too_short",
                   dataset=ds_id, name=name, dur=f"{len(audio)/sr:.1f}")
             continue
 

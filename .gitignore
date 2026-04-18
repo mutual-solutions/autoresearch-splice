@@ -68,6 +68,10 @@ data/eval.tar.gz.enc
 .omc/autoresearch-debug.log
 .omc/autoresearch-debug.log.1
 
+# US-515 unified log destination (JSONL, rotation-aware: up to 10 rolls
+# at `.omc/logs/autoresearch.<iso-date>.jsonl` beside the live file).
+.omc/logs/
+
 # Coverage artifacts
 .coverage
 

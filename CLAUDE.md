@@ -122,3 +122,84 @@ Retest does NOT auto-delete the sentinel on abnormal exits — that
 would defeat the SIGKILL hole. The sentinel is only removed on the
 one happy path inside `_try_recover` after the `baseline:` commit is
 confirmed to have landed.
+
+## Unified logging (US-515 phase 1)
+
+All Python emission goes through `.omc/coordination/logger.py`. Canonical
+log file: `.omc/logs/autoresearch.jsonl` (gitignored; rotation-aware —
+50 MB per roll, keeps up to 10 rolls).
+
+```python
+import sys, os
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                ".omc", "coordination"))
+from logger import get_logger
+log = get_logger("detector.gbm")
+log.emit("INFO", "diag.gbm.dedupe", before=120, after=80)
+```
+
+The `.omc/` directory has a leading dot, so `python -m omc.coordination.*`
+is impossible — always invoke via direct file paths
+(`uv run python .omc/coordination/tests/test_smoke_iteration.py`).
+
+Level policy: `DEBUG` / `INFO` / `WARN` / `ERROR` / `CRITICAL`. Event names
+are dotted and live in the taxonomy docstring at the top of `logger.py`
+(`eval.*`, `classifier.*`, `retest.*`, `diag.*`, `pipeline.*`). `validate_logs.py --parse` warns (not fails) on unknown events.
+
+### Oracle redaction
+
+`logger.emit()` redacts oracle-denylist tokens (`combined=`, `splice_f1=`,
+`clean_score=`, `combined_<domain>=`) from string kv values when either
+`oracle_sensitive=True` is passed OR the event name starts with
+`retest.diagnose.` (auto-enabled). Default is no redaction —
+wrapper-owned events carry real metrics.
+
+### Disabled mode
+
+Set `OMC_LOGGER_DISABLED=1` to no-op every `emit()`. Used by tests that
+need to import caller modules without a real log sink. The US-515 smoke
+fixture deliberately does NOT set this — redaction/parse gates need
+real emission.
+
+### Gates
+
+- `uv run python scripts/validate_logs.py --audit` — grep audit over the
+  migrated Python sources (0 residual `_diag(` or bare `print(` in the
+  migrated set).
+- `uv run python scripts/validate_logs.py --parse .omc/logs/autoresearch.jsonl`
+  — schema-parse every line; warn on events outside the taxonomy.
+- `uv run python .omc/coordination/tests/test_smoke_iteration.py` —
+  pre-merge smoke stub. Four gates: fixture emission, parse, reader
+  non-empty, redaction.
+
+### evaluate.py one-time maintainer exemption
+
+Phase 1 migrated `evaluate.py` metric emissions (`splice_f1`, `clean_score`,
+`combined`, opus32k, aggregate, per-dataset, FP/crossfade/loc breakdowns)
+to the unified logger. The PROTECTED-FILE EXEMPTION is a one-time
+maintainer edit — `verify_agent`'s diff audit only fires during
+autoresearch hypothesis iterations, not maintainer commits, so this does
+not collide with the agent loop. The `RESULTS_TSV:` string line remains
+as a carve-out because `run_autoresearch.sh` greps it at 5 sites; that
+migrates in phase 2 alongside the wrapper.
+
+### Carve-outs (stay on legacy strings in phase 1)
+
+- `evaluate.py` `RESULTS_TSV:` line (`run_autoresearch.sh` greps at 5 sites).
+- `evaluate.py` `combined_{ds.id}: ERROR (...)` line (parsed by
+  `verify_agent.run_diagnose` — migrates in phase 3c).
+- `run_autoresearch.sh` — entire 69-site `echo >> $LOG_FILE` surface
+  (migrates in phase 2).
+- `verify_agent._write_retest_report` — operator-facing Markdown
+  (migrates in phase 3b).
+
+### Phase-2 gate
+
+Phase 2 migrates the bash wrapper. Fires when either:
+
+1. ≥20 clean phase-1 iterations (parse-OK + no reader regression + no
+   new logger-surfaced bug), OR
+2. 14 days from phase-1 merge, whichever comes first.
+
+Tracked in `.omc/coordination/phase2_gate.md` (to be added as phase-1
+follow-up).

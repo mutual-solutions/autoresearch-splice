@@ -24,12 +24,17 @@ from pathlib import Path
 
 import numpy as np
 
+# US-515 phase 1: unified structured logger.
+import os as _us515_os
+import sys as _us515_sys
+_us515_sys.path.insert(0, _us515_os.path.join(_us515_os.path.dirname(_us515_os.path.abspath(__file__)), "..", "coordination"))
+from logger import get_logger  # noqa: E402
+
 _HERE = Path(__file__).resolve()
 _ROOT = _HERE.parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from detector import _diag
 
 _DSP_PREFIX = "dsp_"
 
@@ -59,10 +64,10 @@ def _shap_values_per_sample(model, X: np.ndarray):
             shap_vals = raw
         return np.asarray(shap_vals, dtype=np.float64), "shap_tree"
     except ImportError:
-        _diag("INFO", "shap", "using_importance_fallback",
+        get_logger("shap.report").emit("INFO", "diag.shap.using_importance_fallback",
               cause="shap_not_installed")
     except Exception as e:
-        _diag("INFO", "shap", "using_importance_fallback",
+        get_logger("shap.report").emit("INFO", "diag.shap.using_importance_fallback",
               cause="tree_explainer_failed", error=str(e))
 
     try:
@@ -75,7 +80,7 @@ def _shap_values_per_sample(model, X: np.ndarray):
         # wrappings). Use uniform weights so |X| magnitude alone drives
         # the ranking — informative enough for top-k picks and prevents
         # the silent collapse-to-0.01-floor failure.
-        _diag("WARN", "shap", "no_feature_importances",
+        get_logger("shap.report").emit("WARN", "diag.shap.no_feature_importances",
               classifier_type=type(clf).__name__,
               fallback="uniform_weights")
         imp = np.ones(X.shape[1], dtype=np.float64)
@@ -117,13 +122,13 @@ def write_reports(
     if not detections:
         return 0
     if not feature_names:
-        _diag("WARN", "shap", "missing_feature_names",
+        get_logger("shap.report").emit("WARN", "diag.shap.missing_feature_names",
               source=source_file, hint="retrain to regenerate meta.json")
         return 0
 
     X = np.asarray([d["feature_vector"] for d in detections], dtype=np.float64)
     if X.shape[1] != len(feature_names):
-        _diag("WARN", "shap", "feature_length_mismatch",
+        get_logger("shap.report").emit("WARN", "diag.shap.feature_length_mismatch",
               source=source_file, n_features=X.shape[1],
               n_names=len(feature_names))
         return 0
@@ -150,7 +155,7 @@ def write_reports(
         with open(os.path.join(reports_dir, fname), "w") as f:
             json.dump(report, f, indent=2)
 
-    _diag("INFO", "shap", "reports_written",
+    get_logger("shap.report").emit("INFO", "diag.shap.reports_written",
           source=source_file, count=len(detections),
           strategy=strategy, out_dir=reports_dir)
     return len(detections)

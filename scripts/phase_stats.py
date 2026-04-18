@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Per-phase iteration timing stats for the autoresearch loop (US-509).
 
-Parses `.omc/autoresearch.log` for `ITER_SUMMARY` lines emitted by
-run_autoresearch.sh and prints a compact table of median + p95 per phase
-across the trailing N iterations.
+Consumes `wrapper.iteration.phase` events via `scripts.log_reader.iter_events()`.
+The phase-1 dual-format shim also synthesizes them from the legacy
+`ITER_SUMMARY` lines in `.omc/autoresearch.log`; phase 2 will remove that
+branch once the bash wrapper emits JSONL natively.
 
 Phases tracked: claude (hypothesis formation), retrain, eval, verify
 (verify_agent structural checks), note (_append_note), total.
@@ -12,41 +13,23 @@ Phases tracked: claude (hypothesis formation), retrain, eval, verify
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-LOG = REPO / ".omc" / "autoresearch.log"
+sys.path.insert(0, str(REPO / "scripts"))
+from log_reader import iter_events  # noqa: E402
 
 PHASES = ["total", "claude", "retrain", "eval", "verify", "note"]
-ITER_RE = re.compile(
-    r"ITER_SUMMARY\s+iter=(\S+)\s+status=(\S+)\s+"
-    r"total=(\S+)\s+claude=(\S+)\s+retrain=(\S+)\s+"
-    r"eval=(\S+)\s+verify=(\S+)\s+note=(\S+)"
-)
 
 
-def _parse(n: int) -> list[dict]:
-    if not LOG.exists():
-        return []
+def _parse(n: int, legacy_log: Path | None = None) -> list[dict]:
     rows: list[dict] = []
-    with open(LOG) as f:
-        for line in f:
-            m = ITER_RE.search(line)
-            if not m:
-                continue
-            iter_sha, status, total, claude, retrain, eval_, verify, note = m.groups()
-            rows.append({
-                "iter": iter_sha,
-                "status": status,
-                "total": total,
-                "claude": claude,
-                "retrain": retrain,
-                "eval": eval_,
-                "verify": verify,
-                "note": note,
-            })
+    for rec in iter_events(subsystem="wrapper", event="iteration.phase",
+                           legacy_path=legacy_log):
+        rows.append({k: rec.get(k, "-") for k in
+                     ("iter", "status", "total", "claude", "retrain", "eval",
+                      "verify", "note")})
     return rows[-n:]
 
 
@@ -83,9 +66,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--window", type=int, default=20,
                     help="Trailing iterations to evaluate (default: 20)")
+    ap.add_argument("--log", type=Path, default=None,
+                    help="Legacy log path override (test hook; default "
+                         "resolves via log_reader shim)")
     args = ap.parse_args()
 
-    rows = _parse(args.window)
+    rows = _parse(args.window, legacy_log=args.log)
 
     if not rows:
         print("(no iteration summaries yet)")
