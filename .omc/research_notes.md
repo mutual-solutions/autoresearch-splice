@@ -650,3 +650,58 @@ per-domain: combined_english=0.727273 combined_korean=0.483871 combined_singing=
         at the top of detect_splices, dispatch to one of N
         per-domain-trained classifiers).
 
+## 2026-04-18T17:18:36+09:00 — aaad123 (discard, combined=0.446512)
+subject: tonality-conditioned per-emit threshold (flat<0.05 → 0.988)
+per-domain: combined_english=0.759494 combined_korean=0.426230 combined_singing=0.275000
+
+# 2026-04-18 — hypothesis: tonality-conditioned per-emit threshold
+
+(a) HYPOTHESIS. Pure detector.py post-filter. For each GBM emit that
+    passes the standard `GBM_THRESHOLD = 0.982` gate, compute mean
+    spectral flatness over a ±2.0s window around the emit position.
+    If the window is HIGHLY TONAL (`mean_flatness < 0.05`, music /
+    singing-like harmonic content), require the stricter
+    `GBM_THRESHOLD_TONAL = 0.988` for the emit to survive. If the
+    window is less tonal (speech / noise), the standard threshold
+    applies unchanged. New constants, one helper `_mean_flatness`,
+    ~15 lines added. No retrain, no feature change.
+
+(b) WHY this over the 30+ recent failures. The entire failure mode is
+    clean-singing FPs: spec_rolloff_delta / centroid_delta /
+    bandwidth_delta (top-3 SHAP everywhere, 3-5x higher magnitude in
+    singing) fire at song-natural chord transitions at magnitudes
+    indistinguishable from real splices, driving singing clean_fp=6
+    and weakest-domain combined=0.272. Every prior post-filter used
+    either TEMPORAL dynamics (plateau adjacency, persistence far-
+    window) or CLASSIFIER structure (class-margin, asymmetric per-
+    class threshold) or DSP onset-strength percentile -- NONE
+    conditioned the emit gate on AUDIO CONTENT TONALITY. Spectral
+    flatness is the canonical tonality scalar: low flatness means
+    the spectrum is peaky (tonal / harmonic / music / sustained
+    singing), high flatness means the spectrum is flat (noise-like,
+    speech fricatives, ambient noise). Clean singing audio sits at
+    flatness ~0.02-0.04 throughout; speech clean audio sits at
+    ~0.08-0.20. The asymmetry lets a stricter gate target exactly
+    the singing-FP population without touching speech emits. The
+    0.988 tightening vs current 0.982 is meaningful distance (3x
+    the failed 0.9825 step) but still well inside the "high-
+    confidence splice" band where real splices score. Orthogonal
+    to all 30+ prior failures: 6 primary tunables bracketed, 8 GBM
+    hyperparam axes failed, 5 training-data axes failed, 12+
+    feature add/ablation failed, 5 post-filters failed (plateau /
+    class-margin / onset-local-pct / asymmetric-thresh / spec_rolloff
+    persistence) — none used per-emit tonality. Blast radius minimal:
+    new constant + one helper + 4 lines in hit_mask path, no
+    retrain, no feature change. Cost: one rfft per emit × ~30
+    emits × 60 files × ~0.5ms ≈ 1s overhead, inside 243/300s budget.
+
+(c) IF THIS FAILS. Two paths.
+    (1) Tune cutoffs: TONAL_FLATNESS_MAX 0.08 (more permissive) or
+        GBM_THRESHOLD_TONAL 0.985/0.990 to calibrate tightness.
+    (2) Combine: require BOTH mean_flatness<0.05 AND
+        persistence_ratio<0.4 (resurrect persistence filter gated
+        on tonality). Final escalation: per-audio DOMAIN CLASSIFIER
+        routing — train 3 per-domain GBMs, dispatch by cheap audio
+        scalar at the top of detect_splices. Explicit next step in
+        multiple prior post-mortems; never attempted.
+
