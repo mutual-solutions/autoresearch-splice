@@ -95,3 +95,15 @@ reports/
 # Claude's iteration reflection (US-503). Wrapper captures this into
 # .omc/research_notes.md as a note: commit, then truncates this file.
 .omc/last_reflection.md
+
+# US-514 retest subcommand: ephemeral state paths.
+#   - .omc/retest-worktree/ is `git worktree add`ed on --retest runs and
+#     torn down via atexit; crash paths may leave it behind.
+#   - .omc/retest-in-progress is the SIGKILL-safety sentinel written
+#     between main-tree cherry-pick and the baseline commit; loop refuses
+#     to start while it exists.
+#   - .omc/retest-report.md is the per-run operator report; rewritten
+#     each invocation and not worth versioning.
+.omc/retest-worktree/
+.omc/retest-in-progress
+.omc/retest-report.md

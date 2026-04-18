@@ -208,6 +208,231 @@ _detect_deep_orphans() {
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Phase 1 of US-514 retest: internal wrapper verbs. Additive helpers so the
+# retest subcommand can reuse the loop's keep-path semantics without lifting
+# the logic into Python. `_do_keep_path` performs tag + baseline refresh +
+# baseline commit + versions.json append + note append, same as the loop
+# keep branch. `_do_ensure_classifier_fresh` performs the sha-drift gate
+# and retrain. Both are invoked from the dispatcher via the `_keep_path`
+# and `_ensure_classifier_fresh` verbs. The LOOP keep body (lines in the
+# 807-919 band, post-edit) and the loop staleness gate are NOT edited in
+# phase 1 — commit-message byte-identity against historical loop keeps is
+# preserved when `--retest-origin` is absent.
+# ---------------------------------------------------------------------------
+
+_do_keep_path() {
+    # Positional args:
+    #   $1 = hypothesis_commit  (short sha of the commit we are accepting)
+    #   $2 = reported           (combined score as a string)
+    #   $3 = current_best       (prior baseline combined — used in log msg)
+    #   $4 = hypothesis_subject (commit subject minus `hypothesis: ` prefix)
+    #   [--retest-origin <orig_sha>] optional tail args for retest provenance
+    local hypothesis_commit="$1"
+    local reported="$2"
+    local current_best="$3"
+    local hypothesis_subject="$4"
+    shift 4 || true
+    local retest_origin=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --retest-origin)
+                retest_origin="${2:-}"
+                shift 2
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    local baseline_suffix="after keep $(git log -1 --format=%h "$hypothesis_commit")"
+    local note_status="keep"
+    local note_subject="$hypothesis_subject"
+    if [ -n "$retest_origin" ]; then
+        baseline_suffix="after retest-recovery $retest_origin"
+        note_status="keep-retest"
+        note_subject="$hypothesis_subject (retest-recovery of $retest_origin)"
+    fi
+
+    echo "$(date -Iseconds) KEEP-PATH start: hypothesis=$hypothesis_commit reported=$reported prev=$current_best retest_origin=${retest_origin:-none}" >> "$LOG_FILE"
+
+    local VERSION
+    VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
+    git tag "detector-v$VERSION"
+    local SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
+    cp "$PROJECT_DIR/detector.py" "$SNAP"
+
+    # Update baseline_metrics.json from the RESULTS_TSV line on disk.
+    python3 - "$PROJECT_DIR" <<'PYEOF'
+import json, os, subprocess, sys, re, datetime
+proj = sys.argv[1]
+bf = os.path.join(proj, '.omc/coordination/baseline_metrics.json')
+eval_log = os.path.join(proj, '.omc/last_eval.log')
+try:
+    data = json.load(open(bf))
+except Exception:
+    data = {}
+
+tsv = ""
+try:
+    with open(eval_log) as f:
+        for line in f:
+            if line.startswith("RESULTS_TSV:"):
+                tsv = line.strip()
+except FileNotFoundError:
+    pass
+
+def pull(key: str):
+    m = re.search(rf"\b{re.escape(key)}=([^\s]+)", tsv)
+    return m.group(1) if m else None
+
+combined = pull("combined")
+if combined is not None:
+    data["combined"] = float(combined)
+for k in ("combined_mean", "combined_min"):
+    v = pull(k)
+    if v is not None:
+        data[k] = float(v)
+
+per_ds = {}
+for k in list(re.findall(r"\bcombined_([A-Za-z_]+)=", tsv)):
+    if k in ("mean", "min"): continue
+    v = pull(f"combined_{k}")
+    if v is not None:
+        per_ds[k] = float(v)
+if per_ds:
+    data["per_dataset_combined"] = per_ds
+
+per_ds_fp = {}
+for k in list(re.findall(r"\bclean_fp_([A-Za-z_]+)=", tsv)):
+    v = pull(f"clean_fp_{k}")
+    if v is not None:
+        per_ds_fp[k] = int(v)
+if per_ds_fp:
+    data["per_dataset_clean_fp"] = per_ds_fp
+total_fp = pull("clean_fp")
+if total_fp is not None:
+    data["clean_fp_total"] = int(total_fp)
+
+data["git_sha"] = subprocess.check_output(
+    ["git", "rev-parse", "--short", "HEAD"], cwd=proj, text=True
+).strip()
+data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime(
+    "%Y-%m-%dT%H:%M:%SZ"
+)
+json.dump(data, open(bf, "w"), indent=2)
+PYEOF
+
+    if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
+        git add .omc/coordination/baseline_metrics.json
+        git commit -m "baseline: combined=$reported $baseline_suffix" >> "$LOG_FILE" 2>&1
+    fi
+
+    python3 -c "
+import json, subprocess, datetime, os
+vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
+try:
+    data = json.load(open(vf))
+except:
+    data = {'versions': [], 'latest': 0, 'production': 0}
+sha = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
+data['versions'].append({
+    'version': $VERSION, 'git_tag': 'detector-v$VERSION', 'git_sha': sha,
+    'detector_snapshot': 'detector_v${VERSION}.py',
+    'classifier': 'classifier_v${VERSION}.joblib',
+    'combined_dsp': float('$reported'), 'combined_full': None,
+    'timestamp': datetime.datetime.now().isoformat()
+})
+data['latest'] = $VERSION
+json.dump(data, open(vf, 'w'), indent=2)
+"
+
+    # SHAP shift sentinel (US-507): classify the new keep as
+    # STRUCTURAL or LOCAL so the next iteration's research note
+    # picks up the verdict in its reflection preamble.
+    set +e
+    local shap_shift_line
+    shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>>"$LOG_FILE" | head -1)
+    local shift_rc=$?
+    set -e
+    if [ $shift_rc -ne 0 ]; then
+        echo "$(date -Iseconds) PIPELINE_FAILURE: shap_shift.py rc=$shift_rc" >> "$LOG_FILE"
+    fi
+    if [ -n "$shap_shift_line" ]; then
+        echo "$(date -Iseconds) $shap_shift_line" >> "$LOG_FILE"
+        echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
+    fi
+
+    _phase_start note
+    _append_note "$note_status" "$hypothesis_commit" "$note_subject"
+    _phase_end note
+
+    echo "$(date -Iseconds) KEEP-PATH done: detector-v$VERSION committed" >> "$LOG_FILE"
+}
+
+_do_ensure_classifier_fresh() {
+    # Standalone classifier staleness gate for the dispatcher verb (retest
+    # + any future caller). Returns 0 when features.py sha matches the
+    # trained classifier's meta sha OR when a retrain+stage succeeded.
+    # Returns 1 when retrain failed. Does NOT amend onto any caller commit
+    # — that amend-safety branch is loop-specific and stays in run_loop.
+    # When this function retrains successfully AND a `hypothesis:` HEAD is
+    # present, callers (the loop) own commit policy; this function only
+    # stages the artifacts so the caller can amend or commit separately.
+    local features_sha_now features_sha_trained
+    features_sha_now=$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")
+    features_sha_trained=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open('.omc/classifier/fp_classifier.meta.json'))
+    print(d.get('features_py_sha') or '')
+except Exception:
+    print('')
+" 2>/dev/null)
+    if [ -z "$features_sha_now" ] || [ "$features_sha_now" = "$features_sha_trained" ]; then
+        echo "$(date -Iseconds) _ensure_classifier_fresh: fresh (sha=$features_sha_now)" >> "$LOG_FILE"
+        return 0
+    fi
+    echo "$(date -Iseconds) _ensure_classifier_fresh: drift ($features_sha_trained -> $features_sha_now); retraining" >> "$LOG_FILE"
+    local retrain_cmd=()
+    if command -v timeout >/dev/null 2>&1; then
+        retrain_cmd=(timeout 300 uv run python .omc/classifier/train_classifier.py)
+    elif command -v gtimeout >/dev/null 2>&1; then
+        retrain_cmd=(gtimeout 300 uv run python .omc/classifier/train_classifier.py)
+    else
+        retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
+    fi
+    set +e
+    "${retrain_cmd[@]}" >> "$LOG_FILE" 2>&1
+    local rc=$?
+    set -e
+    if [ $rc -ne 0 ]; then
+        echo "$(date -Iseconds) _ensure_classifier_fresh: retrain failed rc=$rc" >> "$LOG_FILE"
+        return 1
+    fi
+    git add .omc/classifier/fp_classifier.joblib \
+            .omc/classifier/fp_classifier.meta.json >> "$LOG_FILE" 2>&1 || true
+    return 0
+}
+
+# Retest sentinel guard: refuse to start the loop while a retest is
+# between main-tree cherry-pick and baseline commit. See
+# .omc/plans/ralplan-retest-discards.md (step 7).
+_RETEST_SENTINEL_PATH="$PROJECT_DIR/.omc/retest-in-progress"
+_refuse_if_retest_sentinel() {
+    if [ -f "$_RETEST_SENTINEL_PATH" ]; then
+        cat >&2 <<SENTINEL_EOF
+ERROR: .omc/retest-in-progress sentinel found — a retest crashed mid-recovery.
+Inspect: .omc/retest-report.md and \`git log --oneline -10\` on main.
+Recover: verify the HEAD commit (cherry-pick may be partial), then
+         rm -f .omc/retest-in-progress
+SENTINEL_EOF
+        return 1
+    fi
+    return 0
+}
+
 run_loop() {
     cd "$PROJECT_DIR"
     rm -f "$STOP_FILE"
@@ -809,112 +1034,13 @@ except Exception:
         echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported, prev best=$current_best)" >> "$LOG_FILE"
         log_to_results_tsv "keep" "$hypothesis_commit" "$hypothesis_subject"
 
-        VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
-        git tag "detector-v$VERSION"
-        SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
-        cp "$PROJECT_DIR/detector.py" "$SNAP"
+        # US-514 phase 1: delegate tag + baseline_metrics.json refresh +
+        # baseline commit + versions.json append + shap-shift + note
+        # append to _do_keep_path. Commit messages are byte-identical to
+        # the pre-phase-1 inline block because --retest-origin is absent
+        # in the loop call path.
+        _do_keep_path "$hypothesis_commit" "$reported" "$current_best" "$hypothesis_subject"
 
-        # Update baseline_metrics.json from the RESULTS_TSV line on disk.
-        python3 - "$PROJECT_DIR" <<'PYEOF'
-import json, os, subprocess, sys, re, datetime
-proj = sys.argv[1]
-bf = os.path.join(proj, '.omc/coordination/baseline_metrics.json')
-eval_log = os.path.join(proj, '.omc/last_eval.log')
-try:
-    data = json.load(open(bf))
-except Exception:
-    data = {}
-
-tsv = ""
-try:
-    with open(eval_log) as f:
-        for line in f:
-            if line.startswith("RESULTS_TSV:"):
-                tsv = line.strip()
-except FileNotFoundError:
-    pass
-
-def pull(key: str):
-    m = re.search(rf"\b{re.escape(key)}=([^\s]+)", tsv)
-    return m.group(1) if m else None
-
-combined = pull("combined")
-if combined is not None:
-    data["combined"] = float(combined)
-for k in ("combined_mean", "combined_min"):
-    v = pull(k)
-    if v is not None:
-        data[k] = float(v)
-
-per_ds = {}
-for k in list(re.findall(r"\bcombined_([A-Za-z_]+)=", tsv)):
-    if k in ("mean", "min"): continue
-    v = pull(f"combined_{k}")
-    if v is not None:
-        per_ds[k] = float(v)
-if per_ds:
-    data["per_dataset_combined"] = per_ds
-
-per_ds_fp = {}
-for k in list(re.findall(r"\bclean_fp_([A-Za-z_]+)=", tsv)):
-    v = pull(f"clean_fp_{k}")
-    if v is not None:
-        per_ds_fp[k] = int(v)
-if per_ds_fp:
-    data["per_dataset_clean_fp"] = per_ds_fp
-total_fp = pull("clean_fp")
-if total_fp is not None:
-    data["clean_fp_total"] = int(total_fp)
-
-data["git_sha"] = subprocess.check_output(
-    ["git", "rev-parse", "--short", "HEAD"], cwd=proj, text=True
-).strip()
-data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime(
-    "%Y-%m-%dT%H:%M:%SZ"
-)
-json.dump(data, open(bf, "w"), indent=2)
-PYEOF
-
-        if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
-            git add .omc/coordination/baseline_metrics.json
-            git commit -m "baseline: combined=$reported after keep $(git log -1 --format=%h "$hypothesis_commit")" >> "$LOG_FILE" 2>&1
-        fi
-
-        python3 -c "
-import json, subprocess, datetime, os
-vf = os.path.join('$PROJECT_DIR', '.omc/classifier/versions.json')
-try:
-    data = json.load(open(vf))
-except:
-    data = {'versions': [], 'latest': 0, 'production': 0}
-sha = subprocess.run(['git','rev-parse','--short','HEAD'], capture_output=True, text=True).stdout.strip()
-data['versions'].append({
-    'version': $VERSION, 'git_tag': 'detector-v$VERSION', 'git_sha': sha,
-    'detector_snapshot': 'detector_v${VERSION}.py',
-    'classifier': 'classifier_v${VERSION}.joblib',
-    'combined_dsp': float('$reported'), 'combined_full': None,
-    'timestamp': datetime.datetime.now().isoformat()
-})
-data['latest'] = $VERSION
-json.dump(data, open(vf, 'w'), indent=2)
-"
-
-        # SHAP shift sentinel (US-507): classify the new keep as
-        # STRUCTURAL or LOCAL so the next iteration's research note
-        # picks up the verdict in its reflection preamble.
-        set +e
-        shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>>"$LOG_FILE" | head -1)
-        _shift_rc=$?
-        set -e
-        if [ $_shift_rc -ne 0 ]; then
-            echo "$(date -Iseconds) PIPELINE_FAILURE: shap_shift.py rc=$_shift_rc" >> "$LOG_FILE"
-        fi
-        if [ -n "$shap_shift_line" ]; then
-            echo "$(date -Iseconds) $shap_shift_line" >> "$LOG_FILE"
-            echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
-        fi
-
-        _phase_start note; _append_note "keep" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
         _phase_end total
         _iter_summary "$hypothesis_commit" "keep"
 
@@ -941,6 +1067,7 @@ run_loop_with_restart() {
 
 case "${1:-help}" in
     start)
+        _refuse_if_retest_sentinel || exit 1
         if tmux has-session -t "$SESSION" 2>/dev/null; then
             echo "Autoresearch already running. Use 'stop' or 'status'."
             exit 1
@@ -1015,10 +1142,21 @@ case "${1:-help}" in
         fi
         ;;
     _loop)
+        _refuse_if_retest_sentinel || exit 1
         run_loop
         ;;
     _loop_restart)
+        _refuse_if_retest_sentinel || exit 1
         run_loop_with_restart
+        ;;
+    _keep_path)
+        # Internal verb for US-514 retest. Args: <hypothesis_sha> <reported_combined> <current_best> <subject> [--retest-origin <sha>]
+        shift
+        _do_keep_path "$@"
+        ;;
+    _ensure_classifier_fresh)
+        # Internal verb for US-514 retest — standalone classifier staleness gate.
+        _do_ensure_classifier_fresh
         ;;
     *)
         echo "Usage: $0 {start|stop|status|dashboard|rollback <version>}"
