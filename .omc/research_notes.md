@@ -1649,3 +1649,83 @@ per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=
     evaluate.py for a prior hypothesis commit under the current code
     state; essential for confirming bug-killed hypotheses post-fix.
 
+## 2026-04-19T19:02:55+09:00 — a4a01d9 (discard, combined=0.418923)
+subject: SIGMOID-calibrate HistGBM (CalibratedClassifierCV cv=5)
+per-domain: combined_english=0.627907 combined_korean=0.452381 combined_singing=0.258824
+
+# 2026-04-19 — hypothesis: SIGMOID-calibrate HistGBM (CalibratedClassifierCV cv=5)
+
+(a) HYPOTHESIS. Pure train_classifier.py change. Wrap the existing
+    HistGradientBoostingClassifier inside
+    `CalibratedClassifierCV(estimator=HistGBM(...), method='sigmoid', cv=5)`
+    as the pipeline's "clf" step. Detector unchanged — CalibratedClassifierCV
+    exposes `predict_proba()` and `classes_` with identical semantics, and
+    shap_report.py already has the AttributeError fallback (US-510/US-511).
+    Manual retrain (~60s on 1200 rows × 5×5 fold/inner-fold), commit
+    joblib + meta + cv_results alongside.
+
+(b) WHY this over the recent failures. Two prior attempts at the
+    REMOTE-HALF angle (MFCC-sim FEATURE f6192f6 lifted singing to 0.288
+    NEW HIGH but tanked english 0.756→0.543; HPR-gated rolloff
+    POST-FILTER e228236 dropped singing to 0.244) both proved the
+    intuition correct but the integration mechanism wrong. Before
+    iterating further on remote-half, the CALIBRATION axis remains
+    unattacked: the prior isotonic attempt (d25f455) was killed at
+    0.010 by the shap_report.py AttributeError on HistGBM (US-510/US-511
+    fixed it). Sigmoid (Platt scaling) is the explicit untried sibling
+    cited in two prior post-mortems and the most-recent e228236
+    reflection ("sigmoid calibration on HistGBM was never completed
+    now that the shap_report.py bug is fixed"). Mechanism: HistGBM's
+    logistic-loss output is notoriously over-confident in its upper-
+    decile tail; the singing FP cluster sits at p ≈ 0.982-0.99 just
+    above the 0.982 gate at chord-transition windows. Sigmoid fits a
+    2-parameter logistic to the score-vs-frequency curve, redistributing
+    overconfident scores down toward their true frequencies. If the
+    cluster's true frequency is ~95%, sigmoid pushes p to ~0.95 (below
+    gate → FP drops). Real splice TPs at p=0.99+ have headroom and
+    largely stay above gate (singing TPs typically at 0.99 hard-cut /
+    0.95-0.98 crossfade — risk concentrated on borderline crossfades).
+    Sigmoid is monotone so rank ordering preserved.
+
+    Orthogonal to all 50+ prior axes: 6 primary tunables bracketed,
+    8 GBM hyperparam axes failed, 5 training-data axes failed, 12+
+    feature add/ablation failed, 7+ post-filter failures, 2 model-
+    class swaps (HistGBM kept, ExtraTrees catastrophic),
+    bootstrap-adversarial failed, isotonic killed by bug,
+    file-level HPR/MFCC routing both failed. ZERO prior calibration
+    axis successfully tested. cv=5 (vs prior isotonic cv=3) gives
+    more stable per-fold sigmoid fits without exploding train cost
+    (HistGBM base fit ~2s × 25 fits = ~50s, well inside 300s).
+
+(c) IF THIS FAILS. (1) Switch to PREFIT mode — train HistGBM on full
+    data, then fit sigmoid on a single GroupKFold-disjoint held-out
+    set (proper file-grouping prevents leakage that default cv=5
+    KFold inside CalibratedClassifierCV may introduce). (2) Try cv=3
+    isotonic again (now that the bug is fixed, the original
+    hypothesis was never genuinely tested). (3) If calibration is
+    fundamentally not the failure mode, escalate to PER-DOMAIN
+    audio augmentation of clean training files (untried — pitch-
+    shift alone won't help deltas, but local time-stretch or local
+    EQ augmentation creates synthetic chord-transition-like
+    spectral shifts in clean rows, widening the not-splice
+    distribution).
+
+(d) Information gaps. Singing OOF F1-per-class (hard_cut / crossfade
+    / not_splice) on the current HistGBM not in CURRENT STATE — only
+    aggregate weighted F1. If sigmoid mostly affects crossfade
+    probability, knowing the class breakdown would predict eval-
+    time recall risk. Also: per-domain CLASS BREAKDOWN of the 6
+    singing clean FPs (hard_cut vs crossfade triggered) would
+    indicate which sigmoid (per-class) does the heavy lifting.
+
+(e) Wrapper enhancements. (1) A SINGING-FP-DUMP block in CURRENT
+    STATE: for each KEPT classifier, list the (file, t_sec, p_hard,
+    p_cross) tuples for the 6 singing clean FPs. Direct visibility
+    into the failure mode lets me design hypotheses that actually
+    target the cluster instead of guessing. (2) Per-class OOF F1 in
+    CURRENT STATE alongside the aggregate weighted F1 — currently I
+    only see the aggregate. (3) A `verify_agent.py --replay <commit>
+    --against HEAD` mode to rerun any prior bug-killed hypothesis
+    under current-fixed code; would unblock isotonic/phase-residual/
+    FILE-LEVEL-flatness without violating the no-repeat rule.
+
