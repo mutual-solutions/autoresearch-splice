@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 import joblib
+import librosa
 import numpy as np
 import soundfile as sf
 from sklearn.ensemble import HistGradientBoostingClassifier
@@ -49,6 +50,15 @@ NEG_PER_CLEAN = 4
 NEG_MIN_DIST_S = 2.0  # must be at least this far from any GT
 RANDOM_STATE = 42
 N_FOLDS = 5
+
+# Pitch-shift augmentation for clean singing chunks only.
+# Targets the singing-domain clean-FP plateau at the weakest-domain
+# combined=0.272 (clean_fp=6). Each ±1 semitone shift creates a
+# synthetic clean chunk whose chord-progression structure is transposed
+# but otherwise preserved, widening the not_splice distribution in the
+# top-SHAP spec_*_delta feature space without touching korean/english
+# training data.
+SINGING_AUG_SHIFTS_SEMITONES = (+1, -1)
 
 MODEL_OUT = _HERE.parent / "fp_classifier.joblib"
 CV_OUT = _HERE.parent / "cv_results.json"
@@ -255,6 +265,43 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
                 "tier": int(info.get("tier", 0)),
                 "file_id": fid,
             })
+
+        # Pitch-shift augmentation: clean singing chunks only.
+        if ds_id == "singing" and not info.get("spliced", False):
+            for shift in SINGING_AUG_SHIFTS_SEMITONES:
+                try:
+                    aug_chunk = librosa.effects.pitch_shift(
+                        chunk.astype(np.float32), sr=sr, n_steps=shift
+                    )
+                except Exception as e:
+                    get_logger("classifier.train").emit(
+                        "WARN", "diag.train.pitch_shift_failed",
+                        dataset=ds_id, name=name, shift=shift, error=str(e),
+                    )
+                    continue
+                aug_name = f"{name}_shift{shift:+d}"
+                aug_candidates = _sample_candidates(
+                    aug_name, info, chunk_start_s, chunk_dur_s,
+                )
+                if not aug_candidates:
+                    continue
+                aug_ctx = _build_chunk_context(aug_chunk, sr)
+                for t_local, label in aug_candidates:
+                    feats = extract_features(aug_chunk, sr, t_local, chunk_ctx=aug_ctx)
+                    X_rows.append([feats[k] for k in FEATURE_NAMES])
+                    y.append(label)
+                    groups.append(fid)
+                    manifest.append({
+                        "dataset": ds_id,
+                        "file": aug_name,
+                        "t_local": round(t_local, 3),
+                        "chunk_start_s": round(chunk_start_s, 3),
+                        "label": int(label),
+                        "tier": int(info.get("tier", 0)),
+                        "file_id": fid,
+                        "augmented": True,
+                        "pitch_shift_semitones": int(shift),
+                    })
 
         n_files += 1
         if n_files % 25 == 0:

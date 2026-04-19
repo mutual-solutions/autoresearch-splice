@@ -92,13 +92,13 @@
       "korean",
       "english"
     ],
-    "n_samples": 1200,
+    "n_samples": 1360,
     "class_counts": {
-      "0": 600,
+      "0": 760,
       "1": 300,
       "2": 300
     }
   },
-  "features_py_sha": null,
-  "training_timestamp": "2026-04-18T09:08:12Z"
+  "features_py_sha": "d47fa048f1cf489b738e86583929c72d2213a240",
+  "training_timestamp": "2026-04-19T14:44:21Z"
 }
