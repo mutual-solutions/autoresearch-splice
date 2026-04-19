@@ -1998,3 +1998,100 @@ per-domain: combined_english=0.712500 combined_korean=0.407407 combined_singing=
     EVAL corpus (not training set) so file-level gating
     thresholds come from the measurement distribution.
 
+## 2026-04-19T23:33:57+09:00 — 7f5f0a0 (discard, combined=0.355048)
+subject: add spec_rolloff_far_delta — persistence-scale companion to top-SHAP spec_rolloff_delta. Mirrored 4-8s pre/post window (mean rolloff over [t+4,t+8] minus mean over [t-8,t-4]) reusing cached feat_rolloff, zero new librosa calls, ~1ms/pos. FEATURE_NAMES 75->76 so classifier auto-retrains via US-505 sha gate. Pairs with existing spec_rolloff_delta (SHAP=1365 in singing) to give GBM the missing time-scale interaction: (big_near AND big_far)=cross-song splice where new source persists >=4s post-t, (big_near AND small_far)=chord transition cycles back within the song's progression so far-window means converge. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Smoke test on synthetic 440->880Hz step at t=20 in 40s signal: far_delta=+449 at step, 0.0 in uniform regions, edge positions (t<5 or t>chunk-5) return 0.0 via guard. Orthogonal to all 60+ prior failures: local_novelty_spec_ratio normalized |delta(t)| by median-of-neighboring-near-deltas (different math, near-scale only); persistence POST-FILTER on rolloff (0.455) hard-coded a ratio threshold rejecting GBM's ability to learn the boundary; remote-half MFCC/rolloff FEATURES/POST-FILTERS used entire chunk halves (10-25s averages dominated by file-averaged character not local discrimination); hf_band/HPSS-percussive changed the FREQUENCY axis not TIME scale. First TIME-SCALE-PAIRED companion feature. Risk-bounded: GBM assigns SHAP~0 and ignores if uninformative; edge guard prevents false firing on short chunks.
+per-domain: combined_english=0.620690 combined_korean=0.320482 combined_singing=0.225000
+
+# 2026-04-19 — hypothesis: spec_rolloff_far_delta (persistence-scale companion feature)
+
+(a) HYPOTHESIS. Add ONE feature `spec_rolloff_far_delta` to features.py
+    (FEATURE_NAMES 75 → 76). It mirrors the existing top-SHAP
+    `spec_rolloff_delta` but at a DIFFERENT time scale: mean rolloff
+    over [t+4, t+8] minus mean rolloff over [t-8, t-4]. No librosa
+    calls — reuses the already-cached `feat_rolloff` frame array.
+    Edge positions (not enough remote context) return 0.0 so they
+    cannot mis-fire. Classifier auto-retrains via US-505 features.py
+    sha gate.
+
+(b) WHY this over the recent 60+ failures. The clean-singing FP plateau
+    (clean_fp=6, weakest-domain combined=0.272) is driven by
+    spec_rolloff_delta firing identically on chord transitions and
+    cross-song splices because the existing feature is computed on
+    ±2s windows — those windows only see the IMMEDIATE shift. The
+    structural difference is PERSISTENCE: a splice is the start of a
+    different source so the rolloff offset persists beyond 4s; a
+    chord transition cycles back as the song's chord progression
+    continues, so rolloff in a 4-second window 4-8s away is similar
+    on both sides. Pairing a near-delta feature (the existing ±2s
+    spec_rolloff_delta, SHAP=1365 in singing) with a far-delta
+    feature (mirrored 4-8s windows) gives GBM the exact interaction
+    it needs:
+      (big_near AND big_far) → cross-song splice
+      (big_near AND small_far) → chord transition cycles back
+      (small_near) → nothing happening
+    GBM naturally represents this as a split chain. Orthogonal to
+    all prior attempts:
+      * local_novelty_spec_ratio (failed) was |delta(t)| /
+        median(|delta(t±4/±8s)|) — a RATIO normalized by the median
+        of near-window deltas at NEARBY points. Completely different
+        math; it measures how "peaked" the near-delta is vs
+        neighbours, not how FAR-window deltas compare.
+      * persistence POST-FILTER on spec_rolloff (failed 0.455) was a
+        HARD-CODED ratio threshold applied after GBM emit. Being a
+        post-filter, it couldn't rescue precision for singing
+        without also costing recall globally; encoded as a feature
+        instead, GBM learns the optimal boundary per domain.
+      * remote-half MFCC / rolloff / HPR POST-FILTERS and FEATURES
+        (failed) used ENTIRE chunk halves (0..t-5s vs t+5s..end),
+        not a stable 4-second window at 4-8s out. Long averages
+        over 10-25s are dominated by overall file-averaged character
+        and lose local discrimination.
+      * hf_band / HPSS-percussive deltas (failed) all change the
+        FREQUENCY AXIS / decomposition, not the TIME SCALE. This is
+        the first TIME-SCALE-PAIRED companion feature.
+    Cost: zero new librosa calls (reuses feat_rolloff), ~1ms per
+    position. Risk-bounded: one new float, GBM assigns SHAP≈0 and
+    ignores it if uninformative. Edge positions zero out cleanly.
+
+(c) IF THIS FAILS. (1) Stack the same far-delta companion for
+    spec_centroid and spec_bandwidth (the other two top-SHAP
+    members), 75→78. Lets GBM see the multi-scale pair on all
+    three primary spectral-magnitude deltas. (2) Replace the
+    SIGNED far-delta with |far_delta| / (|near_delta| + 100) as an
+    explicit persistence RATIO feature — forces the shape of the
+    discriminator rather than trusting GBM to find the interaction.
+    (3) Final escalation: time-stretch / pitch-shift augmentation of
+    clean training files (the one explicit untried direction cited
+    in three prior post-mortems) to widen the not_splice
+    distribution in spec_*_delta space directly, rather than adding
+    ever-more feature columns.
+
+(d) Information gaps. Three persist from prior reflections.
+    (i) The 4 recent catastrophic 0.010 discards (ExtraTrees, gated
+    tonality, isotonic, phase residual, FILE-LEVEL flatness) are
+    now known to be shap_report.py-bug kills (US-510/US-511 fixed),
+    but the no-repeat rule still blocks clean re-testing of those
+    axes. A `failure_reason: pipeline_bug | hypothesis_content`
+    tag in HISTORY would unblock genuine calibration / phase /
+    flatness-routing exploration. (ii) The 6 singing clean FPs
+    (file, t_sec, p_hard, p_cross, p_splice) are still opaque — I
+    am guessing the far-window widths will bite them without
+    measuring actual behaviour on the failure set. (iii) Per-class
+    (hard_cut / crossfade / not_splice) OOF F1 breakdown is not in
+    CURRENT STATE — only aggregate weighted F1.
+
+(e) Wrapper enhancements. (1)
+    `data/train/clean_fp_positions.json` auto-emitted by
+    evaluate.py listing every (domain, file, t_sec, p_hard,
+    p_cross, p_splice) for clean-file false positives on the last
+    KEPT classifier. Turns singing clean_fp=6 into actionable
+    per-position diagnostics. (2) A SHAP-DELTA block in the
+    iteration prompt: for the new KEPT classifier vs prior KEPT
+    classifier, per-feature mean-|SHAP| change. Directly shows
+    whether a newly-added feature is being USED or IGNORED,
+    eliminating the current guessing in post-mortems. (3)
+    `scripts/feature_scale_comparison.py <feature_name>` — plots
+    the feature distribution on eval-splice-positive vs
+    eval-clean-positive rows across domains, so a new feature's
+    discrimination can be visualized BEFORE committing it.
+
