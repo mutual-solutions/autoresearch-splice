@@ -2814,3 +2814,82 @@ per-domain: combined_english=0.690476 combined_korean=0.410811 combined_singing=
     / 2.5 per domain).
 [auto] (no SHAP data for either bba6dbe or 273b8f5)
 
+## 2026-04-20T01:12:49+09:00 — 7255ec6 (discard, combined=0.474696)
+subject: GBM_THRESHOLD 0.982 -> 0.980 leveraging the just-kept DSP-confirmation floor (273b8f5). One-line primary tunable, no retrain. Prior 0.981 FAILED pre-DSP-filter — failure mode was chord-transition FPs with weak DSP (T² < 2.0, smooth phase, low CPE), exactly the population the 273b8f5 filter now culls pre-dedupe. With that safety net, admitting emits in [0.980, 0.982] is a genuinely new interaction: survivors to dedupe are the ones with strong DSP (real splices), while chord-transition FPs in the same p_splice band get dropped by the DSP floor. 0.980 is OUTSIDE prior tried range [0.981, 0.983] — truly untested. Targets borderline TP recall (subtle crossfades / hard cuts near the decision boundary) where bba6dbe's singing 0.388 / korean 0.411 / english 0.690 plateau is gated by recall not precision (english clean_fp=0, korean/singing clean_fp bounded). Pure detector.py one-constant edit, minimum blast radius, zero retrain cost, features.py sha stable so classifier byte-identical. If TPs don't rise but FPs do, fallback is tighten DSP_CONFIRMATION_MIN 2.0 -> 2.2. If TPs rise asymmetrically across classes, fallback is class-specific DSP channel routing (hard_cut needs phase_z >= 2.0, crossfade needs t2_z >= 2.0).
+per-domain: combined_english=0.682353 combined_korean=0.394805 combined_singing=0.397059
+
+# 2026-04-20 — hypothesis: GBM_THRESHOLD 0.982 → 0.980, leveraging the just-kept DSP-confirmation floor
+
+(a) HYPOTHESIS. One-line constant edit in `splice/detector.py`:
+    `GBM_THRESHOLD = 0.982` → `GBM_THRESHOLD = 0.980`. Pure primary
+    tunable, no retrain, no feature change. This admits emits with
+    p_splice in the [0.980, 0.982] band into the DSP-confirmation
+    pipeline added in 273b8f5.
+
+(b) WHY this over recent failures. The GBM_THRESHOLD bracket history
+    — 0.981 FAILED, 0.9825 FAILED, 0.983 FAILED, 0.982 KEPT — was
+    established BEFORE the 273b8f5 DSP-confirmation floor landed.
+    That filter is an AND-gate requiring
+    `max(dsp_phase_z, dsp_t2_z, dsp_cpe_z) >= 2.0` on every
+    surviving emit (pre-dedupe). The previous 0.981 failure mode was
+    FP blow-up on chord transitions with weak DSP (dsp_t2_z < 2.0,
+    smooth phase, low CPE) — exactly the population the new filter
+    now culls automatically. With that safety net in place, lowering
+    the threshold is a genuinely different interaction: the extra
+    admissions in [0.980, 0.982] that survive to dedupe are the ones
+    WITH strong DSP, which are much more likely to be real splices.
+    Borderline TPs at p_splice ≈ 0.980-0.982 (subtle crossfades,
+    hard cuts near the model's decision boundary) are recovered;
+    borderline FPs with weak DSP (chord transitions, natural spectral
+    shifts in singing) get dropped by the DSP floor before dedupe.
+    0.980 is OUTSIDE the prior-tested range [0.981, 0.983] — truly
+    untried. Orthogonal to every prior post-273b8f5 axis (none
+    attempted yet — this is the first hypothesis post-DSP-floor keep).
+    One-constant edit, minimum blast radius, no retrain cost.
+
+(c) IF THIS FAILS. Three paths.
+    (1) If TPs don't increase but FPs do (DSP filter isn't culling
+        enough), tighten DSP_CONFIRMATION_MIN from 2.0 to 2.2 in a
+        follow-up to raise the safety net.
+    (2) If TPs do increase but class-wise (hard_cut vs crossfade)
+        the improvement is asymmetric, try class-specific DSP channel
+        requirements: hard_cut emits require dsp_phase_z ≥ 2.0
+        (mic/room phase break), crossfade emits require dsp_t2_z ≥ 2.0
+        (spectral-distribution shift). Matches each class's physical
+        signature.
+    (3) Final escalation: add a SUM-based DSP floor companion —
+        `|phase_z| + |t2_z| + |cpe_z| ≥ 4.0` — on top of the MAX
+        floor. Captures multi-channel confirmation (real splices
+        activate multiple DSP channels partially) as distinct from
+        single-strong-channel signals (chord transitions that happen
+        to fire only T²).
+
+(d) Information gaps. (i) The 2 singing / 4 korean clean FP positions
+    (file, t_sec, p_hard, p_cross, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z) are still not in CURRENT STATE — I'm reasoning about
+    DSP-confirmation-survivor tail behavior from theory, not from
+    actual per-position data. (ii) The distribution of p_splice for
+    real splice TPs in the [0.980, 0.982] band is unknown — I'm
+    assuming a non-trivial count exists but I have no visibility
+    into the cumulative p_splice distribution. (iii) Post-273b8f5
+    DSP-drop rate is unknown — I don't know how many emits the
+    filter bites per file per domain, so I can't predict how much
+    DSP-filter headroom remains when the 0.980 threshold lets more
+    candidates in.
+
+(e) Wrapper enhancements. (1) A `P_SPLICE_CDF_TAIL` block in CURRENT
+    STATE showing, per domain, the count of p_splice values in each
+    bin [0.980, 0.985, 0.990, 0.995, 0.999, 1.0] for both clean
+    files (FP risk) and spliced files (TP recall) — lets me pick
+    GBM_THRESHOLD deltas surgically from the actual CDF tail rather
+    than from trial and error. (2) A `DSP_DROPPED_PER_FILE` summary
+    block showing per-domain how many emits the DSP floor bites per
+    iteration — lets me see whether the filter is under-used (room
+    to lower GBM_THRESHOLD) or saturated (tightening DSP_MIN is
+    higher-leverage). (3) `CLEAN_FP_POSITIONS` JSON auto-emitted by
+    evaluate.py with each position's full feature vector (at
+    minimum: p_splice, p_hard, p_cross, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, dsp_pairwise_proximity) — turns "korean clean_fp=4"
+    from an opaque scalar into calibrated per-position diagnostics,
+    the single biggest blocker across every detector-side hypothesis.
+
