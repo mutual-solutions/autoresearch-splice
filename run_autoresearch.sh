@@ -14,6 +14,10 @@ CHILD_STDERR_LOG="$PROJECT_DIR/.omc/logs/child-stderr.log"
 mkdir -p "$PROJECT_DIR/.omc/logs"
 RESULTS="$PROJECT_DIR/results.tsv"
 MAX_CONSECUTIVE_DISCARDS=50
+# US-518: disk-safety constants. Tune here if SSD capacity changes.
+FEATURE_CACHE_CAP_MB=8192    # 8 GB absolute cap on .omc/feature_cache/
+DISK_MIN_FREE_KB=$((5 * 1024 * 1024))   # 5 GB — hard exit at loop start
+DISK_ITER_MIN_FREE_KB=$((3 * 1024 * 1024)) # 3 GB — soft stop mid-iteration
 
 # Emit a structured JSONL event via .omc/coordination/log_cli.py (US-515
 # phase 2). Signature:
@@ -31,6 +35,116 @@ _eval_cleanup() {
     if [ -n "${EVAL_TMP_PARENT:-}" ] && [ -d "$EVAL_TMP_PARENT" ]; then
         rm -rf "$EVAL_TMP_PARENT" 2>/dev/null || true
         _log INFO wrapper eval.cleanup parent="$EVAL_TMP_PARENT"
+    fi
+}
+
+# US-518: feature_cache LRU prune with absolute GB cap.
+# Evicts oldest sha dirs first; never evicts the current $OMC_FEATURES_PY_SHA.
+# Called at loop start (replaces US-504 block) and after each keep-path.
+_prune_feature_cache_gb() {
+    local cache_dir="$PROJECT_DIR/.omc/feature_cache"
+    [ -d "$cache_dir" ] || return 0
+    local cur_sha="${OMC_FEATURES_PY_SHA:-}"
+    if [ -z "$cur_sha" ]; then
+        cur_sha="$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")"
+    fi
+
+    # Sum total size in MB.
+    local total_mb
+    total_mb=$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1}')
+    total_mb="${total_mb:-0}"
+
+    if [ "$total_mb" -le "$FEATURE_CACHE_CAP_MB" ]; then
+        return 0
+    fi
+
+    _log INFO wrapper feature_cache.prune.start total_mb="$total_mb" cap_mb="$FEATURE_CACHE_CAP_MB"
+
+    # Evict oldest sha dirs first (LRU by mtime ascending).
+    # Use stat -f on macOS, fallback to ls -t + reverse for portability.
+    # No local array (bash 3.2 compat); iterate via while-read pipeline.
+    while IFS= read -r _prune_d; do
+        [ -d "$_prune_d" ] || continue
+        local _prune_base
+        _prune_base="$(basename "$_prune_d")"
+        # Never evict the currently-active sha.
+        [ "$_prune_base" = "$cur_sha" ] && continue
+        local _prune_dir_mb
+        _prune_dir_mb=$(du -sm "$_prune_d" 2>/dev/null | awk '{print $1}')
+        _prune_dir_mb="${_prune_dir_mb:-0}"
+        _log INFO wrapper feature_cache.prune.lru \
+            stale="$_prune_base" current="$cur_sha" dir_mb="$_prune_dir_mb"
+        rm -rf "$_prune_d"
+        total_mb=$((total_mb - _prune_dir_mb))
+        if [ "$total_mb" -le "$FEATURE_CACHE_CAP_MB" ]; then
+            break
+        fi
+    done < <(
+        # macOS stat + sort gives mtime-ascending order (oldest first).
+        find "$cache_dir" -mindepth 1 -maxdepth 1 -type d \
+            | xargs stat -f '%m %N' 2>/dev/null \
+            | sort -n \
+            | awk '{print $2}' \
+        || find "$cache_dir" -mindepth 1 -maxdepth 1 -type d
+    )
+
+    local final_mb
+    final_mb=$(du -sm "$cache_dir" 2>/dev/null | awk '{print $1}')
+    _log INFO wrapper feature_cache.prune.done total_mb="${final_mb:-0}" cap_mb="$FEATURE_CACHE_CAP_MB"
+}
+
+# US-518: sweep stale /tmp/.ar-eval-* dirs left by ungraceful exits.
+# Dirs older than 2 hours are safe to remove (active evals use fresh dirs).
+_cleanup_stale_tmp_eval() {
+    local count=0
+    local freed_mb=0
+    local _cst_root _cst_d _cst_mb _cst_resolved
+    # macOS: /tmp is a symlink to /private/tmp; use -L (follow symlinks) with
+    # find. Also sweep TMPDIR (/var/folders/.../T/) for the per-user sandbox.
+    # Avoid local arrays (bash 3.2 compat) — iterate roots explicitly.
+    for _cst_root in "/tmp" "${TMPDIR:-}"; do
+        [ -n "$_cst_root" ] || continue
+        [ -d "$_cst_root" ] || continue
+        while IFS= read -r _cst_d; do
+            [ -d "$_cst_d" ] || continue
+            _cst_mb=$(du -sm "$_cst_d" 2>/dev/null | awk '{print $1}')
+            _cst_mb="${_cst_mb:-0}"
+            _log INFO wrapper tmp_eval.sweep path="$_cst_d" mb="$_cst_mb"
+            rm -rf "$_cst_d"
+            count=$((count + 1))
+            freed_mb=$((freed_mb + _cst_mb))
+        done < <(find -L "$_cst_root" -maxdepth 1 -name '.ar-eval-*' -type d -mmin +120 2>/dev/null)
+    done
+
+    _log INFO wrapper tmp_eval.sweep_summary count="$count" freed_mb="$freed_mb"
+}
+
+# US-518: disk-space gate. At loop start: hard-exit if below DISK_MIN_FREE_KB.
+# Mid-iteration: soft-stop via STOP_FILE if below DISK_ITER_MIN_FREE_KB.
+# $1 = "hard" (default) or "soft"
+_check_disk_space() {
+    local mode="${1:-hard}"
+    local avail_kb
+    avail_kb=$(df -k "$PROJECT_DIR" 2>/dev/null | awk 'NR==2 {print $4}')
+    avail_kb="${avail_kb:-0}"
+
+    if [ "$mode" = "hard" ]; then
+        if [ "$avail_kb" -lt "$DISK_MIN_FREE_KB" ]; then
+            _log CRITICAL wrapper preflight.disk_critical \
+                avail_kb="$avail_kb" threshold_kb="$DISK_MIN_FREE_KB" \
+                suggested_action="rm -rf .omc/feature_cache/<stale-sha> and clean /tmp/.ar-eval-*"
+            echo "ERROR: Disk space critical — ${avail_kb} KB free, need ${DISK_MIN_FREE_KB} KB." >&2
+            echo "  Reclaim space: du -sm .omc/feature_cache/* && rm -rf .omc/feature_cache/<stale-sha>" >&2
+            echo "  Then: find /tmp -maxdepth 1 -name '.ar-eval-*' -type d -exec rm -rf {} +" >&2
+            exit 1
+        fi
+    else
+        if [ "$avail_kb" -lt "$DISK_ITER_MIN_FREE_KB" ]; then
+            _log CRITICAL wrapper disk.low \
+                avail_kb="$avail_kb" threshold_kb="$DISK_ITER_MIN_FREE_KB" \
+                action="soft-halt via STOP_FILE"
+            touch "$STOP_FILE"
+        fi
     fi
 }
 
@@ -518,17 +632,27 @@ run_loop() {
     _log INFO wrapper loop.started
 
     # Orphan-hypothesis detection. If a prior run crashed mid-iteration,
-    # HEAD can be an unverified `hypothesis: ...` commit sitting on top of
-    # the last verified keep. Its effect is implicitly baked into whatever
-    # future iterations build on. Either verify it or reset — we reset
-    # because the wrapper can't retroactively re-run supervisor_agent against
-    # a mutated baseline. A human can `git cherry-pick` the orphan back
-    # if they want to revisit it.
+    # HEAD can be an unverified `hypothesis: ...` commit. US-518 smarter
+    # handling: if the orphan changed detector.py/features.py/train_classifier.py
+    # (real hypothesis), proceed as current — the next iteration will
+    # evaluate or replace it naturally. If only metadata changed (safe to
+    # lose), reset as before.
     orphan_subject=$(git log -1 --format=%s 2>/dev/null)
     if echo "$orphan_subject" | grep -q "^hypothesis:"; then
-        _log WARN wrapper orphan.hypothesis sha="$(git log -1 --format=%h)" \
-            subject="$orphan_subject" action="reset HEAD~1"
-        _guarded_reset HEAD~1
+        orphan_sha=$(git log -1 --format=%h)
+        if git diff --quiet HEAD~1 HEAD -- \
+                splice/detector.py splice/features.py \
+                splice/classifier/train_classifier.py 2>/dev/null; then
+            # Metadata-only orphan — safe to reset, no hypothesis code lost.
+            _log WARN wrapper orphan.hypothesis sha="$orphan_sha" \
+                subject="$orphan_subject" action="reset (metadata-only)"
+            _guarded_reset HEAD~1
+        else
+            # Real hypothesis with code changes — proceed as current so the
+            # next iteration evaluates or supersedes it without data loss.
+            _log WARN wrapper orphan.hypothesis sha="$orphan_sha" \
+                subject="$orphan_subject" action="proceed (code changes present)"
+        fi
     fi
 
     _detect_deep_orphans 20
@@ -561,22 +685,11 @@ run_loop() {
     export OMC_EVAL_DATA_ROOT="$EVAL_TMP_ROOT"
     _log INFO wrapper eval.decrypted path="$EVAL_TMP_ROOT"
 
-    # US-504: prune stale feature_cache subdirs. Each features.py sha
-    # gets its own subdir; when the sha changes, the old one becomes
-    # dead weight (~1.5 GB per dir on this dataset). Keep only the dir
-    # matching the current features.py sha.
-    _CUR_FEAT_SHA="$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")"
-    if [ -d "$PROJECT_DIR/.omc/feature_cache" ] && [ -n "$_CUR_FEAT_SHA" ]; then
-        for d in "$PROJECT_DIR/.omc/feature_cache"/*/; do
-            [ -d "$d" ] || continue
-            base="$(basename "$d")"
-            if [ "$base" != "$_CUR_FEAT_SHA" ]; then
-                _log INFO wrapper feature_cache.prune \
-                    stale="$base" current="$_CUR_FEAT_SHA"
-                rm -rf "$d"
-            fi
-        done
-    fi
+    # US-518: sweep stale /tmp eval dirs, then enforce feature_cache cap.
+    _cleanup_stale_tmp_eval
+    _prune_feature_cache_gb
+    # Preflight disk gate — hard-exit if less than 5 GB free.
+    _check_disk_space hard
 
     while true; do
         # Stop signal check
@@ -590,6 +703,10 @@ run_loop() {
             _log WARN wrapper circuit_break consecutive_discards="$MAX_CONSECUTIVE_DISCARDS"
             break
         fi
+
+        # US-518: mid-iteration disk checkpoint (post-claude slot handled below).
+        _check_disk_space soft
+        [ -f "$STOP_FILE" ] && { _log INFO wrapper stop_signal; break; }
 
         # Run one iteration via claude
         _log INFO wrapper iteration.start consecutive_discards="$consecutive_discards"
@@ -983,6 +1100,8 @@ except Exception:
             _retrain_rc=$?
             set -e
             _phase_end retrain
+            # US-518: post-retrain disk checkpoint (before eval starts).
+            _check_disk_space soft
             if [ $_retrain_rc -ne 0 ]; then
                 _log ERROR wrapper retrain.auto.failed rc="$_retrain_rc" \
                     followup="verify-fail"
@@ -1053,6 +1172,8 @@ except Exception:
         eval_exit="${PIPESTATUS[0]}"
         set -e
         _phase_end eval
+        # US-518: post-eval disk checkpoint (before note commit / next iteration).
+        _check_disk_space soft
 
         if [ $eval_exit -ne 0 ]; then
             _log ERROR wrapper eval.crash exit="$eval_exit" \
@@ -1159,6 +1280,8 @@ except Exception:
         # the pre-phase-1 inline block because --retest-origin is absent
         # in the loop call path.
         _do_keep_path "$hypothesis_commit" "$reported" "$current_best" "$hypothesis_subject"
+        # US-518: prune feature_cache after each keep (new classifier sha may have landed).
+        _prune_feature_cache_gb
 
         # US-517: reset crash counter on successful keep
         echo 0 > "$PROJECT_DIR/.omc/supervisor-crash-counter.txt"
@@ -1301,8 +1424,96 @@ PY
         # Internal verb for US-514 retest — standalone classifier staleness gate.
         _do_ensure_classifier_fresh
         ;;
+    selftest)
+        # US-518: in-process smoke tests for disk-safety guards. No side effects
+        # on real feature_cache or loop state. Exits 0 if all pass, 1 otherwise.
+        _selftest_pass=0
+        _selftest_fail=0
+
+        echo "=== US-518 selftest ==="
+
+        # ---- Test A: feature_cache LRU prune --------------------------------
+        # Inline prune logic (mirrors _prune_feature_cache_gb) with a test dir
+        # and a small cap so eviction fires without touching the real cache.
+        _st_cache="$PROJECT_DIR/.omc/feature_cache_selftest_$$"
+        mkdir -p "$_st_cache/sha_old" "$_st_cache/sha_mid" "$_st_cache/sha_cur"
+        dd if=/dev/zero of="$_st_cache/sha_old/data" bs=1M count=2 2>/dev/null
+        dd if=/dev/zero of="$_st_cache/sha_mid/data" bs=1M count=2 2>/dev/null
+        dd if=/dev/zero of="$_st_cache/sha_cur/data" bs=1M count=2 2>/dev/null
+        # Make sha_old clearly older via touch (mtime 2h ago).
+        touch -t "$(date -v-2H +%Y%m%d%H%M 2>/dev/null || date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 202001010000)" \
+            "$_st_cache/sha_old" "$_st_cache/sha_old/data" 2>/dev/null || true
+        _st_cap=5   # 5 MB cap — the 3 dirs (~6 MB) will exceed it
+        _st_cur="sha_cur"
+        _st_total=$(du -sm "$_st_cache" 2>/dev/null | awk '{print $1}')
+        _st_evicted=0
+        if [ "${_st_total:-0}" -gt "$_st_cap" ]; then
+            while IFS= read -r _st_d; do
+                [ -d "$_st_d" ] || continue
+                _st_b="$(basename "$_st_d")"
+                [ "$_st_b" = "$_st_cur" ] && continue
+                rm -rf "$_st_d"
+                _st_evicted=$((_st_evicted + 1))
+                _st_total=$(du -sm "$_st_cache" 2>/dev/null | awk '{print $1}')
+                [ "${_st_total:-0}" -le "$_st_cap" ] && break
+            done < <(
+                find "$_st_cache" -mindepth 1 -maxdepth 1 -type d \
+                    | xargs stat -f '%m %N' 2>/dev/null \
+                    | sort -n | awk '{print $2}' \
+                || find "$_st_cache" -mindepth 1 -maxdepth 1 -type d
+            )
+        fi
+        if [ -d "$_st_cache/sha_cur" ] && [ "$_st_evicted" -gt 0 ]; then
+            echo "  PASS: Test A — cache prune evicted $_st_evicted dir(s); sha_cur preserved"
+            _selftest_pass=$((_selftest_pass + 1))
+        else
+            echo "  FAIL: Test A — cache prune: evicted=$_st_evicted sha_cur=$([ -d "$_st_cache/sha_cur" ] && echo ok || echo missing)"
+            _selftest_fail=$((_selftest_fail + 1))
+        fi
+        rm -rf "$_st_cache"
+
+        # ---- Test B: /tmp stale eval dir sweep ------------------------------
+        _st_tmp_old="/tmp/.ar-eval-selftest-old-$$"
+        _st_tmp_new="/tmp/.ar-eval-selftest-new-$$"
+        mkdir -p "$_st_tmp_old" "$_st_tmp_new"
+        # Make old dir's mtime 3 hours ago.
+        touch -t "$(date -v-3H +%Y%m%d%H%M 2>/dev/null || date -d '3 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 202001010000)" \
+            "$_st_tmp_old" 2>/dev/null || true
+        _cleanup_stale_tmp_eval >/dev/null 2>&1
+        if [ ! -d "$_st_tmp_old" ] && [ -d "$_st_tmp_new" ]; then
+            echo "  PASS: Test B — stale dir removed, fresh dir preserved"
+            _selftest_pass=$((_selftest_pass + 1))
+        else
+            echo "  FAIL: Test B — old_exists=$([ -d "$_st_tmp_old" ] && echo yes || echo no) new_exists=$([ -d "$_st_tmp_new" ] && echo yes || echo no)"
+            _selftest_fail=$((_selftest_fail + 1))
+        fi
+        rm -rf "$_st_tmp_old" "$_st_tmp_new" 2>/dev/null || true
+
+        # ---- Test C: preflight df gate --------------------------------------
+        # Override DISK_MIN_FREE_KB to something astronomically large so the
+        # check fires on any real system, then call _check_disk_space in a
+        # subshell so exit 1 doesn't kill the selftest.
+        _orig_disk_min=$DISK_MIN_FREE_KB
+        _st_disk_exit=0
+        # set +e so the subshell's exit 1 doesn't abort the selftest.
+        set +e
+        (DISK_MIN_FREE_KB=$((999 * 1024 * 1024)); _check_disk_space hard) 2>/dev/null
+        _st_disk_exit=$?
+        set -e
+        DISK_MIN_FREE_KB=$_orig_disk_min
+        if [ "$_st_disk_exit" -ne 0 ]; then
+            echo "  PASS: Test C — preflight df gate fired (exit $_st_disk_exit)"
+            _selftest_pass=$((_selftest_pass + 1))
+        else
+            echo "  FAIL: Test C — preflight df gate did not exit non-zero"
+            _selftest_fail=$((_selftest_fail + 1))
+        fi
+
+        echo "=== selftest complete: ${_selftest_pass} passed, ${_selftest_fail} failed ==="
+        [ "$_selftest_fail" -eq 0 ] && exit 0 || exit 1
+        ;;
     *)
-        echo "Usage: $0 {start|stop|status|dashboard|rollback <version>}"
+        echo "Usage: $0 {start|stop|status|dashboard|rollback <version>|selftest}"
         exit 1
         ;;
 esac
