@@ -2322,3 +2322,96 @@ per-domain: combined_english=0.574468 combined_korean=0.281928 combined_singing=
     CURRENT STATE. Recall loss vs precision loss have different
     remedies (aug vs threshold), and combined splice_f1 hides which.
 
+## 2026-04-20T00:19:03+09:00 — c0d438e (discard, combined=0.435685)
+subject: pitch-shift audio augmentation of SPLICED SINGING training chunks too (±1 semitone) — widen aug gate from `ds_id == "singing" and not info.get("spliced", False)` to `ds_id == "singing"`. Adds ~320 synthetic hard_cut/crossfade rows (class counts 760/300/300 -> 1000/500/500, imbalance 2.53:1 -> 2.00:1) by processing the same 2 pitch-shifted variants per spliced singing file — pitch-shift preserves the splice discontinuity because both sources shift together but their mutual timbre/phase break is pitch-invariant. Targets the english 0.667 (was 0.756) / korean 0.410 (was 0.500) regression that bba6dbe's clean-only aug caused via GLOBAL class-prior shift: HistGBM's multi-class softmax saw 2.5:1 imbalance and pushed ambiguous probabilities toward not_splice, crossing the 0.982 gate the wrong way for borderline splices (english clean_fp=0 confirms not precision). Prior attempts to correct this without touching the aug balance FAILED: f71c526 extend-to-korean (joblib didn't rebuild, axis uninformative), d5cc597 class_weight='balanced' (catastrophic 0.358 — scaled not_splice to 0.60x globally which crushed the aug benefits on singing 0.388->0.283 as much as it tried to help korean/english). The cleaner fix is data-level class balance: also augment spliced singing files so positive rows grow proportionally, matching the clean-singing aug growth. Explicit untried escalation from bba6dbe(c)(2) and d5cc597(c)(3). Orthogonal to every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half variants, 1 class_weight, 1 clean-singing aug, 0 spliced-singing aug. Same fid per aug row keeps GroupKFold clean; unique per-shift salt yields distinct negative positions per variant. Joblib committed alongside code so wrapper's auto-retrain gate cannot silently skip retrain (f71c526 lesson). OOF weighted F1 0.5428 / macro 0.4490 — lower than bba6dbe's 0.6143 because aug-positives are genuinely harder to classify via phase-vocoder artifacts and contaminate the train-side OOF scoring; eval-time behavior on REAL splices is the actual metric.
+per-domain: combined_english=0.643678 combined_korean=0.438356 combined_singing=0.293103
+
+# 2026-04-20 — hypothesis: pitch-shift SPLICED singing training chunks too (±1 semitone)
+
+(a) HYPOTHESIS. In `splice/classifier/train_classifier.py`, widen the aug gate
+    from `ds_id == "singing" and not info.get("spliced", False)` to
+    `ds_id == "singing"`. Same ±1-semitone pitch-shift via
+    `librosa.effects.pitch_shift`, same per-file/per-shift salt, same shared
+    `fid`. The aug block runs on the SAME 60s chunk anchored at the GT
+    splice, so pitch-shifting preserves the splice discontinuity (both
+    sources shift together but their mutual phase/timbre break persists).
+    Each spliced singing file now contributes 2 × (5 pos offsets + 3 negs)
+    = 16 extra rows. Class counts shift 760/300/300 → ~1000/500/500
+    (imbalance 2.53:1 → 2.00:1). Constant `SINGING_AUG_SHIFTS_SEMITONES`
+    unchanged; manifest `augmented` flag already present. features.py sha
+    unchanged so the wrapper's auto-retrain gate is passive — joblib
+    committed alongside the code so the wrapper doesn't skip retrain
+    (f71c526 lesson).
+
+(b) WHY this over the recent failures. The bba6dbe singing-clean aug keep
+    (+0.116 singing) simultaneously dropped english 0.756→0.667 and
+    korean 0.500→0.410. Pure recall loss (english clean_fp=0 confirms
+    not precision) from a GLOBAL class-prior shift: HistGBM's multi-
+    class softmax sees more not_splice rows and pushes ambiguous
+    probabilities toward not_splice, crossing the 0.982 gate in the
+    wrong direction for borderline korean/english splices. Two prior
+    attempts to fix this:
+      * f71c526 (extend aug to korean, returned IDENTICAL metrics)
+        — joblib wasn't rebuilt, axis remains uninformative.
+      * d5cc597 (class_weight='balanced', combined=0.358) — catastrophic
+        over-correction. It scaled not_splice down to 0.60× and each
+        splice class up to 1.51× GLOBALLY, which crushed the aug
+        benefits on singing (0.388→0.283) as much as it helped korean/
+        english; the aug's feature-space coverage of chord-transition
+        events got its loss contribution gutted.
+    The CLEANER fix: restore class balance via DATA (not loss scaling)
+    by also augmenting the spliced singing files. Pitch-shifting a
+    spliced chunk preserves the splice artifact because both sources
+    shift together while their mutual phase/timbre break is
+    pitch-invariant. Explicit untried escalation from bba6dbe(c)(2)
+    ("Apply augmentation to spliced singing files too") and d5cc597(c)(3)
+    ("pitch-shift SPLICED files too maintains class balance by
+    augmenting positives proportionally"). Orthogonal to every prior
+    axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature
+    add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration,
+    2 HPR routing, 3 remote-half variants, 1 class_weight, 1
+    clean-singing aug, 0 spliced-singing aug. Preserves the proven
+    bba6dbe singing-domain gain; expected directional: class-prior
+    shift reversed → korean/english recall recovers (korean 0.410 →
+    ~0.470, english 0.667 → ~0.720) while singing 0.388 holds or
+    grows (more positive examples cover chord-transition-adjacent
+    splices).
+
+(c) IF THIS FAILS. (1) If singing regresses (the phase-vocoder applied
+    to spliced chunks muddles the splice boundary), narrow the aug to
+    ONLY clean + spliced positives only (skip the spliced-file
+    negatives) via an early-exit on `label == LABEL_NOT_SPLICE`.
+    (2) If korean/english stay flat but singing grows further, the
+    class-prior shift was never the main cause — pivot to EQ-tilt
+    augmentation (±3dB low-shelf at 1kHz) to directly widen
+    spec_centroid/rolloff/bandwidth distributions. (3) Final
+    escalation: time-stretch augmentation (rate 0.95/1.05) as a
+    complementary MUTATION axis — preserves pitch, changes
+    articulation speed, different phase-vocoder failure mode.
+
+(d) Information gaps. (i) OOF per-class F1 breakdown after the d5cc597
+    catastrophe is not in CURRENT STATE — I'm inferring the mechanism
+    (splice recall collapse on korean/english) from per-domain combined
+    and the post-mortem note, not from the actual per-class-per-domain
+    eval breakdown. (ii) No per-domain EVAL-side clean FP positions
+    (file + t_sec + p_splice) for any prior classifier — I can't verify
+    that augmented splice positives land in the same feature-space
+    neighborhood as the missed TPs. (iii) No CLASS_COUNTS block in the
+    iteration prompt — I inferred the 760/300/300 starting point from
+    bba6dbe's note, can't verify the current on-disk classifier was
+    actually trained on that split.
+
+(e) Wrapper enhancements. (1) A CLASSIFIER_STATE block at the top of the
+    prompt showing the on-disk joblib's class_counts / OOF_f1_weighted /
+    OOF_f1_per_class / features_py_sha. Directly answers "what
+    classifier will my code run against" and "what aug/sampling is
+    baked in" — removes a major information gap.
+    (2) `scripts/training_aug_visualize.py --shift +1 --feature
+    spec_rolloff_delta` plotting augmented vs original feature
+    distributions per domain on a representative sample, so I can
+    verify aug lands in the intended feature-space region BEFORE
+    committing. (3) `supervisor_agent.py --diff-classifier <new-sha>
+    <old-sha>` reporting per-class OOF F1 delta between two joblibs —
+    turns "retrain side-effect on splice recall" into a measurable
+    quantity pre-commit.
+
