@@ -1503,3 +1503,80 @@ per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=
     set) so I set scalar cutoffs from data instead of training-set
     intuition.
 
+## 2026-04-19T18:28:01+09:00 — f6192f6 (discard, combined=0.438080)
+subject: remote-half MFCC source-continuity similarity
+per-domain: combined_english=0.542857 combined_korean=0.537313 combined_singing=0.288235
+
+# 2026-04-19 — hypothesis: remote-half MFCC source-continuity similarity
+
+(a) HYPOTHESIS. Add ONE feature `source_continuity_mfcc_sim` to features.py.
+    Compute the cosine similarity of two MFCC means:
+      * remote-pre: mean MFCC over [0, t - 5.0]
+      * remote-post: mean MFCC over [t + 5.0, chunk_dur]
+    Return cos(pre_mean, post_mean). The ±5s guard band explicitly EXCLUDES
+    the local region that every existing ±2s delta feature already covers,
+    forcing this feature to capture LONG-RANGE source identity only. For
+    clean files (no splice) both halves are the same source → sim ≈ 1. For
+    real splices at t, pre-half is source A and post-half is source B →
+    sim drops materially. Chord transitions within one song preserve
+    singer / mic / room / mix so remote-pre and remote-post MFCC means
+    remain aligned → sim ≈ 1 → GBM learns "high sim → not_splice" which
+    suppresses the top-SHAP spec_*_delta signal that currently fires FPs.
+    FEATURE_NAMES 75 → 76 so the classifier auto-retrains via US-505.
+    Fallback to sim=1.0 when either remote window is under 8s (edge
+    positions in a 60s chunk at t ∈ [13, 47] have 8s+ pre and post so
+    the guard rarely fires).
+
+(b) WHY this over the 50+ prior failures. Two prior MFCC/chroma similarity
+    features failed: mfcc_cosine_distance at ±2s and chroma_key_cosine
+    at ±8s. Both windows STILL OVERLAP the local emit context — at ±8s
+    chroma, the window includes material close enough to the emit that
+    a chord transition within 8s of t_sec still dominates the chroma mean.
+    This feature explicitly EXCLUDES the ±5s local region and uses the
+    ENTIRE REMAINING chunk on each side — a structurally-different time
+    scale never attempted. The long mean over 8-25s of audio on each
+    side averages out per-chord vocal articulation and per-measure
+    spectral jitter, isolating the stable TIMBRE of the source: singer
+    identity, mic transfer function, room reverb tail, mix coloration.
+    A real splice changes all four; a chord transition within one song
+    changes none. Also orthogonal to every other prior axis (8 GBM
+    hyperparam / 5 training-data / 12+ feature add/ablation / 8+
+    post-filter / 2 model-class swap / 2 calibration / bootstrap-
+    adversarial / singing-routing / 2 file-level routing). MFCC is
+    already computed per chunk in ctx["feat_mfcc"] so the new block is
+    a pure array-slicing + dot-product operation with zero librosa
+    overhead. Risk-bounded: one new float feature, ~1ms per call, GBM
+    can always learn SHAP ≈ 0 and ignore it if uninformative.
+
+(c) IF THIS FAILS. Three paths. (1) Switch the statistic from MFCC mean
+    to mel-PCA mean (captures broader spectral identity) or chroma mean
+    (captures KEY-level identity, complementing the failed ±8s chroma
+    which overlaps locally). (2) Make the feature DIRECTIONAL: keep pre
+    and post sims separately as sim(pre-near, pre-remote) and
+    sim(post-near, post-remote) — the two-sided version distinguishes
+    "pre-half matches remote-pre AND post-half matches remote-post" (no
+    splice) from "one side changes" (splice). (3) Final escalation:
+    PITCH-SHIFT AUGMENTATION of clean training files via
+    librosa.effects.pitch_shift ±1 semitone to widen the clean
+    distribution in spec_*_delta space so memorization-driven FPs drop.
+
+(d) Information gaps. HEAD is at 643f159 (TOP-1-emit-per-file cap) but
+    this commit does not appear in the RECENT FAILED HYPOTHESES or KEEP
+    lists — its outcome is genuinely unknown to me. Baseline is still
+    0.468623. My commit will stack on top so the wrapper will evaluate
+    TOP-1-cap + new feature jointly. A `HEAD_STATE:` block showing
+    which tracked files differ from the baseline commit would let me
+    decide whether to revert or compose. Also still: no failure_reason
+    flag on the 4 catastrophic 0.010 entries in HISTORY.
+
+(e) Wrapper enhancements. (1) Surface current-HEAD diff summary at the
+    top of the iteration prompt: the exact lines that differ from the
+    baseline git_sha, so I know what my commit composes with. (2) A
+    `scripts/per_file_emit_distribution.py` report showing emit counts
+    + top-k p_splice per file across the TRAINING clean files — this
+    would calibrate cardinality-cap / margin-cap / quantile-threshold
+    hypotheses far more reliably than guessing. (3) Auto-tag HISTORY
+    entries with `failure_reason: pipeline_bug | feature_mismatch |
+    hypothesis_content` so the no-repeat rule does not eternally
+    block axes that were killed by the now-fixed shap_report.py crash.
+
