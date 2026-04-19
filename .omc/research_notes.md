@@ -3087,3 +3087,86 @@ per-domain: combined_english=0.707317 combined_korean=0.428169 combined_singing=
     pre-commit signal.
 [auto] (no SHAP data for either 273b8f5 or 865d92f)
 
+## 2026-04-20T01:36:01+09:00 — 29c06cf (keep, combined=0.493815)
+subject: tighten DSP_SUM_MIN 4.5 -> 5.0 (direct cited escalation of 865d92f keep). Pure detector.py change, no retrain, no feature change. 865d92f kept the SUM-based DSP floor (sum of dsp_phase_z + dsp_t2_z + dsp_cpe_z >= 4.5 stacked on max>=2.0), lifting combined 0.479 -> 0.488 and recovering english 2 FPs. Remaining 2 singing + 4 korean clean FPs surviving SUM>=4.5 by construction sit in [4.5, ~5.5] — chord transitions with T^2=3 + partial support (sum 4.5-5.2), speech phoneme shifts with T^2=2.5 + CPE=1.0 (sum 4.5-5.5). Bumping to 5.0 bites this borderline band specifically. Real splices disrupt multiple physical signals so comfortably score sum 6-12 (median median margin >=1 above 5.0). Cited option 2 from 865d92f(c)(2) 'RAISE the SUM threshold to 5.0 if FPs persist'. Orthogonal within the DSP-post-filter axis (5.0 outside only prior tried 4.5) and to every other axis: not GBM_THRESHOLD (7255ec6 failed), not class-specific routing (d256901 failed), not MAX-floor tuning, not audio mutation/classifier/calibration/features. Risk-bounded by stacking: can only DROP emits past MAX, never create TPs; drops require single-channel/low-cumulative pattern. Per-emit cost unchanged (same sum+compare path). Blast radius: detector.py only, 1-line constant + comment refresh, feature_names unchanged so classifier sha stable (no retrain). Smoke: constant loads cleanly, DSP_SUM_MIN=5.0 read by existing gate logic at line 303.
+per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=0.360000
+
+# 2026-04-20 — hypothesis: tighten DSP_SUM_MIN 4.5 → 5.0 (direct escalation of the 865d92f keep)
+
+(a) HYPOTHESIS. One-line constant edit in `splice/detector.py`:
+    `DSP_SUM_MIN = 4.5` → `DSP_SUM_MIN = 5.0`. Pure detector.py change,
+    no retrain, no feature change, zero new logic. The MAX gate
+    (DSP_CONFIRMATION_MIN=2.0) and the stacked SUM gate already filter
+    emits; this simply tightens the SUM threshold by +0.5.
+
+(b) WHY this over recent failures. 865d92f (current keep, 0.487946)
+    quantified per-failure-mode DSP profiles from theory:
+      * Chord transitions (singing FPs): phase≈0.3–0.7, T²≈2.5–3.5,
+        CPE≈0.5–1.0 → sum 3.3–5.2 (often borderline at 4.5).
+      * Speech phoneme shifts (korean FPs): phase≈0.5–1.0, T²≈2–3,
+        CPE≈0.8–1.5 → sum 3.3–5.5 (often borderline).
+      * Real splices: phase=2–5, T²=2–4, CPE=1.5–3 → sum 6–12
+        (comfortably above 5.0).
+    Two singing + four korean FPs survived SUM≥4.5 at 865d92f. Their
+    sums by construction sit in [4.5, ~5.5] — the part of the
+    distribution the 4.5 cutoff didn't reach. Bumping to 5.0 bites
+    exactly that band while leaving real splices untouched (sum
+    6–12 median). This is the cited option 2 from 865d92f(c)(2)
+    ("RAISE the SUM threshold to 5.0 if FPs persist").
+
+    Orthogonal within the DSP-post-filter axis: different tunable,
+    and 5.0 is outside the only previously-tried SUM value (4.5).
+    Orthogonal to every other axis: not GBM_THRESHOLD (7255ec6
+    failed), not class-specific routing (d256901 failed), not
+    MAX-floor tuning, not audio mutation / classifier / calibration /
+    features — all unchanged.
+
+    Risk-bounded: SUM gate only DROPS emits past MAX, never creates
+    TPs. Drops require single-channel-firing or low-cumulative-support
+    pattern (the FP mode). If tightening drops some real subtle
+    crossfades (predicted phase≈2, T²=2, CPE=0.9 → sum=4.9 fails)
+    eval falls below 0.487 and iteration is discarded — pure
+    information gain.
+
+(c) IF THIS FAILS. Three paths.
+    (1) If singing TPs drop (crossfade has inherently weaker phase/CPE
+        and a singing-specific file reaches sum~4.9), CLASS-CONDITION
+        the SUM threshold: hard_cut→5.0, crossfade→4.5. Preserves
+        crossfade recall while tightening on hard_cut where multi-
+        channel confirmation is physically robust.
+    (2) If the bite is too gentle (FPs' sums were already >5.0),
+        escalate further to 5.5 AND add a CPE-specific minimum
+        (dsp_cpe_z ≥ 1.0) — chord transitions almost universally
+        have CPE<1.0 while real splices have CPE≥1.5.
+    (3) Final escalation: stack a GEOMETRIC-MEAN gate
+        GM(max(phase_z,0.1), max(t2_z,0.1), max(cpe_z,0.1)) ≥ 1.2.
+        Less punishing than harmonic mean but still demands multi-
+        channel presence (unlike SUM, which one strong channel can
+        carry).
+
+(d) Information gaps. (i) Per-position DSP z-scores on the 2 singing
+    / 4 korean clean FPs surviving 865d92f's SUM≥4.5 are STILL
+    unknown. I cannot verify these FPs' sums are actually in
+    [4.5, 5.0] — I'm inferring from theoretical distributions in
+    865d92f's post-mortem. (ii) The bite rate of the 865d92f SUM
+    gate (how many emits it drops per domain) is unlogged — I
+    cannot tell whether 4.5 was saturated (no room for 5.0 to add
+    bite) or under-used. (iii) Real splice SUM distribution per
+    domain is unknown — the 5.0 threshold's safety margin against
+    real-splice loss is qualitative.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE: per-position (domain, file, t_sec, label_id,
+    p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, sum, max) from the
+    last kept classifier's eval — removes the biggest blocker across
+    detector-side hypotheses. Every DSP-filter hypothesis today is
+    calibrating thresholds from theory not data. (2) DSP_GATE_BITE
+    block: per-domain {MAX_only_drops, SUM_only_drops, both_drops,
+    survived} so I can preview whether tightening SUM bites harder
+    than tightening MAX, and where the current gate is saturated.
+    (3) `scripts/dsp_sum_sweep.py --thresholds 4.5,4.75,5.0,5.25,5.5`
+    that replays the last keep's emit trace through each proposed
+    SUM threshold and reports per-domain (TPs_lost, FPs_dropped),
+    turning "4.5 vs 5.0" from a guess into a numeric decision.
+[auto] (no SHAP data for either 865d92f or 29c06cf)
+
