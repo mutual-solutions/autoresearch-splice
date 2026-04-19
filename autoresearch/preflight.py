@@ -2,7 +2,7 @@
 """Pre-flight checks for autoresearch-splice agent coordination.
 
 Run before evaluation to verify dataset integrity.
-Usage: uv run python .omc/coordination/preflight.py
+Usage: PYTHONPATH=$PWD uv run python autoresearch/preflight.py
 """
 
 import hashlib
@@ -42,7 +42,10 @@ def _resolve_data_dir(manifest_dataset: str) -> Path:
     OMC_EVAL_DATA_ROOT, rewrite `data/eval/<id>` → `<tmp>/<id>` so preflight
     checks the live tree instead of the (missing) plaintext path.
     """
-    repo_root = Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
+    # Post-US-516: preflight.py lives at `autoresearch/preflight.py`, ONE
+    # level below the repo root. Previously at `.omc/coordination/preflight.py`
+    # (two levels), where the extra `.parent` was correct.
+    repo_root = SCRIPT_DIR.parent
     override = os.environ.get("OMC_EVAL_DATA_ROOT")
     prefix = "data/eval/"
     if override and manifest_dataset.startswith(prefix):

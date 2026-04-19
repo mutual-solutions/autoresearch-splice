@@ -17,10 +17,9 @@ Phase 2 update: the paired legacy `autoresearch.log` fixture and the
 `phase_stats.py --log <legacy_path>` hook are gone — the wrapper now
 emits native JSONL so readers consume the same file as gate 2 parses.
 
-Usage (exact command; NOT `python -m omc.*` — `.omc` has a leading dot so
-packaging under that name is impossible):
+Usage:
 
-  uv run python .omc/coordination/tests/test_smoke_iteration.py
+  PYTHONPATH=$PWD uv run python autoresearch/tests/test_smoke_iteration.py
 """
 
 from __future__ import annotations

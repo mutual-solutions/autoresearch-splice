@@ -1,4 +1,4 @@
-"""Unit tests for .omc/coordination/logger.py (US-515 phase 1)."""
+"""Unit tests for autoresearch/logger.py (US-515 phase 1 / US-516 post-reorg)."""
 
 from __future__ import annotations
 

@@ -2,7 +2,7 @@
 
 Usage
 -----
-    python .omc/coordination/log_cli.py LEVEL SUBSYSTEM EVENT [key=value ...]
+    PYTHONPATH=$PWD uv run python autoresearch/log_cli.py LEVEL SUBSYSTEM EVENT [key=value ...]
 
 Every `key=value` after EVENT becomes a string kwarg on `logger.emit()`.
 Two keys get special treatment (stripped from the kwargs before emit):

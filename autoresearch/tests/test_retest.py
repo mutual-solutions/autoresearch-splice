@@ -1,7 +1,7 @@
 """Tests for US-514 --retest subcommand.
 
 Mirrors the 10 cases listed in .omc/plans/ralplan-retest-discards.md step 8.
-The real correctness gate is `uv run python .omc/coordination/verify_agent.py
+The real correctness gate is `PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py
 --retest-self-test` (AC #17); these pytest mirrors exist for CI visibility
 and to exercise a few invariants the self-test cannot easily pin (sentinel
 SIGKILL-window, loop-start refusal, _keep_path byte-identity).

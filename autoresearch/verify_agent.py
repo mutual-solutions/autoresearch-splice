@@ -2,7 +2,7 @@
 """Mandatory Agent Verification System for autoresearch-splice.
 
 Standalone CLI that verifies agent work via 4 independent checks.
-Usage: uv run python .omc/coordination/verify_agent.py --agent-name <name> --reported-combined <float>
+Usage: PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <float>
 """
 
 import argparse
@@ -1348,8 +1348,10 @@ def _retest_self_test() -> int:
         tsv_lines.append(_row(sha_b, "0.350000", "candidate B"))
         (tmp / "results.tsv").write_text("\n".join(tsv_lines) + "\n")
 
-        # Baseline file at tmp/.omc/coordination/baseline_metrics.json.
-        bl_dir = tmp / ".omc" / "coordination"
+        # Mock baseline fixture — BASELINE_PATH is rebound below so the
+        # tmp location is arbitrary; we use `autoresearch/` for parity
+        # with the post-US-516 live layout.
+        bl_dir = tmp / "autoresearch"
         bl_dir.mkdir(parents=True, exist_ok=True)
         (bl_dir / "baseline_metrics.json").write_text(
             json.dumps({"combined": 0.5, "timestamp": _utc_iso()})
