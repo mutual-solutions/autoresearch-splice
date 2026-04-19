@@ -123,11 +123,14 @@ would defeat the SIGKILL hole. The sentinel is only removed on the
 one happy path inside `_try_recover` after the `baseline:` commit is
 confirmed to have landed.
 
-## Unified logging (US-515 phase 1)
+## Unified logging (US-515 phases 1 + 2)
 
-All Python emission goes through `.omc/coordination/logger.py`. Canonical
-log file: `.omc/logs/autoresearch.jsonl` (gitignored; rotation-aware —
-50 MB per roll, keeps up to 10 rolls).
+All emission — Python **and** bash wrapper — goes through
+`.omc/coordination/logger.py`. Canonical log file:
+`.omc/logs/autoresearch.jsonl` (gitignored; rotation-aware — 50 MB per
+roll, keeps up to 10 rolls). Freeform subprocess stdout/stderr lives
+alongside it at `.omc/logs/child-stderr.log` so the JSONL stream stays
+structured.
 
 ```python
 import sys, os
@@ -144,7 +147,27 @@ is impossible — always invoke via direct file paths
 
 Level policy: `DEBUG` / `INFO` / `WARN` / `ERROR` / `CRITICAL`. Event names
 are dotted and live in the taxonomy docstring at the top of `logger.py`
-(`eval.*`, `classifier.*`, `retest.*`, `diag.*`, `pipeline.*`). `validate_logs.py --parse` warns (not fails) on unknown events.
+(`eval.*`, `classifier.*`, `retest.*`, `diag.*`, `pipeline.*`,
+`wrapper.*`, `note.*`, `tunable.*`, `notebook.*`). `validate_logs.py --parse`
+warns (not fails) on unknown events.
+
+### Bash emission (phase 2)
+
+`run_autoresearch.sh` emits structured events via its `_log` helper, which
+shells out to `.omc/coordination/log_cli.py`:
+
+```bash
+_log LEVEL SUBSYSTEM EVENT [key=value ...]
+# e.g.
+_log INFO wrapper iteration.start consecutive_discards="$n"
+```
+
+Reserved kv flags: `claude_visible=true`, `oracle_sensitive=true`. Values
+are always strings — use the Python logger directly when you need native
+numeric types. Logging failures are suppressed; `_log` never blocks the
+loop. Subprocess stdout/stderr (git, retrain, evaluate.py) redirects to
+`$CHILD_STDERR_LOG` (= `.omc/logs/child-stderr.log`), NOT to the JSONL
+log, so it cannot corrupt the structured stream.
 
 ### Oracle redaction
 
@@ -163,9 +186,10 @@ real emission.
 
 ### Gates
 
-- `uv run python scripts/validate_logs.py --audit` — grep audit over the
-  migrated Python sources (0 residual `_diag(` or bare `print(` in the
-  migrated set).
+- `uv run python scripts/validate_logs.py --audit` — grep audit. Phase-1
+  tier: 0 residual `_diag(` in migrated Python sources. Phase-2 tier: 0
+  residual `echo ... >> $LOG_FILE` in `run_autoresearch.sh` (the wrapper
+  must emit exclusively via `_log`).
 - `uv run python scripts/validate_logs.py --parse .omc/logs/autoresearch.jsonl`
   — schema-parse every line; warn on events outside the taxonomy.
 - `uv run python .omc/coordination/tests/test_smoke_iteration.py` —
@@ -183,23 +207,32 @@ not collide with the agent loop. The `RESULTS_TSV:` string line remains
 as a carve-out because `run_autoresearch.sh` greps it at 5 sites; that
 migrates in phase 2 alongside the wrapper.
 
-### Carve-outs (stay on legacy strings in phase 1)
+### Carve-outs (remaining after phase 2)
 
-- `evaluate.py` `RESULTS_TSV:` line (`run_autoresearch.sh` greps at 5 sites).
+- `evaluate.py` `RESULTS_TSV:` line (`run_autoresearch.sh` greps at 4 sites;
+  phase 3a). Mirrored to `.omc/logs/child-stderr.log` via `tee` but the
+  authoritative parse target remains `.omc/last_eval.log`.
 - `evaluate.py` `combined_{ds.id}: ERROR (...)` line (parsed by
-  `verify_agent.run_diagnose` — migrates in phase 3c).
-- `run_autoresearch.sh` — entire 69-site `echo >> $LOG_FILE` surface
-  (migrates in phase 2).
-- `verify_agent._write_retest_report` — operator-facing Markdown
-  (migrates in phase 3b).
+  `verify_agent.run_diagnose`; phase 3c).
+- `verify_agent._write_retest_report` — operator-facing Markdown (phase 3b).
+- `.omc/last_reflection.md` — claude reflection scratch (IPC between the
+  claude subprocess and `_append_note`, not a log). Truncated each
+  iteration; remains out of the unified log.
 
-### Phase-2 gate
+### Phase-2 completion
 
-Phase 2 migrates the bash wrapper. Fires when either:
+Phase-2 migration landed with this PR. Scope:
 
-1. ≥20 clean phase-1 iterations (parse-OK + no reader regression + no
-   new logger-surfaced bug), OR
-2. 14 days from phase-1 merge, whichever comes first.
-
-Tracked in `.omc/coordination/phase2_gate.md` (to be added as phase-1
-follow-up).
+- `_log` bash helper + `.omc/coordination/log_cli.py` CLI wrapper
+- All 47+ `echo ... >> $LOG_FILE` sites in `run_autoresearch.sh` rewritten
+  as `_log` calls
+- Subprocess stdout/stderr redirected to `.omc/logs/child-stderr.log`
+- Legacy-shim `_iter_legacy_events` deleted from `scripts/log_reader.py`
+  (readers now pure JSONL)
+- `scripts/tunable_frontier.py` emits `tunable.frontier.snapshot`; wrapper
+  captures its stdout block directly for prompt injection
+- `scripts/notebook_digest.py` emits `notebook.digest.compacted`
+- Legacy files deleted: `.omc/autoresearch.log`, `.omc/autoresearch-debug.log`,
+  `.omc/autoresearch-debug.log.1`, `.omc/tunable_frontier.txt`
+- `scripts/validate_logs.py --audit` gained bash tier
+- `.omc/coordination/tests/test_log_readers.py` rewritten for native JSONL

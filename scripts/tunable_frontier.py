@@ -6,14 +6,19 @@ joined with their keep/discard status, and emits per-tunable summary
 lines so claude can see which values have been tried on each axis.
 Supported tunables: GBM_THRESHOLD, GBM_MIN_SEP_S, ANALYSIS_STRIDE_S.
 
-Output format (one line per tunable):
+Output format (one line per tunable, printed to stdout):
   GBM_THRESHOLD: 7 tried (kept: 0.983, 0.982; failed: 0.980, 0.981, 0.98)
                  range [0.978, 0.985]  current 0.983
+
+US-515 phase 2: also emits a `tunable.frontier.snapshot` JSONL event so
+the rendering is captured in the unified log. The wrapper consumes the
+stdout block directly for prompt injection (no intermediate text file).
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -21,9 +26,13 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 RESULTS_TSV = REPO / "results.tsv"
 DETECTOR = REPO / "detector.py"
-DEFAULT_OUTPUT = REPO / ".omc" / "tunable_frontier.txt"
+
+sys.path.insert(0, str(REPO / ".omc" / "coordination"))
+from logger import get_logger  # noqa: E402
 
 TUNABLES = ["GBM_THRESHOLD", "GBM_MIN_SEP_S", "ANALYSIS_STRIDE_S"]
+
+_log = get_logger("tunable.frontier")
 
 
 def _current_value(name: str) -> str | None:
@@ -111,19 +120,28 @@ def format_frontier(per: dict[str, dict]) -> list[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
-                    help=f"Output path (default: {DEFAULT_OUTPUT})")
-    ap.add_argument("--stdout", action="store_true",
-                    help="Print to stdout instead of writing to --output")
+    ap.add_argument(
+        "--output", type=Path, default=None,
+        help="Deprecated legacy sink. If omitted, writes to stdout (the "
+             "wrapper captures stdout directly for prompt injection).",
+    )
     args = ap.parse_args()
 
-    lines = format_frontier(build_frontier())
+    per = build_frontier()
+    lines = format_frontier(per)
     blob = "\n".join(lines)
-    if args.stdout:
-        print(blob)
-    else:
+
+    # Structured audit event — captures the full block so the unified log
+    # has a self-contained snapshot regardless of whether stdout is
+    # redirected elsewhere.
+    counts = {name: len(per[name]["values"]) for name in TUNABLES}
+    _log.emit("INFO", "tunable.frontier.snapshot", block=blob, **counts)
+
+    if args.output is not None:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(blob + "\n")
+    else:
+        sys.stdout.write(blob + "\n")
     return 0
 
 

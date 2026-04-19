@@ -6,9 +6,22 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SESSION="autoresearch"
 STOP_FILE="$PROJECT_DIR/.omc/autoresearch-stop"
-LOG_FILE="$PROJECT_DIR/.omc/autoresearch.log"
+# US-515 phase 2: structured events go to the unified JSONL log (via `_log`).
+# Freeform subprocess stdout/stderr goes to the child-stderr sidecar so it
+# does not corrupt the JSONL stream. Both live under .omc/logs/ (gitignored).
+CHILD_STDERR_LOG="$PROJECT_DIR/.omc/logs/child-stderr.log"
+mkdir -p "$PROJECT_DIR/.omc/logs"
 RESULTS="$PROJECT_DIR/results.tsv"
 MAX_CONSECUTIVE_DISCARDS=50
+
+# Emit a structured JSONL event via .omc/coordination/log_cli.py (US-515
+# phase 2). Signature:
+#     _log LEVEL SUBSYSTEM EVENT [key=value ...]
+# Reserved key=value flags: `claude_visible=true`, `oracle_sensitive=true`.
+# Failures are suppressed — logging must never block the loop.
+_log() {
+    uv run python "$PROJECT_DIR/.omc/coordination/log_cli.py" "$@" 2>>"$CHILD_STDERR_LOG" || true
+}
 
 _eval_cleanup() {
     # Shred (best-effort) and remove the decrypted eval tree. Called on
@@ -16,7 +29,7 @@ _eval_cleanup() {
     # eval audio never outlives the loop process.
     if [ -n "${EVAL_TMP_PARENT:-}" ] && [ -d "$EVAL_TMP_PARENT" ]; then
         rm -rf "$EVAL_TMP_PARENT" 2>/dev/null || true
-        echo "$(date -Iseconds) Eval cleanup: removed $EVAL_TMP_PARENT" >> "$LOG_FILE"
+        _log INFO wrapper eval.cleanup parent="$EVAL_TMP_PARENT"
     fi
 }
 
@@ -32,7 +45,7 @@ _phase_end() {
     local t0_var="_PHASE_${name}_T0"
     local t0="${!t0_var:-$SECONDS}"
     local elapsed=$((SECONDS - t0))
-    echo "$(date -Iseconds) PHASE ${name}: ${elapsed}s" >> "$LOG_FILE"
+    _log INFO wrapper phase.finished phase="$name" elapsed_s="$elapsed"
     eval "ITER_${name}_S=$elapsed"
 }
 _phase_skip() {
@@ -47,11 +60,13 @@ _reset_iter_timers() {
 _iter_summary() {
     local sha="$1"
     local status="$2"
-    echo "$(date -Iseconds) ITER_SUMMARY iter=${sha} status=${status}" \
-         "total=${ITER_total_S:-?} claude=${ITER_claude_S:-?}" \
-         "retrain=${ITER_retrain_S:-?} eval=${ITER_eval_S:-?}" \
-         "verify=${ITER_verify_S:-?} note=${ITER_note_S:-?}" \
-         >> "$LOG_FILE"
+    # Field names are load-bearing: scripts/phase_stats.py reads them off
+    # this event verbatim. `-` = phase skipped; `?` = never-set (bug).
+    _log INFO wrapper iteration.phase \
+        iter="${sha}" status="${status}" \
+        total="${ITER_total_S:-?}" claude="${ITER_claude_S:-?}" \
+        retrain="${ITER_retrain_S:-?}" eval="${ITER_eval_S:-?}" \
+        verify="${ITER_verify_S:-?}" note="${ITER_note_S:-?}"
 }
 
 # Paths that MUST survive every hypothesis rollback. Wrapper and
@@ -77,7 +92,7 @@ _guard_stash_push() {
     fi
     git stash push --include-untracked --quiet \
         -m "autoresearch-guard-$$-$RANDOM" \
-        -- "${_GUARD_PATHS[@]}" 2>> "$LOG_FILE" || return 1
+        -- "${_GUARD_PATHS[@]}" 2>>"$CHILD_STDERR_LOG" || return 1
     return 0
 }
 
@@ -85,8 +100,9 @@ _guard_stash_pop() {
     local top_label
     top_label=$(git stash list -1 2>/dev/null | grep -oE 'autoresearch-guard-[0-9]+-[0-9]+' | head -1)
     [ -z "$top_label" ] && return 0
-    if ! git stash pop --quiet 2>>"$LOG_FILE"; then
-        echo "$(date -Iseconds) WARN: guard stash pop conflict — stash $top_label preserved; recover with 'git stash list / apply'" >> "$LOG_FILE"
+    if ! git stash pop --quiet 2>>"$CHILD_STDERR_LOG"; then
+        _log WARN wrapper guard.stash_conflict stash="$top_label" \
+            recover="git stash list / apply"
         return 1
     fi
     return 0
@@ -98,7 +114,7 @@ _guarded_reset() {
     local target="$1"
     local stashed=0
     _guard_stash_push && stashed=1 || stashed=0
-    git reset --hard "$target" >> "$LOG_FILE" 2>&1
+    git reset --hard "$target" >>"$CHILD_STDERR_LOG" 2>&1
     local rc=$?
     [ $stashed -eq 1 ] && _guard_stash_pop
     return $rc
@@ -149,15 +165,17 @@ _append_note() {
 
     if ! git diff --quiet "$notes" 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard "$notes")" ]; then
         git add "$notes"
-        git commit -m "note: ${status} ${short_sha}" >> "$LOG_FILE" 2>&1 || true
+        git commit -m "note: ${status} ${short_sha}" >>"$CHILD_STDERR_LOG" 2>&1 || true
     fi
+    _log INFO wrapper note.appended status="$status" sha="$short_sha" \
+        combined="$combined" claude_visible=true
 
     # Compact if we've grown past the threshold.
-    uv run python "$PROJECT_DIR/scripts/notebook_digest.py" >> "$LOG_FILE" 2>&1 \
-        || echo "$(date -Iseconds) PIPELINE_FAILURE: notebook_digest.py rc=$?" >> "$LOG_FILE"
+    uv run python "$PROJECT_DIR/scripts/notebook_digest.py" >>"$CHILD_STDERR_LOG" 2>&1 \
+        || _log ERROR pipeline failure script=notebook_digest.py rc="$?"
     if ! git diff --quiet "$notes" 2>/dev/null; then
         git add "$notes"
-        git commit -m "note: digest compaction" >> "$LOG_FILE" 2>&1 || true
+        git commit -m "note: digest compaction" >>"$CHILD_STDERR_LOG" 2>&1 || true
     fi
 }
 
@@ -196,14 +214,15 @@ _detect_deep_orphans() {
            && grep -q "^${sha:0:7}	" "$results_tsv" 2>/dev/null; then
             continue
         fi
-        local msg="$(date -Iseconds) DEEP-ORPHAN: ${sha:0:7} \"${subject}\" — no paired baseline: in next 3 commits, no row in results.tsv"
-        echo "$msg" >&2
-        echo "$msg" >> "$LOG_FILE"
+        local short="${sha:0:7}"
+        echo "DEEP-ORPHAN: ${short} \"${subject}\" — no paired baseline: in next 3 commits, no row in results.tsv" >&2
+        _log WARN wrapper orphan.deep sha="$short" subject="$subject"
         count=$((count + 1))
     done < <(git log --format='%H|%s' "$branch_range" 2>/dev/null)
 
     if [ $count -gt 0 ]; then
-        echo "$(date -Iseconds) DEEP-ORPHAN: found $count suspect commit(s) in last $depth; review with 'git log --oneline -$depth'" >> "$LOG_FILE"
+        _log WARN wrapper orphan.deep.summary count="$count" depth="$depth" \
+            hint="git log --oneline -$depth"
     fi
     return 0
 }
@@ -255,7 +274,9 @@ _do_keep_path() {
         note_subject="$hypothesis_subject (retest-recovery of $retest_origin)"
     fi
 
-    echo "$(date -Iseconds) KEEP-PATH start: hypothesis=$hypothesis_commit reported=$reported prev=$current_best retest_origin=${retest_origin:-none}" >> "$LOG_FILE"
+    _log INFO wrapper keep_path.start hypothesis="$hypothesis_commit" \
+        reported="$reported" prev="$current_best" \
+        retest_origin="${retest_origin:-none}"
 
     local VERSION
     VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
@@ -326,7 +347,8 @@ PYEOF
 
     if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
         git add .omc/coordination/baseline_metrics.json
-        git commit -m "baseline: combined=$reported $baseline_suffix" >> "$LOG_FILE" 2>&1
+        git commit -m "baseline: combined=$reported $baseline_suffix" \
+            >>"$CHILD_STDERR_LOG" 2>&1
     fi
 
     python3 -c "
@@ -353,14 +375,14 @@ json.dump(data, open(vf, 'w'), indent=2)
     # picks up the verdict in its reflection preamble.
     set +e
     local shap_shift_line
-    shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>>"$LOG_FILE" | head -1)
+    shap_shift_line=$(uv run python "$PROJECT_DIR/scripts/shap_shift.py" 2>>"$CHILD_STDERR_LOG" | head -1)
     local shift_rc=$?
     set -e
     if [ $shift_rc -ne 0 ]; then
-        echo "$(date -Iseconds) PIPELINE_FAILURE: shap_shift.py rc=$shift_rc" >> "$LOG_FILE"
+        _log ERROR pipeline failure script=shap_shift.py rc="$shift_rc"
     fi
     if [ -n "$shap_shift_line" ]; then
-        echo "$(date -Iseconds) $shap_shift_line" >> "$LOG_FILE"
+        _log INFO wrapper keep_path.shap_shift line="$shap_shift_line"
         echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
     fi
 
@@ -368,7 +390,7 @@ json.dump(data, open(vf, 'w'), indent=2)
     _append_note "$note_status" "$hypothesis_commit" "$note_subject"
     _phase_end note
 
-    echo "$(date -Iseconds) KEEP-PATH done: detector-v$VERSION committed" >> "$LOG_FILE"
+    _log INFO wrapper keep_path.done version="$VERSION"
 }
 
 _do_ensure_classifier_fresh() {
@@ -391,10 +413,11 @@ except Exception:
     print('')
 " 2>/dev/null)
     if [ -z "$features_sha_now" ] || [ "$features_sha_now" = "$features_sha_trained" ]; then
-        echo "$(date -Iseconds) _ensure_classifier_fresh: fresh (sha=$features_sha_now)" >> "$LOG_FILE"
+        _log INFO wrapper retrain.fresh sha="$features_sha_now"
         return 0
     fi
-    echo "$(date -Iseconds) _ensure_classifier_fresh: drift ($features_sha_trained -> $features_sha_now); retraining" >> "$LOG_FILE"
+    _log INFO wrapper retrain.drift \
+        was="$features_sha_trained" now="$features_sha_now"
     local retrain_cmd=()
     if command -v timeout >/dev/null 2>&1; then
         retrain_cmd=(timeout 300 uv run python .omc/classifier/train_classifier.py)
@@ -404,15 +427,15 @@ except Exception:
         retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
     fi
     set +e
-    "${retrain_cmd[@]}" >> "$LOG_FILE" 2>&1
+    "${retrain_cmd[@]}" >>"$CHILD_STDERR_LOG" 2>&1
     local rc=$?
     set -e
     if [ $rc -ne 0 ]; then
-        echo "$(date -Iseconds) _ensure_classifier_fresh: retrain failed rc=$rc" >> "$LOG_FILE"
+        _log ERROR wrapper retrain.failed rc="$rc" caller=ensure_classifier_fresh
         return 1
     fi
     git add .omc/classifier/fp_classifier.joblib \
-            .omc/classifier/fp_classifier.meta.json >> "$LOG_FILE" 2>&1 || true
+            .omc/classifier/fp_classifier.meta.json >>"$CHILD_STDERR_LOG" 2>&1 || true
     return 0
 }
 
@@ -441,10 +464,13 @@ run_loop() {
 
     # Combined crash-log + eval-cleanup trap. Shred ordering matters: we
     # cleanup AFTER logging the crash so the cleanup failure (if any)
-    # doesn't eat the crash signal.
-    trap '_trap_ec=$?; echo "$(date -Iseconds) CRASH: loop terminated (signal $_trap_ec)" >> "$LOG_FILE"; _eval_cleanup' EXIT HUP INT TERM
+    # doesn't eat the crash signal. `_log` is a Python-subprocess call; on
+    # clean signals (HUP/INT/TERM) the shell has time to run it. On SIGKILL
+    # the trap does not fire at all, so there is no asymmetry to preserve.
+    trap '_trap_ec=$?; _log CRITICAL wrapper loop.crash signal=$_trap_ec; _eval_cleanup' \
+        EXIT HUP INT TERM
 
-    echo "$(date -Iseconds) Autoresearch loop started" >> "$LOG_FILE"
+    _log INFO wrapper loop.started
 
     # Orphan-hypothesis detection. If a prior run crashed mid-iteration,
     # HEAD can be an unverified `hypothesis: ...` commit sitting on top of
@@ -455,7 +481,8 @@ run_loop() {
     # if they want to revisit it.
     orphan_subject=$(git log -1 --format=%s 2>/dev/null)
     if echo "$orphan_subject" | grep -q "^hypothesis:"; then
-        echo "$(date -Iseconds) ORPHAN hypothesis detected at HEAD: $(git log -1 --format=%h). Resetting to HEAD~1 for clean baseline." >> "$LOG_FILE"
+        _log WARN wrapper orphan.hypothesis sha="$(git log -1 --format=%h)" \
+            subject="$orphan_subject" action="reset HEAD~1"
         _guarded_reset HEAD~1
     fi
 
@@ -472,21 +499,22 @@ run_loop() {
     # locate the decrypted tree; only this shell and its direct
     # evaluate.py children see it.
     if [ ! -f "$PROJECT_DIR/data/eval.tar.gz.enc" ]; then
-        echo "$(date -Iseconds) ERROR: data/eval.tar.gz.enc missing. Run: uv run python scripts/eval_crypto.py setup" >> "$LOG_FILE"
+        _log ERROR wrapper eval.setup_missing file=data/eval.tar.gz.enc \
+            remedy="uv run python scripts/eval_crypto.py setup"
         echo "ERROR: data/eval.tar.gz.enc missing. Run: uv run python scripts/eval_crypto.py setup" >&2
         exit 1
     fi
     _decrypt_out=$(uv run python "$PROJECT_DIR/scripts/eval_crypto.py" decrypt --keep 2>&1)
     _decrypt_rc=$?
     if [ $_decrypt_rc -ne 0 ]; then
-        echo "$(date -Iseconds) ERROR: eval decrypt failed (rc=$_decrypt_rc): $_decrypt_out" >> "$LOG_FILE"
-        echo "ERROR: eval decrypt failed. See $LOG_FILE" >&2
+        _log ERROR wrapper eval.decrypt_failed rc="$_decrypt_rc" output="$_decrypt_out"
+        echo "ERROR: eval decrypt failed. See .omc/logs/child-stderr.log" >&2
         exit 1
     fi
     EVAL_TMP_ROOT=$(echo "$_decrypt_out" | tail -1)
     EVAL_TMP_PARENT="$(dirname "$EVAL_TMP_ROOT")"
     export OMC_EVAL_DATA_ROOT="$EVAL_TMP_ROOT"
-    echo "$(date -Iseconds) Eval decrypted to $EVAL_TMP_ROOT (OMC_EVAL_DATA_ROOT set for wrapper children)" >> "$LOG_FILE"
+    _log INFO wrapper eval.decrypted path="$EVAL_TMP_ROOT"
 
     # US-504: prune stale feature_cache subdirs. Each features.py sha
     # gets its own subdir; when the sha changes, the old one becomes
@@ -498,7 +526,8 @@ run_loop() {
             [ -d "$d" ] || continue
             base="$(basename "$d")"
             if [ "$base" != "$_CUR_FEAT_SHA" ]; then
-                echo "$(date -Iseconds) Pruning stale feature_cache dir $base (current is $_CUR_FEAT_SHA)" >> "$LOG_FILE"
+                _log INFO wrapper feature_cache.prune \
+                    stale="$base" current="$_CUR_FEAT_SHA"
                 rm -rf "$d"
             fi
         done
@@ -507,18 +536,18 @@ run_loop() {
     while true; do
         # Stop signal check
         if [ -f "$STOP_FILE" ]; then
-            echo "$(date -Iseconds) Stop signal received. Exiting." >> "$LOG_FILE"
+            _log INFO wrapper stop_signal
             break
         fi
 
         # Circuit breaker
         if [ "$consecutive_discards" -ge "$MAX_CONSECUTIVE_DISCARDS" ]; then
-            echo "$(date -Iseconds) Circuit breaker: $MAX_CONSECUTIVE_DISCARDS consecutive discards. Exiting." >> "$LOG_FILE"
+            _log WARN wrapper circuit_break consecutive_discards="$MAX_CONSECUTIVE_DISCARDS"
             break
         fi
 
         # Run one iteration via claude
-        echo "$(date -Iseconds) Starting iteration (consecutive discards: $consecutive_discards)" >> "$LOG_FILE"
+        _log INFO wrapper iteration.start consecutive_discards="$consecutive_discards"
         _reset_iter_timers
         _phase_start total
 
@@ -585,17 +614,22 @@ else:
         # SHAP rollup (US-500): biases claude's feature-engineering
         # hypotheses toward slots actually driving keeps, not guesses.
         uv run python "$PROJECT_DIR/scripts/shap_rollup.py" --keeps 5 \
-            >/dev/null 2>>"$LOG_FILE" \
-            || echo "$(date -Iseconds) PIPELINE_FAILURE: shap_rollup.py rc=$?" >> "$LOG_FILE"
+            >/dev/null 2>>"$CHILD_STDERR_LOG" \
+            || _log ERROR pipeline failure script=shap_rollup.py rc="$?"
 
-        # Per-tunable exploration frontier (US-506).
-        uv run python "$PROJECT_DIR/scripts/tunable_frontier.py" \
-            --output "$PROJECT_DIR/.omc/tunable_frontier.txt" \
-            >/dev/null 2>>"$LOG_FILE" \
-            || echo "$(date -Iseconds) PIPELINE_FAILURE: tunable_frontier.py rc=$?" >> "$LOG_FILE"
-        tunable_frontier_block=""
-        if [ -f "$PROJECT_DIR/.omc/tunable_frontier.txt" ]; then
-            tunable_frontier_block=$(cat "$PROJECT_DIR/.omc/tunable_frontier.txt")
+        # Per-tunable exploration frontier (US-506). US-515 phase 2:
+        # script emits `tunable.frontier.snapshot` to the unified log AND
+        # prints the block to stdout, which we capture directly into the
+        # prompt. No intermediate .omc/tunable_frontier.txt artifact.
+        set +e
+        tunable_frontier_block=$(
+            uv run python "$PROJECT_DIR/scripts/tunable_frontier.py" 2>>"$CHILD_STDERR_LOG"
+        )
+        _tunable_rc=$?
+        set -e
+        if [ $_tunable_rc -ne 0 ]; then
+            _log ERROR pipeline failure script=tunable_frontier.py rc="$_tunable_rc"
+            tunable_frontier_block="  (tunable_frontier.py failed — see child-stderr sidecar)"
         fi
 
         # Research notes tail (US-503): inject last 10 entries verbatim.
@@ -693,7 +727,7 @@ ${recent_keeps:-  (none yet)}
 
 Read-only artifacts for deeper context:
   - results.tsv                               full iteration ledger
-  - .omc/autoresearch.log                     wrapper/verify narrative
+  - .omc/logs/autoresearch.jsonl              wrapper/verify structured log
   - .omc/classifier/versions.json             keep-only version history
   - git log --oneline --grep='hypothesis:\|baseline:' | head -40
 
@@ -753,15 +787,26 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         claude_exit=$?
         _phase_end claude
 
-        # Append iteration output to log AFTER claude finishes (immune to git reset)
-        echo "$iteration_output" >> "$LOG_FILE"
+        # Iteration stdout is multi-line and can be thousands of chars. It
+        # goes to the sidecar verbatim; the JSONL log gets a compact event
+        # with line count + tail so reviewers can navigate without loading
+        # the whole transcript.
+        {
+            printf '=== iteration_output %s ===\n' "$(date -Iseconds)"
+            printf '%s\n' "$iteration_output"
+            printf '=== end iteration_output ===\n'
+        } >>"$CHILD_STDERR_LOG"
+        _iter_lines=$(printf '%s\n' "$iteration_output" | wc -l | tr -d ' ')
+        _iter_tail=$(printf '%s\n' "$iteration_output" | tail -1)
+        _log INFO wrapper claude.output lines="$_iter_lines" tail="$_iter_tail"
         echo "$iteration_output" | tail -5
 
         last_output="$iteration_output"
 
         if echo "$last_output" | grep -qiE "rate.limit|usage.limit|credit|quota|429|overloaded|capacity"; then
             minutes=$((rate_limit_backoff / 60))
-            echo "$(date -Iseconds) API limit detected. Exponential backoff: ${minutes}m..." >> "$LOG_FILE"
+            _log WARN wrapper rate_limit.backoff minutes="$minutes" \
+                seconds="$rate_limit_backoff"
             sleep "$rate_limit_backoff"
             rate_limit_backoff=$((rate_limit_backoff * 2))
             [ "$rate_limit_backoff" -gt 18000 ] && rate_limit_backoff=18000
@@ -772,7 +817,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         rate_limit_backoff=300
 
         if [ $claude_exit -ne 0 ] && ! echo "$last_output" | grep -q "RESULT:"; then
-            echo "$(date -Iseconds) Claude failed (exit $claude_exit). Backing off 60s." >> "$LOG_FILE"
+            _log ERROR wrapper claude.failed exit="$claude_exit" backoff_s=60
             sleep 60
             continue
         fi
@@ -813,7 +858,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
             fi
 
             if [ -z "$tsv_line" ]; then
-                echo "$(date -Iseconds) WARN: no RESULTS_TSV in $eval_log; logging NA row" >> "$LOG_FILE"
+                _log WARN wrapper results_tsv.na eval_log="$eval_log"
             fi
 
             local combined=$(_tsv_field "$tsv_line" combined)
@@ -843,13 +888,13 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         head_after=$(git rev-parse HEAD)
 
         if [ "$last_status" = "skip" ]; then
-            echo "$(date -Iseconds) Claude reported RESULT:skip — no commit. Moving on." >> "$LOG_FILE"
+            _log INFO wrapper claude.skip reason="RESULT:skip"
             sleep 5
             continue
         fi
 
         if [ "$head_before" = "$head_after" ]; then
-            echo "$(date -Iseconds) Claude made no commit this iteration (status=$last_status). Treating as skip." >> "$LOG_FILE"
+            _log WARN wrapper claude.no_commit status="$last_status"
             sleep 5
             continue
         fi
@@ -875,7 +920,9 @@ except Exception:
     print('')
 " 2>/dev/null)
         if [ -n "$_features_sha_now" ] && [ "$_features_sha_now" != "$_features_sha_trained" ]; then
-            echo "$(date -Iseconds) AUTO-RETRAIN: features.py drift (was $_features_sha_trained, now $_features_sha_now)" >> "$LOG_FILE"
+            _log INFO wrapper retrain.auto.start \
+                was="$_features_sha_trained" now="$_features_sha_now" \
+                caller=loop
             # Portable 300s timeout: GNU `timeout` or brew's `gtimeout`
             # when present, else unguarded. macOS ships neither by default.
             if command -v timeout >/dev/null 2>&1; then
@@ -887,13 +934,15 @@ except Exception:
             fi
             _phase_start retrain
             set +e
-            "${_retrain_cmd[@]}" >> "$LOG_FILE" 2>&1
+            "${_retrain_cmd[@]}" >>"$CHILD_STDERR_LOG" 2>&1
             _retrain_rc=$?
             set -e
             _phase_end retrain
             if [ $_retrain_rc -ne 0 ]; then
-                echo "$(date -Iseconds) AUTO-RETRAIN FAILED (rc=$_retrain_rc). Treating as verify-fail." >> "$LOG_FILE"
-                uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
+                _log ERROR wrapper retrain.auto.failed rc="$_retrain_rc" \
+                    followup="verify-fail"
+                uv run python .omc/coordination/verify_agent.py --diagnose \
+                    >>"$CHILD_STDERR_LOG" 2>&1 || true
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
                 _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -914,15 +963,19 @@ except Exception:
             # 2026-04-18). When this guard fires, commit the joblib+meta
             # as a separate commit instead.
             git add .omc/classifier/fp_classifier.joblib \
-                    .omc/classifier/fp_classifier.meta.json >> "$LOG_FILE" 2>&1 || true
+                    .omc/classifier/fp_classifier.meta.json \
+                    >>"$CHILD_STDERR_LOG" 2>&1 || true
             _head_subj=$(git log -1 --format=%s 2>/dev/null)
             case "$_head_subj" in
                 hypothesis:*)
-                    git commit --amend --no-edit >> "$LOG_FILE" 2>&1 || true
+                    git commit --amend --no-edit >>"$CHILD_STDERR_LOG" 2>&1 || true
                     ;;
                 *)
-                    echo "$(date -Iseconds) WARN: HEAD is not a hypothesis commit ('$_head_subj'). Not amending; committing retrain artifacts as separate commit." >> "$LOG_FILE"
-                    git commit -m "retrain: auto-refresh classifier for features.py sha $_features_sha_now" >> "$LOG_FILE" 2>&1 || true
+                    _log WARN wrapper retrain.amend_warning \
+                        head_subject="$_head_subj" \
+                        action="separate retrain commit"
+                    git commit -m "retrain: auto-refresh classifier for features.py sha $_features_sha_now" \
+                        >>"$CHILD_STDERR_LOG" 2>&1 || true
                     ;;
             esac
             # Refresh hypothesis_commit since amend changed the SHA.
@@ -936,22 +989,30 @@ except Exception:
         # eval tree. OMC_EVAL_DATA_ROOT is already exported in this
         # shell, so evaluate.py + its subprocess children (preflight,
         # verify_agent) inherit it.
-        echo "$(date -Iseconds) Running evaluate.py on hypothesis $(git log -1 --format=%h "$hypothesis_commit")" >> "$LOG_FILE"
+        _log INFO wrapper eval.start sha="$(git log -1 --format=%h "$hypothesis_commit")"
         # US-504: feature cache env vars. Invalidated automatically when
         # features.py sha changes (new sha → new cache subdir).
         export OMC_FEATURE_CACHE_DIR="$PROJECT_DIR/.omc/feature_cache"
         export OMC_FEATURES_PY_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo unknown)"
         set +e
         _phase_start eval
-        uv run python evaluate.py --shap > "$PROJECT_DIR/.omc/last_eval.log" 2>&1
-        eval_exit=$?
+        # .omc/last_eval.log is evaluate.py's transient stdout capture
+        # for the iteration. _append_note greps RESULTS_TSV off it; the
+        # wrapper parses `reported` from the same line. Phase 2 keeps the
+        # file — it's a per-iteration scratch, not a log — and mirrors
+        # the stream into the child-stderr sidecar for the unified audit
+        # trail. Carve-out tracked in CLAUDE.md (phase 3a).
+        uv run python evaluate.py --shap 2>&1 | tee "$PROJECT_DIR/.omc/last_eval.log" \
+            >>"$CHILD_STDERR_LOG"
+        eval_exit="${PIPESTATUS[0]}"
         set -e
         _phase_end eval
 
         if [ $eval_exit -ne 0 ]; then
-            echo "$(date -Iseconds) evaluate.py exited $eval_exit. Reverting hypothesis (last 20 lines of eval log):" >> "$LOG_FILE"
-            tail -20 "$PROJECT_DIR/.omc/last_eval.log" >> "$LOG_FILE" 2>&1 || true
-            uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
+            _log ERROR wrapper eval.crash exit="$eval_exit" \
+                tail="$(tail -1 "$PROJECT_DIR/.omc/last_eval.log" 2>/dev/null)"
+            uv run python .omc/coordination/verify_agent.py --diagnose \
+                >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -965,8 +1026,9 @@ except Exception:
         # Parse combined from the deterministic RESULTS_TSV line.
         reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
         if [ -z "$reported" ]; then
-            echo "$(date -Iseconds) Could not parse combined from RESULTS_TSV. Reverting." >> "$LOG_FILE"
-            uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 || true
+            _log ERROR wrapper eval.parse_fail reason="no_combined_in_results_tsv"
+            uv run python .omc/coordination/verify_agent.py --diagnose \
+                >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -980,7 +1042,7 @@ except Exception:
         strictly_better=$(python3 -c "print(1 if float('$reported') > float('$current_best') + 1e-9 else 0)" 2>/dev/null || echo 0)
 
         if [ "$strictly_better" != "1" ]; then
-            echo "$(date -Iseconds) DISCARD: combined=$reported not > current_best=$current_best" >> "$LOG_FILE"
+            _log INFO wrapper discard combined="$reported" prev="$current_best"
             # US-510: catastrophic-floor discard (combined ≤ 0.05) invokes
             # --diagnose so per-domain ERROR lines (e.g. classifier-interface
             # breaks that collapse the aggregate to the GM floor 0.01)
@@ -988,9 +1050,11 @@ except Exception:
             # (0.45 < 0.47) are routine research signal; skip diagnose.
             _catastrophic=$(python3 -c "print(1 if float('$reported') <= 0.05 else 0)" 2>/dev/null || echo 0)
             if [ "$_catastrophic" = "1" ]; then
-                echo "$(date -Iseconds) CATASTROPHIC-DISCARD: combined=$reported at or near GM floor — invoking --diagnose" >> "$LOG_FILE"
-                uv run python .omc/coordination/verify_agent.py --diagnose >> "$LOG_FILE" 2>&1 \
-                    || echo "$(date -Iseconds) PIPELINE_FAILURE: --diagnose rc=$?" >> "$LOG_FILE"
+                _log WARN wrapper discard.catastrophic combined="$reported" \
+                    floor=0.01 action=diagnose
+                uv run python .omc/coordination/verify_agent.py --diagnose \
+                    >>"$CHILD_STDERR_LOG" 2>&1 \
+                    || _log ERROR pipeline failure script=verify_agent.py arg=diagnose rc="$?"
             fi
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1003,7 +1067,7 @@ except Exception:
         fi
 
         # Strict improvement — run verify_agent for structural checks.
-        echo "$(date -Iseconds) Strict improvement (combined=$reported > $current_best). Running verify_agent..." >> "$LOG_FILE"
+        _log INFO wrapper verify.start combined="$reported" prev="$current_best"
         _phase_start verify
         set +e
         # US-511: export OMC_HEAD_BEFORE so verify_agent's diff audit
@@ -1016,7 +1080,7 @@ except Exception:
         verify_exit=$?
         set -e
         _phase_end verify
-        echo "$verify_output" >> "$LOG_FILE"
+        printf '%s\n' "$verify_output" >>"$CHILD_STDERR_LOG"
 
         if [ $verify_exit -ne 0 ]; then
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
@@ -1025,13 +1089,14 @@ except Exception:
             _phase_end total
             _iter_summary "$hypothesis_commit" "verify-fail"
             consecutive_discards=$((consecutive_discards + 1))
-            echo "$(date -Iseconds) VERIFY-FAIL: reverting (discards: $consecutive_discards/$MAX_CONSECUTIVE_DISCARDS)" >> "$LOG_FILE"
+            _log WARN wrapper verify_fail consecutive="$consecutive_discards" \
+                cap="$MAX_CONSECUTIVE_DISCARDS"
             continue
         fi
 
         # VERIFIED KEEP.
         consecutive_discards=0
-        echo "$(date -Iseconds) VERIFIED KEEP (combined=$reported, prev best=$current_best)" >> "$LOG_FILE"
+        _log INFO wrapper keep_path.verified combined="$reported" prev="$current_best"
         log_to_results_tsv "keep" "$hypothesis_commit" "$hypothesis_subject"
 
         # US-514 phase 1: delegate tag + baseline_metrics.json refresh +
@@ -1049,7 +1114,7 @@ except Exception:
     done
 
     trap - EXIT HUP INT TERM  # clear trap on clean exit
-    echo "$(date -Iseconds) Autoresearch loop ended" >> "$LOG_FILE"
+    _log INFO wrapper loop.ended
 }
 
 run_loop_with_restart() {
@@ -1057,10 +1122,10 @@ run_loop_with_restart() {
     while true; do
         run_loop
         if [ -f "$STOP_FILE" ]; then
-            echo "$(date -Iseconds) Clean shutdown (stop signal)." >> "$LOG_FILE"
+            _log INFO wrapper loop.clean_shutdown reason=stop_signal
             break
         fi
-        echo "$(date -Iseconds) Loop exited unexpectedly. Restarting in 60s..." >> "$LOG_FILE"
+        _log WARN wrapper loop.unexpected_exit backoff_s=60
         sleep 60
     done
 }
@@ -1085,13 +1150,33 @@ case "${1:-help}" in
         ;;
     status)
         # Fast — no subprocesses, no evaluate.py, just file reads
+        STATUS_LOG="$PROJECT_DIR/.omc/logs/autoresearch.jsonl"
         if tmux has-session -t "$SESSION" 2>/dev/null; then
             echo "🟢 RUNNING"
         else
             echo "🔴 STOPPED"
             [ -f "$STOP_FILE" ] && echo "⏸  Stop signal pending (will be cleared on next start)"
-            # Warn if loop stopped after recent code changes
-            last_loop_end=$(grep "Autoresearch loop ended" "$LOG_FILE" 2>/dev/null | tail -1 | cut -dT -f1-2 | head -c19)
+            # Warn if loop stopped after recent code changes. JSONL records
+            # are chronologically appended; pull the last loop.ended event
+            # by scanning tail-backwards with python (avoids a full pass).
+            last_loop_end=$(python3 - <<PY 2>/dev/null
+import json, os
+p = os.path.join("$PROJECT_DIR", ".omc/logs/autoresearch.jsonl")
+last = ""
+try:
+    with open(p) as f:
+        for line in f:
+            try:
+                rec = json.loads(line)
+            except Exception:
+                continue
+            if rec.get("subsystem") == "wrapper" and rec.get("event") == "loop.ended":
+                last = rec.get("ts", "")
+except FileNotFoundError:
+    pass
+print(last[:19])
+PY
+)
             last_commit=$(git log -1 --format=%ci -- detector.py evaluate.py ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
             if [ -n "$last_loop_end" ] && [ -n "$last_commit" ] && [[ "$last_commit" > "$last_loop_end" ]]; then
                 echo "⚠️  Code changed after loop stopped — run '$0 start' to pick up changes"
@@ -1111,11 +1196,11 @@ case "${1:-help}" in
             latest=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/.omc/classifier/versions.json'))['latest'])" 2>/dev/null || echo "?")
             echo "Version: detector-v$latest"
         fi
-        if [ -f "$LOG_FILE" ]; then
-            last_log=$(tail -1 "$LOG_FILE")
+        if [ -f "$STATUS_LOG" ]; then
+            last_log=$(tail -1 "$STATUS_LOG")
             echo "Log: $last_log"
             # Show backoff state if rate limited
-            echo "$last_log" | grep -qi "backoff" && echo "⚠️  Rate limited — backing off"
+            echo "$last_log" | grep -qi "rate_limit\|backoff" && echo "⚠️  Rate limited — backing off"
         fi
         ;;
     dashboard)

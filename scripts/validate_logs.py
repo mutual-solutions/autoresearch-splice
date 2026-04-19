@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Validation gates for the unified logger (US-515 phase 1).
+"""Validation gates for the unified logger (US-515 phases 1 + 2).
 
 Two subcommands:
 
   --audit
-      Phase-1 tier. Fails (exit 1) if any migrated Python source file
-      retains a `_diag(` call, or if `evaluate.py` loses a print() from
-      the allowlist. Does NOT gate `echo >> $LOG_FILE` in phase 1 —
-      bash migration is phase 2.
+      Grep audit. Phase-1 tier: fails if any migrated Python source
+      retains a `_diag(` call. Phase-2 tier: fails if `run_autoresearch.sh`
+      contains any `echo ... >> $LOG_FILE` site (the wrapper must emit
+      via `_log` exclusively). Reports both tiers in one pass.
 
   --parse <path>
       Read each line, json.loads it, require the mandatory schema keys,
@@ -42,6 +42,9 @@ _MIGRATED_FILES = [
 
 _REQUIRED_KEYS = ("schema_version", "ts", "level", "subsystem", "event")
 
+# Structured Python emitters embed their namespace in the event name
+# (e.g. `eval.metrics.splice`, `diag.gbm.dedupe`). These prefixes recognize
+# the phase-1 Python taxonomy.
 _KNOWN_EVENT_PREFIXES = (
     "eval.",
     "classifier.",
@@ -51,13 +54,38 @@ _KNOWN_EVENT_PREFIXES = (
     "wrapper.",
     "note.",
     "tunable.",
+    "notebook.",
+)
+
+# Phase-2 bash emitters and phase-1 legacy synthesizers use bare event
+# names scoped by subsystem (e.g. subsystem=`wrapper` event=`iteration.phase`).
+# Any event under these subsystems is taxonomy-clean.
+_KNOWN_SUBSYSTEMS = frozenset(
+    {
+        "wrapper",
+        "pipeline",
+        "notebook.digest",
+        "tunable.frontier",
+    }
 )
 
 
+_WRAPPER = REPO / "run_autoresearch.sh"
+
+# Phase-2 bash audit: the wrapper must not retain any legacy echo-to-LOG_FILE
+# site. The regex matches `echo ... >> $LOG_FILE` with or without quoting,
+# and allows any intervening text so multi-line / trailing-pipe variants
+# still fail the gate. A narrow false-positive: the same token inside a
+# here-doc would trip the audit; none exists today, and a future one is
+# acceptable churn for the simplicity of a single grep.
+_BASH_LEGACY_RE = r'^[^#]*\becho\b.*>>\s*"?\$LOG_FILE"?'
+
+
 def _audit() -> int:
-    """Phase-1 grep audit. Returns 0 on pass, 1 on fail."""
+    """Phase-1 (python) + phase-2 (bash) grep audit. 0 = pass, 1 = fail."""
     failures: list[str] = []
 
+    # Phase-1 tier: residual `_diag(` in migrated Python sources.
     for path in _MIGRATED_FILES:
         if not path.exists():
             failures.append(f"missing migrated file: {path.relative_to(REPO)}")
@@ -69,6 +97,17 @@ def _audit() -> int:
                     f"{path.relative_to(REPO)}:{line_no}: residual _diag() call: "
                     f"{line.strip()[:100]}"
                 )
+
+    # Phase-2 tier: residual `echo ... >> $LOG_FILE` in the bash wrapper.
+    if _WRAPPER.exists():
+        hits = _grep(_WRAPPER, _BASH_LEGACY_RE)
+        for line_no, line in hits:
+            failures.append(
+                f"{_WRAPPER.relative_to(REPO)}:{line_no}: residual $LOG_FILE write: "
+                f"{line.strip()[:100]}"
+            )
+    else:
+        failures.append(f"missing wrapper: {_WRAPPER.relative_to(REPO)}")
 
     if failures:
         for msg in failures:
@@ -115,9 +154,12 @@ def _parse(path: Path) -> int:
                 )
                 continue
             event = rec.get("event", "")
-            if not _known_event(event):
+            subsystem = rec.get("subsystem", "")
+            if not _known_event(event, subsystem):
                 warnings += 1
-                unknown_events[event] = unknown_events.get(event, 0) + 1
+                unknown_events[f"{subsystem}:{event}"] = (
+                    unknown_events.get(f"{subsystem}:{event}", 0) + 1
+                )
 
     if unknown_events:
         print("parse: unknown events (warn-only):", file=sys.stderr)
@@ -137,8 +179,10 @@ def _parse(path: Path) -> int:
     return 0
 
 
-def _known_event(event: str) -> bool:
-    return any(event == p[:-1] or event.startswith(p) for p in _KNOWN_EVENT_PREFIXES)
+def _known_event(event: str, subsystem: str = "") -> bool:
+    if any(event == p[:-1] or event.startswith(p) for p in _KNOWN_EVENT_PREFIXES):
+        return True
+    return subsystem in _KNOWN_SUBSYSTEMS
 
 
 def _grep(path: Path, pattern: str) -> list[tuple[int, str]]:

@@ -1,5 +1,12 @@
+{"schema_version":1,"ts":"2026-04-18T09:59:58+00:00","level":"INFO","subsystem":"wrapper","event":"loop.started","claude_visible":false}
+{"schema_version":1,"ts":"2026-04-18T09:59:59+00:00","level":"INFO","subsystem":"wrapper","event":"iteration.start","claude_visible":false,"consecutive_discards":"0"}
 {"schema_version":1,"ts":"2026-04-18T10:00:05+00:00","level":"INFO","subsystem":"detector.gbm","event":"diag.gbm.dedupe","claude_visible":false,"before":120,"after":80}
+{"schema_version":1,"ts":"2026-04-18T10:00:10+00:00","level":"INFO","subsystem":"wrapper","event":"phase.finished","claude_visible":false,"phase":"claude","elapsed_s":"10"}
 {"schema_version":1,"ts":"2026-04-18T10:00:18+00:00","level":"INFO","subsystem":"eval","event":"eval.run","claude_visible":false,"datasets":3}
 {"schema_version":1,"ts":"2026-04-18T10:00:25+00:00","level":"INFO","subsystem":"eval","event":"eval.dataset.result","claude_visible":false,"ds_id":"singing","combined":0.24}
+{"schema_version":1,"ts":"2026-04-18T10:00:30+00:00","level":"INFO","subsystem":"wrapper","event":"phase.finished","claude_visible":false,"phase":"eval","elapsed_s":"19"}
+{"schema_version":1,"ts":"2026-04-18T10:00:35+00:00","level":"INFO","subsystem":"wrapper","event":"iteration.phase","claude_visible":false,"iter":"abc1234","status":"discard","total":"38","claude":"10","retrain":"-","eval":"19","verify":"3","note":"1"}
 {"schema_version":1,"ts":"2026-04-18T10:00:40+00:00","level":"ERROR","subsystem":"retest.diagnose","event":"retest.diagnose.traceback","claude_visible":false,"detail":"combined=<REDACTED> crashed in hotelling"}
 {"schema_version":1,"ts":"2026-04-18T10:01:02+00:00","level":"INFO","subsystem":"classifier.train","event":"classifier.retrain.complete","claude_visible":false,"samples":7200}
+{"schema_version":1,"ts":"2026-04-18T10:01:55+00:00","level":"INFO","subsystem":"wrapper","event":"iteration.phase","claude_visible":false,"iter":"def5678","status":"keep","total":"50","claude":"15","retrain":"-","eval":"29","verify":"5","note":"1"}
+{"schema_version":1,"ts":"2026-04-18T10:02:00+00:00","level":"CRITICAL","subsystem":"pipeline","event":"pipeline.failure","claude_visible":false,"detail":"eval subprocess exited non-zero (rc=2)"}

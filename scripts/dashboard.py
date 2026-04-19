@@ -24,17 +24,33 @@ BASELINE = REPO / ".omc" / "coordination" / "baseline_metrics.json"
 SHAP_ROLLUP = REPO / ".omc" / "shap_rollup.json"
 VERSIONS = REPO / ".omc" / "classifier" / "versions.json"
 
-# US-515 phase 1: optional recent-events augmentation via the unified log.
-# The dashboard's primary surface (results.tsv + baseline + shap_rollup +
-# versions + git log) is unchanged; iter_events() is an additional overlay.
+# US-515: recent-events augmentation via the unified JSONL log. Phase 2
+# drops the legacy shim so this reads `.omc/logs/autoresearch.jsonl`
+# exclusively. The dashboard's primary surface (results.tsv + baseline +
+# shap_rollup + versions + git log) is unchanged; iter_events() layers on.
 sys.path.insert(0, str(REPO / "scripts"))
 from log_reader import iter_events  # noqa: E402
 
 
 def _recent_pipeline_failures(limit: int = 3) -> list[dict]:
-    """Return the last `limit` pipeline.failure events (from either source)."""
+    """Return the last `limit` pipeline.failure events from the unified log."""
     events = list(iter_events(event="pipeline.failure"))
     return events[-limit:] if events else []
+
+
+def _pipeline_failure_block() -> list[str]:
+    fails = _recent_pipeline_failures(limit=3)
+    if not fails:
+        return []
+    lines = [f"recent pipeline failures ({len(fails)}):"]
+    for rec in fails:
+        ts = rec.get("ts", "?")[:19]
+        detail = rec.get("detail") or rec.get("script") or rec.get("event", "?")
+        rc = rec.get("rc")
+        if rc is not None and "rc=" not in str(detail):
+            detail = f"{detail} (rc={rc})"
+        lines.append(f"  [{ts}] {detail}")
+    return lines
 
 
 def _read_json(p: Path) -> dict:
@@ -170,6 +186,7 @@ def main() -> int:
     tmp = _eval_tmp_line()
     if tmp:
         lines.append(tmp)
+    lines.extend(_pipeline_failure_block())
     lines.append(f"generated_at: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}")
 
     print("\n".join(lines))

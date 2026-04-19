@@ -8,11 +8,15 @@ combined range), preserving chronological narrative for recent entries.
 
 Entry delimiter is a `## ` header at start-of-line. Wrapper appends
 `## <timestamp> — <sha> (<status>, combined=<v>)\n...` blocks.
+
+US-515 phase 2: emits a `notebook.digest.compacted` event on non-status
+invocations so the unified log captures the compaction verdict.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -21,6 +25,11 @@ REPO = Path(__file__).resolve().parent.parent
 NOTES = REPO / ".omc" / "research_notes.md"
 MAX_ENTRIES = 50
 SUMMARIZE_OLDEST = 20
+
+sys.path.insert(0, str(REPO / ".omc" / "coordination"))
+from logger import get_logger  # noqa: E402
+
+_log = get_logger("notebook.digest")
 
 
 def _split_entries(text: str) -> list[str]:
@@ -99,6 +108,10 @@ def main() -> int:
         return 0
     did, count = digest()
     msg = "compacted" if did else "no compaction needed"
+    _log.emit(
+        "INFO", "notebook.digest.compacted",
+        compacted="true" if did else "false", entries=count,
+    )
     print(f"notebook_digest: {msg}; entries now {count}", file=sys.stderr)
     return 0
 
