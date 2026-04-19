@@ -2171,3 +2171,90 @@ per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=
     budget before iterating.
 [auto] LOCAL KEEP at bba6dbe: top-3 features stable across all domains
 
+## 2026-04-19T23:55:56+09:00 — f71c526 (discard, combined=0.473315)
+subject: extend pitch-shift audio augmentation to CLEAN KOREAN training chunks (±1 semitone) — generalize the bba6dbe singing-only MUTATION axis to the regressed domain. Widens `ds_id == "singing"` gate to `ds_id in ("singing", "korean")` and renames the constant AUG_DOMAINS/AUG_SHIFTS_SEMITONES. Adds ~160 synthetic clean korean not_splice rows via librosa.effects.pitch_shift; class counts shift 760/300/300 -> 920/300/300. Targets korean clean_fp=4 / combined=0.410 regression that the singing-only aug unintentionally caused (korean 0.500->0.410, english 0.756->0.667 — global class-prior shift, not feature leakage). Mechanism transfers cleanly to speech: ±1 semitone = ~6% F0 shift (within normal prosodic variation during emphasis/questions); phase-vocoder smearing concentrates on consonant transients which are minority content in 60s chunks; formant structure + mic/room/speaker identity preserved, so synthetic rows look like intra-file prosodic variations — NOT cross-source splices — in top-SHAP spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta space. English intentionally EXCLUDED (clean_fp=0 already so augmenting its negatives can only hurt splice recall). Orthogonal to every korean prior axis: 6 primary tunables bracketed, 8 GBM hyperparam, 5 training-data SAMPLING (NEG counts/dist/curriculum/bootstrap-adversarial all on ORIGINAL korean audio), 12+ feature add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half variants — ZERO prior audio MUTATION on korean. Same fid per aug row keeps GroupKFold clean; unique per-shift salt yields distinct negative positions per variant. Pure train_classifier.py change; features.py sha stable so wrapper's auto-retrain gate passive (wrapper will re-invoke train for a fresh joblib).
+per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=0.387692
+
+# 2026-04-19 — hypothesis: extend pitch-shift augmentation to clean KOREAN chunks
+
+(a) HYPOTHESIS. Pure `train_classifier.py` change. Widen the
+    condition gating the pitch-shift augmentation from
+    `ds_id == "singing"` to `ds_id in ("singing", "korean")`. Same
+    ±1 semitone via `librosa.effects.pitch_shift`, same
+    per-file/per-shift salt via unique `aug_name`, same shared
+    `fid` so GroupKFold stays clean. Adds ~160 synthetic clean
+    korean not_splice rows (20 clean korean files × 2 shifts × 4
+    NEG_PER_CLEAN). Class counts shift 760/300/300 → 920/300/300.
+    Pure `train_classifier.py` change; features.py sha stable so
+    the wrapper's auto-retrain gate is passive.
+
+(b) WHY over recent axes. The bba6dbe keep proved pitch-shift aug
+    works on SINGING (singing 0.272→0.388, clean_fp 6→2). But
+    adding 160 synthetic not_splice rows globally shifted class
+    priors: korean dropped 0.500→0.410, english dropped 0.756→0.667
+    (both from recall loss, not FP growth — english clean_fp=0,
+    korean clean_fp=4). Now korean is the "regressed" domain with
+    4 clean FPs still in its own spec_*_delta cluster. The proven
+    mechanism transfers: pitch-shifted speech preserves speaker /
+    mic / room / phoneme structure but transposes formants and F0,
+    so GBM sees "speaker-prosody variations that are NOT
+    cross-source splices" in spec_*_delta space — exactly the
+    korean clean_fp failure mode (intra-file prosodic shifts firing
+    top-SHAP spec_rolloff_delta at magnitudes indistinguishable
+    from real splices). ±1 semitone is within normal prosodic F0
+    variation (6% frequency shift, speakers do this during emphasis
+    / questions). Phase-vocoder smearing at ±1 semitone is subtle
+    and affects consonant transients most, which are a minority of
+    content in 60s speech chunks. Orthogonal to every korean prior
+    axis (6 primary tunables bracketed, 8 GBM hyperparam, 5
+    training-data SAMPLING axes on original audio, 12+ feature
+    add/ablation, 8+ post-filter, 2 model-class swap, 2
+    calibration, 2 HPR routing, 3 remote-half variants). ZERO prior
+    audio MUTATION axes on korean. English intentionally excluded
+    (clean_fp=0 already; augmenting its negatives can only hurt
+    splice recall without FP-reduction upside).
+
+(c) IF THIS FAILS. Three paths.
+    (1) If korean regresses further (clean_fp>4 or combined
+        drops), phase-vocoder artifacts may be creating synthetic
+        splice-like transients in clean speech. Switch to ±0.5
+        semitone (gentler) or swap to time-stretch (rate=0.97 /
+        1.03) which preserves pitch but changes articulation
+        speed — different phase-vocoder failure mode.
+    (2) If korean unchanged but english drops further, global
+        class-prior shift is the dominant mechanism. Balance by
+        extending aug to clean ENGLISH too, restoring relative
+        class priors across all three domains.
+    (3) Final escalation: parametric-EQ-tilt augmentation
+        (low-shelf ±3dB at 1kHz) on clean singing — directly
+        widens spec_centroid_delta / spec_rolloff_delta in
+        not_splice class without touching pitch content.
+        Complementary axis to pitch-shift.
+
+(d) Information gaps. (i) Which korean files drive clean_fp=4
+    (file, t_sec, p_hard, p_cross, p_splice) still not in CURRENT
+    STATE — I cannot verify augmentation will bite the specific
+    failure cluster. (ii) Per-class OOF F1 still absent; knowing
+    whether korean FPs fire p_hard vs p_cross would predict which
+    synthetic variants matter more. (iii) The pitch-shift aug
+    mechanism succeeded, but the side-effect on korean / english
+    recall (not a clean_fp issue — a TP loss) is not surfaced in
+    the prompt — I inferred it from baseline_metrics.json vs the
+    prior per-domain numbers in the history. A
+    `DOMAIN_DELTA_LAST_KEEP` block showing per-domain combined /
+    splice_f1 / clean_score deltas between the prior and current
+    baseline would make side-effect detection automatic.
+
+(e) Wrapper enhancements. (1) `scripts/training_aug_visualize.py
+    --shift +1 --feature spec_rolloff_delta` plotting augmented
+    vs original feature distributions per domain on a
+    representative sample, so I can verify aug lands in the
+    intended feature-space region BEFORE committing. (2) A
+    CLEAN-FP-POSITIONS block in CURRENT STATE listing the k
+    clean-file false positives from the last KEPT classifier —
+    turning "korean clean_fp=4" into actionable per-position
+    diagnostics. (3) `supervisor_agent.py --class-breakdown
+    <commit>` emitting (domain, class_label, n_fp, n_tp) from a
+    prior keep so I can target whether to widen not_splice (reduce
+    FP) or widen splice classes (reduce FN) per domain.
+
