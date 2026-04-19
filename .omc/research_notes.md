@@ -2258,3 +2258,67 @@ per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=
     prior keep so I can target whether to widen not_splice (reduce
     FP) or widen splice classes (reduce FN) per domain.
 
+## 2026-04-20T00:06:55+09:00 — d5cc597 (discard, combined=0.357709)
+subject: class_weight='balanced' on HistGBM to neutralize pitch-shift aug class-prior shift — one-parameter edit (class_weight='balanced') in make_pipeline(). bba6dbe singing aug shifted class counts 600/300/300 -> 760/300/300 producing OOF per-class F1 0.858/0.311/0.301 (splice classes crushed), english 0.756->0.667 and korean 0.500->0.410 from pure recall loss on borderline splices (english clean_fp=0 confirms not precision). HistGBM class_weight='balanced' scales sample weights by n_samples/(n_classes*n_c) so not_splice drops to ~0.60x and each splice class rises to ~1.51x, re-equalizing per-class loss contribution without removing the 1360 aug rows' feature-space coverage of chord-transition events — preserves singing gain, restores english/korean recall. Orthogonal to every prior axis: 8 GBM hyperparam (n_estimators/max_depth/learning_rate/subsample), 5 training-data SAMPLING, 12+ feature add/ablate, 8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half, 1 audio MUTATION — NO prior class_weight axis. Prior 'sample_weight 2x' UPWEIGHTED one class only; this AUTO-BALANCES all three. Refreshed OOF: weighted F1 0.6206 (vs 0.6143), macro 0.4979 (vs 0.4899), splice-class F1 lifted hard_cut 0.311->0.328 crossfade 0.301->0.305. Manual retrain + joblib/meta/cv_results committed alongside so wrapper uses fresh classifier (f71c526 joblib-skip lesson).
+per-domain: combined_english=0.574468 combined_korean=0.281928 combined_singing=0.282609
+
+# 2026-04-19 — hypothesis: class_weight='balanced' on HistGBM to neutralize the pitch-shift aug class-prior shift
+
+(a) HYPOTHESIS. In `splice/classifier/train_classifier.py::make_pipeline`,
+    pass `class_weight='balanced'` to `HistGradientBoostingClassifier`.
+    One-parameter edit. Manually retrain + commit joblib/meta/cv_results.
+
+(b) WHY this over recent failures. The last keep (bba6dbe) lifted
+    singing 0.272→0.388 via +160 synthetic clean_singing not_splice
+    rows. Side-effect: class counts shifted 600/300/300 → 760/300/300,
+    OOF per-class F1 on disk is 0.858 / 0.311 / 0.301 — splice classes
+    crushed. english dropped 0.756→0.667, korean 0.500→0.410 from pure
+    recall loss on borderline splices (clean_fp=0 on english confirms
+    not a precision regression). The f71c526 "extend aug to korean"
+    attempt RETURNED IDENTICAL per-domain numbers to bba6dbe, i.e. the
+    joblib wasn't actually rebuilt (features.py sha unchanged, wrapper
+    auto-retrain gate passive, no joblib committed). So that axis is
+    inconclusive, but the UNDERLYING mechanism — the class-prior shift
+    from the singing aug — remains unaddressed. class_weight='balanced'
+    directly counteracts it: HistGBM internally scales sample weights
+    by n_samples/(n_classes × n_c), so not_splice drops to ~0.60× and
+    each splice class rises to ~1.51×. The 1360 aug rows still provide
+    feature-space coverage of chord-transition events (keeping singing
+    gain), but per-class loss contribution is re-equalized (restoring
+    english/korean splice recall). Orthogonal to every prior axis: 8
+    GBM hyperparam (n_estimators/max_depth/learning_rate/subsample), 5
+    training-data SAMPLING, 12+ feature add/ablate, 8+ post-filter, 2
+    model-class swap, 2 calibration, 2 HPR routing, 3 remote-half, 1
+    audio MUTATION — NO prior class_weight or automatic class-balanced
+    sample weighting. Prior "sample_weight 2x" UPWEIGHTED one class;
+    this AUTO-BALANCES three. Commits joblib so the wrapper can't skip
+    retrain silently (lesson from f71c526).
+
+(c) IF THIS FAILS. (1) Switch to explicit sample_weight dict tuned per
+    class (e.g., {0:1.0, 1:1.8, 2:1.8}) to push splice recall harder.
+    (2) Stack with EQ-tilt augmentation on clean singing (±3dB
+    low-shelf at 1kHz) — directly widens spec_centroid/rolloff/
+    bandwidth distributions complementary to pitch-shift's pitch-axis
+    coverage. (3) Final escalation: pitch-shift SPLICED files too
+    (maintains class balance by augmenting positives proportionally).
+
+(d) Information gaps. (i) The f71c526 joblib-rebuild bug shows the
+    wrapper's retrain policy is opaque to me — whether `run_autoresearch.sh`
+    triggers train when only train_classifier.py changes is unclear
+    from the prompt; I'm hedging by committing the joblib. A
+    `TRAIN_TRIGGER_CONDITIONS:` block in CURRENT STATE listing the
+    exact files/shas that cause an auto-retrain would remove this
+    risk. (ii) The 6 singing clean FPs (file, t_sec, p_hard, p_cross)
+    are still opaque. (iii) Per-domain SHAP signs still implicit.
+
+(e) Wrapper enhancements. (1) An AUTO-RETRAIN TRIGGER LOG: one line
+    per eval attempt showing "retrained: YES (features.py sha diff) |
+    NO (using disk joblib sha X)". Turns the silent classifier
+    staleness risk into a visible signal. (2)
+    `scripts/class_balance_probe.py` emitting predicted OOF F1 per
+    class under current vs proposed class_weight settings for a given
+    joblib — lets me preview rebalancing impact without a full eval
+    cycle. (3) Per-domain splice_recall separated from splice_f1 in
+    CURRENT STATE. Recall loss vs precision loss have different
+    remedies (aug vs threshold), and combined splice_f1 hides which.
+
