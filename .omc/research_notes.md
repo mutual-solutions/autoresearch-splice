@@ -1903,3 +1903,98 @@ per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=
     p_hard, p_cross, p_splice) so feature-design and post-filter
     hypotheses can target actual failure cases instead of guessing.
 
+## 2026-04-19T23:18:36+09:00 — 0feddf9 (discard, combined=0.411473)
+subject: HPR-gated remote-half MFCC sim FEATURE — conditional signal on tonal files only
+per-domain: combined_english=0.712500 combined_korean=0.407407 combined_singing=0.240000
+
+# 2026-04-19 — hypothesis: HPR-GATED remote-half MFCC sim as a FEATURE
+
+(a) HYPOTHESIS. Add ONE feature `hpr_remote_mfcc_sim` to features.py
+    (FEATURE_NAMES 75 → 76). Compute file_hpr ONCE per chunk via
+    `librosa.decompose.hpss(|STFT|)` in `_ensure_feat_cache`
+    (cached as `feat_chunk_hpr`). New block `_block_hpr_remote_mfcc_sim`
+    per t_sec: if `feat_chunk_hpr > 0.85` (tonal/singing), compute
+    cosine similarity between mean MFCC over [0, t-5.0s] and mean
+    MFCC over [t+5.0s, chunk_end]; else return constant `1.0`
+    (neutral). Edge positions where either remote window has
+    <30 MFCC frames (~0.35s at hop=512/sr=44100) also return 1.0.
+    Classifier auto-retrains via US-505 features.py sha gate.
+
+(b) WHY this over the 60+ prior failures. Three closely-related
+    remote-half attempts have been tried and all failed for
+    DIFFERENT reasons:
+      * f6192f6 (raw remote-half MFCC FEATURE, 0.438): singing hit
+        NEW HIGH 0.288 but english collapsed 0.756 → 0.543 because
+        GBM over-weighted the global scalar on its strongest domain.
+      * f10993b (HPR-gated remote-half MFCC POST-FILTER, 0.445):
+        singing 0.276 — couldn't bite enough at sim>0.99 threshold;
+        binary drop/keep can only subtract from the already-kept set.
+      * 0c5ba88 (file_hpr alone as FEATURE, 0.357): catastrophic
+        korean 0.500 → 0.290 because pure domain-indicator let GBM
+        collapse korean decisions onto HPR-bucket boundaries.
+    NOT TRIED: HPR as a CONDITIONAL GATE over a discriminative
+    feature. This combines the proven signal (remote-half MFCC sim
+    cleanly separates tonal clean ~0.97-0.99 from tonal splice
+    ~0.88-0.95 per f6192f6 smoke test) with protection from
+    GBM over-reliance on non-tonal domains (constant 1.0 for
+    non-tonal rows = zero variance = zero information gain = GBM
+    cannot split on it for english/korean decisions). Unlike the
+    post-filter variant, the feature lets GBM LEARN the optimal
+    boundary (possibly 0.95 or 0.92 or wherever marginal gain is
+    highest) instead of hard-coding a 0.99 threshold. Orthogonal
+    to every prior axis: 6 primary tunables bracketed, 8 GBM
+    hyperparam, 5 training-data, 12+ feature add/ablation, 8+
+    post-filter, 2 model-class swap, 2 calibration, 2 HPR routing,
+    3 remote-half variants, 1 file_hpr-alone feature — the
+    HPR-gated remote-MFCC as a FEATURE combo is a genuinely new
+    branch.
+
+    Cost: HPSS on existing-style librosa.stft output ~50-150ms per
+    chunk × ~120 chunks ≈ 6-18s in the 243/300s budget. MFCC mean
+    + dot product per t_sec is ~1ms. Risk-bounded: if uninformative,
+    GBM gives SHAP ≈ 0 and ignores. If the constant-for-non-tonal
+    design works, singing could gain meaningfully without english
+    regression. Minimum diff: one new block, one new cache key,
+    one FEATURE_NAMES entry, one assert bump.
+
+(c) IF THIS FAILS. Three paths.
+    (1) Adjust the gate threshold (0.80 or 0.90) or the remote-window
+        guard (±3s instead of ±5s so shorter chunks get more
+        coverage).
+    (2) Directional variant: compute sim_pre_cons =
+        cos(mean MFCC [0, t-5s], mean MFCC [t-5s, t]) and
+        sim_post_cons similarly on post side; stack both as 2
+        features. Real cross-song splices preserve both one-sided
+        consistencies while changing across-t.
+    (3) Final escalation: time-stretch/pitch-shift augmentation of
+        the clean training negatives via
+        `librosa.effects.time_stretch(rate=0.95)` on a copy of each
+        clean file, add as synthetic NEG_AUG rows. This directly
+        widens the not_splice distribution in spec_*_delta space
+        without touching features.py.
+
+(d) Information gaps. (i) The 6 singing clean FP positions (file,
+    t_sec, p_hard, p_cross, p_splice) are still not in CURRENT
+    STATE — I cannot verify my hypothesis bite rate against the
+    actual failure cases. (ii) No per-domain EVAL-distribution
+    summary for file_hpr / flatness / voicing — scalar cutoffs
+    (0.85) come from training-set intuition. (iii) Four recent
+    catastrophic 0.010 entries (ExtraTrees, gated tonality,
+    isotonic, phase residual, FILE-LEVEL flatness) are now known
+    to have been killed by the fixed shap_report.py bug, but the
+    no-repeat rule continues to block revisiting those axes.
+
+(e) Wrapper enhancements. (1) A
+    `data/train/clean_fp_positions.json` auto-emitted by
+    evaluate.py listing the (domain, file, t_sec, p_hard,
+    p_cross, p_splice) for every clean-file false positive on
+    the last KEPT classifier. Turns "singing clean_fp=6" into
+    actionable per-position diagnostics. (2) A
+    `failure_reason: pipeline_bug | feature_mismatch |
+    hypothesis_content` tag on HISTORY entries derived from
+    eval.stderr pattern match — unblocks re-testing of
+    bug-killed hypotheses. (3) Per-domain mean/min/max on
+    file_hpr / flatness / voicing in CURRENT STATE using the
+    EVAL corpus (not training set) so file-level gating
+    thresholds come from the measurement distribution.
+
