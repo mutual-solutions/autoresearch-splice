@@ -2185,10 +2185,20 @@ def _triage_enhancements(header_prose: str, entries: list[dict]) -> None:
 
 
 def _bullet_to_id(bullet: str) -> str:
-    """Convert a bullet string to a kebab-case id (max 40 chars)."""
-    words = re.sub(r"[^\w\s]", "", bullet.lower()).split()
+    """Convert a bullet string to a kebab-case id.
+
+    Strips leading list markers ``(1)``, ``1.``, ``1)``, ``[1]``; drops
+    common English articles; lowercases + kebab-joins the first 6 words;
+    trims to <=40 chars at a word boundary (never mid-word).
+    """
+    stripped = re.sub(r"^\s*[\(\[]?\d+[\)\].]?\s+", "", bullet)
+    words = re.sub(r"[^\w\s-]", "", stripped.lower()).split()
+    words = [w for w in words if w not in {"a", "an", "the"}]
     slug = "-".join(words[:6])
-    return slug[:40] or "enhancement"
+    if len(slug) > 40:
+        cut = slug[:40].rsplit("-", 1)[0]
+        slug = cut if cut else slug[:40]
+    return slug or "enhancement"
 
 
 
