@@ -49,6 +49,16 @@ GBM_THRESHOLD = 0.982
 # adjacent candidates.
 GBM_MIN_SEP_S = 3.5
 
+# DSP-confirmation floor: drop hit_mask emits whose strongest DSP z-score
+# signal (phase_z / T²_z / CPE_z) is below DSP_CONFIRMATION_MIN. GBM's
+# softmax can emit on an overwhelming spec_*_delta signal alone (chord
+# transition → big rolloff/centroid/bandwidth delta but smooth phase,
+# modest T², low CPE). Real cross-source splices produce at least one
+# DSP spike. Applied BEFORE dedupe so a strong-DSP neighbor can still
+# win a cluster.
+DSP_CONFIRMATION_CHANNELS = ("dsp_phase_z", "dsp_t2_z", "dsp_cpe_z")
+DSP_CONFIRMATION_MIN = 2.0
+
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "classifier", "fp_classifier.joblib",
@@ -218,6 +228,12 @@ def _gbm_detect_splices(
     t_feat_sum = 0.0
     t_pred_sum = 0.0
     gbm_emit_total = 0
+    dsp_dropped_total = 0
+
+    dsp_confirm_idx: list[int] = [
+        feature_names.index(n) for n in DSP_CONFIRMATION_CHANNELS
+        if n in feature_names
+    ]
 
     file_t0 = _time.perf_counter()
 
@@ -271,7 +287,14 @@ def _gbm_detect_splices(
         gbm_emit_count = int(hit_mask.sum())
         gbm_emit_total += gbm_emit_count
 
+        chunk_dsp_dropped = 0
         for i in np.flatnonzero(hit_mask):
+            if dsp_confirm_idx:
+                row = X[i]
+                dsp_max = max(row[j] for j in dsp_confirm_idx)
+                if dsp_max < DSP_CONFIRMATION_MIN:
+                    chunk_dsp_dropped += 1
+                    continue
             t_local = float(t_grid[i])
             label_id, _col = max(splice_cols, key=lambda sc: proba[i, sc[1]])
             all_emits.append((
@@ -280,11 +303,13 @@ def _gbm_detect_splices(
                 float(p_splice[i]),
                 X[i].tolist(),
             ))
+        dsp_dropped_total += chunk_dsp_dropped
 
         get_logger("detector.gbm").emit("INFO", "diag.gbm.chunk_scan_done",
               start=f"{offset_s:.2f}",
               scan_count=len(t_grid),
               gbm_emit=gbm_emit_count,
+              dsp_dropped=chunk_dsp_dropped,
               t_ctx_ms=int(t_ctx * 1000),
               t_feat_ms=int(t_feat * 1000),
               t_pred_ms=int(t_pred * 1000))
@@ -293,6 +318,7 @@ def _gbm_detect_splices(
           chunks=n_chunks,
           scan_total=scan_total,
           gbm_emit_total=gbm_emit_total,
+          dsp_dropped_total=dsp_dropped_total,
           t_ctx_total_ms=int(t_ctx_sum * 1000),
           t_feat_total_ms=int(t_feat_sum * 1000),
           t_pred_total_ms=int(t_pred_sum * 1000),
