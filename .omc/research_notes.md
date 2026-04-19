@@ -2642,3 +2642,95 @@ diagnose: no-traceback
 tsv: RESULTS_TSV: combined=<REDACTED> combined_mean=<REDACTED> combined_min=<REDACTED> clean_fp=6 n_datasets=3 combined_english=<REDACTED> clean_fp_english=0 combined_korean=<REDACTED> clean_fp_korean=4 combined_singing=<REDACTED> clean_fp_singing=2
 note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
 
+## 2026-04-20T02:28:04+09:00 — 9fe41d1 (discard, combined=0.493815)
+subject: chroma persistence_far post-filter (drop emits where pre/far chroma cosine dist <0.10 on tonal content) — cited next-step from 634cdd2(c)(3). Pure detector.py change, no retrain. Compute librosa.feature.chroma_stft once per chunk in _build_chunk_context (~50ms/60s chunk, norm=None). After existing MAX>=2.0 + SUM>=5.0 DSP gate, for each surviving emit at t compute mean chroma over pre [t-2, t] and far_post [t+4, t+8]. Per-emit tonality gate: max(pre_chroma)/mean(pre_chroma) > CHROMA_TONALITY_MIN=3.0 (intrinsically routes filter away from speech — speech windows have flat chroma ratio 1.0-1.5; smoke-verified white-noise=1.11). When tonal, drop emit if cosine distance < CHROMA_FAR_DIST_MIN=0.10. Edge guard: skip gate when t<2 or t+8>chunk_dur. Targets 29c06cf's singing 0.360 (weakest domain) where 2 chord-transition FPs survive — chord progressions cycle back to root key within 4-8s in pop/rock so far_dist ~0.02-0.10; real cross-source splices land in different key/scale that PERSISTS far after cut so far_dist 0.30-0.70. Smoke-verified: pure 440Hz sine pre-tonality=8.44, far_dist=2e-6 (would drop, correct). 440->622Hz tritone shift pre-tonality=8.47, far_dist=1.0 (would keep, correct). White-noise far_dist not evaluated because tonality 1.11 < 3.0 short-circuits gate. Orthogonal to every prior axis: not DSP z-score (chroma is harmonic-class-12 PCP); not class-routed; not file-HPR-routed (per-emit local tonality, not file-level); not the 634cdd2 chroma_cosine_dist FEATURE (different time scale FAR vs LOCAL ±2s, different mechanism POST-FILTER vs learned GBM feature, different normalization norm=None vs default 'inf'); not pairwise (chroma is harmonic-content, pairwise is segment-distance block-structure). Risk-bounded by stacking on MAX+SUM gates and tonality pre-gate: can only DROP emits past DSP that have tonal content AND chord-cycle pattern; cannot create TPs. Cannot regress english (FP=0; the only risk is dropping a TP, but english files are speech with chroma tonality <2.0 so gate never fires). Per-emit cost: 12-dim mean + cosine, sub-ms. Per-chunk cost: ~50ms chroma_stft x ~3 chunks/file x 60 files = ~9s within 243/300s budget. Blast radius: detector.py only, ~80 lines (helpers + 6 constants + ctx field + emit-loop integration); features.py sha stable so classifier byte-identical (no retrain).
+per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=0.360000
+
+# 2026-04-20 — hypothesis: chroma PERSISTENCE_FAR post-filter (cited next-step from 634cdd2(c)(3))
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Compute `librosa.feature.chroma_stft(norm=None)` once per
+    chunk in `_build_chunk_context` (~50ms / 60s chunk). After the
+    existing MAX>=2.0 + SUM>=5.0 DSP gate, for each surviving emit
+    compute mean chroma vector on the pre window [t-2, t] and the
+    FAR-post window [t+4, t+8]. If pre window's tonality is
+    sufficient (`max(pre_chroma)/mean(pre_chroma) > CHROMA_TONALITY_MIN
+    = 3.0` — intrinsic per-emit gate that excludes speech) AND the
+    cosine distance between pre and far chroma vectors is below
+    `CHROMA_FAR_DIST_MIN=0.10`, drop the emit. Edge-guard: skip the
+    gate when t<2 or t+8 > chunk_dur (insufficient context).
+
+(b) WHY this over recent failures. (i) CLAUDE.md mandate: 8+
+    consecutive DSP-post-filter variants since 29c06cf have all failed
+    to lift combined past 0.494. The DSP-gate axis is exhausted. (ii)
+    634cdd2 added `chroma_cosine_dist` as a LOCAL pre/post (t±2s)
+    FEATURE for GBM to learn — verify-fail at 0.488272 with singing
+    IMPROVING 0.360→0.394 but english regressing 0.732→0.690. The
+    chroma signal demonstrably helps singing; the failure mode was
+    GBM globally over-weighting a feature that's noise on speech.
+    (iii) Persistence_far is genuinely orthogonal to the failed local
+    chroma feature on TWO axes simultaneously: TIME SCALE (4-8s far
+    vs ±2s local) and MECHANISM (deterministic POST-FILTER vs learned
+    GBM feature). The far window discriminates real source-change
+    (new key persists) from chord cycle-back (chord progression
+    returns to root within ~4s in pop/rock). (iv) Per-emit tonality
+    gate (`max(pre_chroma)/mean(pre_chroma) > 3.0` with norm=None)
+    prevents the speech-noise-chroma failure mode that hurt english
+    in the feature attempt — speech windows have flat chroma (ratio
+    1.0-1.5) so the gate doesn't fire on them, preserving english /
+    korean recall. Singing chord transitions have ratio 5-12 and
+    chord-cycle far-distance 0.02-0.10, exactly the band 0.10 cuts.
+    (v) Risk-bounded by stacking on MAX+SUM gates and the tonality
+    pre-gate: can only DROP emits that pass DSP AND have tonal
+    content AND cycle back chromatically. Cannot create TPs.
+
+    Orthogonal to every prior axis: not DSP (chroma is not a DSP
+    z-score), not class-routed, not HPR-routed (chroma tonality is
+    per-emit not file-level), not GBM-feature (POST-FILTER is
+    deterministic), not the chroma_cosine_dist feature (different
+    time scale and mechanism), not pairwise (chroma is harmonic-
+    content not block-structure). Blast radius: detector.py only,
+    ~30 lines (helper + 2 constants + ctx field + gate); features.py
+    sha stable so classifier byte-identical (no retrain). Per-emit
+    cost: 12-dim vector mean + cosine distance, sub-ms. Per-chunk
+    cost: ~50ms chroma_stft × ~3 chunks/file × 60 files = ~9s within
+    243/300s eval budget headroom.
+
+(c) IF THIS FAILS. (1) If singing TPs drop (real singing crossfades
+    have weak persistence_far because the new tonal content takes
+    >8s to establish), LOWER threshold to 0.05 (looser bite). (2) If
+    bite is too gentle (singing FPs surviving have far chroma
+    distance ~0.12-0.20), RAISE threshold to 0.15 — catches deeper
+    chord cycles at modest TP risk. (3) Final escalation: stack BOTH
+    persistence_far AND local chroma POST-FILTERS — drop if EITHER
+    LOCAL pre/post chroma_dist < 0.05 (immediate same-key) OR FAR
+    persistence_dist < 0.10 (chord cycle-back).
+
+(d) Information gaps. (i) Per-position chroma values on the 2 singing
+    / 4 korean clean FPs surviving 29c06cf STILL not in CURRENT STATE
+    — calibrating chroma threshold from theory not data. The chroma
+    persistence_far distribution on real-splice TPs vs chord-
+    transition FPs is theoretical. (ii) The 634cdd2 chroma feature
+    attempt used librosa default norm='inf' (column max=1) which
+    differs from norm=None needed for max/mean tonality ratio — without
+    per-position chroma values I can't verify the tonality gate
+    threshold 3.0 actually separates singing music from speech.
+    (iii) ANALYSIS_WINDOW_S=60 with 30s overlap means edge-effect
+    emits at chunk boundaries lose the gate entirely; how many emits
+    is that? unknown.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE: per-position (domain, file, t_sec, label_id,
+    p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_pairwise_proximity,
+    chroma_pre, chroma_far, chroma_local_dist, chroma_far_dist,
+    file_hpr) for every clean FP on the last keep. THE persistent
+    blocker — every detector-side hypothesis for 12+ iterations is
+    calibrating thresholds from theory rather than observed values.
+    (2) `scripts/chroma_probe.py --keep-sha <sha> --thresholds
+    "0.05,0.10,0.15"` that replays the last keep's emit trace through
+    a candidate chroma POST-FILTER and reports per-domain (TPs_lost,
+    FPs_dropped). Turns "0.05 vs 0.10 vs 0.15" from a guess into a
+    numeric pre-commit decision. (3) Chunk-edge emit count per file:
+    how many emits land in [chunk_dur - 8, chunk_dur] where
+    persistence_far gates can't apply.
+
