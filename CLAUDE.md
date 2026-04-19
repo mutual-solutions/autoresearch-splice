@@ -6,7 +6,7 @@ Every subagent MUST be verified before its results are accepted.
 After any agent reports a `combined` score, run:
 
 ```
-uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <score>
+PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <score>
 ```
 
 This performs 4 checks: metric re-run, git diff audit, anomaly detection, and preflight.
@@ -24,7 +24,7 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 - Full evaluation must complete in under 300 seconds (cross-dataset GM).
 - Held-out test evaluation must complete in under 1200 seconds (20 min).
 - `splice/evaluate.py` and `splice/program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
-- `splice/detector.py` (GBM thresholds + sliding window geometry), `splice/features.py` (feature set), and `splice/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `uv run python splice/classifier/train_classifier.py`.
+- `splice/detector.py` (GBM thresholds + sliding window geometry), `splice/features.py` (feature set), and `splice/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `PYTHONPATH=$PWD uv run python splice/classifier/train_classifier.py`.
 
 ## Data layout (post-unification)
 
@@ -52,7 +52,7 @@ The verification system guards these from modification:
 
 ## Preflight
 
-Before evaluation, run: `uv run python autoresearch/preflight.py`
+Before evaluation, run: `PYTHONPATH=$PWD uv run python autoresearch/preflight.py`
 This verifies dataset integrity (file counts, ground truth hash).
 It runs automatically as part of verify_agent.py.
 
@@ -85,13 +85,13 @@ Operator workflow:
 3. Dry-run first to enumerate candidates and predicted deltas. <5 s;
    writes `.omc/retest-report.md`; no mutation.
    ```
-   uv run python autoresearch/verify_agent.py --retest <from-sha> --dry-run
+   PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --retest <from-sha> --dry-run
    ```
 4. Live run when the preview looks right. Replays discards in
    chronological order against a disk-sourced rolling baseline and
    invokes `run_autoresearch.sh _keep_path` on any real improvement.
    ```
-   uv run python autoresearch/verify_agent.py --retest <from-sha> [--limit N]
+   PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --retest <from-sha> [--limit N]
    ```
 
 Outcomes (in the report): `recovered`, `still-lower`, `conflict`,
@@ -183,11 +183,11 @@ real emission.
 
 ### Gates
 
-- `uv run python scripts/validate_logs.py --audit` — grep audit. Phase-1
+- `PYTHONPATH=$PWD uv run python scripts/validate_logs.py --audit` — grep audit. Phase-1
   tier: 0 residual `_diag(` in migrated Python sources. Phase-2 tier: 0
   residual `echo ... >> $LOG_FILE` in `run_autoresearch.sh` (the wrapper
   must emit exclusively via `_log`).
-- `uv run python scripts/validate_logs.py --parse .omc/logs/autoresearch.jsonl`
+- `PYTHONPATH=$PWD uv run python scripts/validate_logs.py --parse .omc/logs/autoresearch.jsonl`
   — schema-parse every line; warn on events outside the taxonomy.
 - `PYTHONPATH=$PWD uv run python autoresearch/tests/test_smoke_iteration.py` —
   pre-merge smoke stub. Four gates: fixture emission, parse, reader
