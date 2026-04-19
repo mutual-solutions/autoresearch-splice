@@ -2609,3 +2609,95 @@ per-domain: combined_english=0.767442 combined_korean=0.256790 combined_singing=
     "retrain side-effect on splice recall" inference into a measurable
     pre-commit signal.
 
+## 2026-04-20T00:50:39+09:00 — d5484a4 (discard, combined=0.473315)
+subject: soft-voting ensemble of 3 HistGBMs (seeds 42/123/456) — variance-reduction in p>0.98 tail. Pure train_classifier.py change: make_pipeline() wraps 3 HGBs with identical hyperparams but different random_state in a VotingClassifier(voting='soft'). All HGB knobs (max_iter=200/max_depth=3/max_leaf_nodes=8/learning_rate=0.07/l2=1.0/min_samples_leaf=20) unchanged. Training data unchanged (bba6dbe pitch-shift aug preserved at 760/300/300). detector.py byte-unchanged because VotingClassifier exposes classes_ and predict_proba with identical semantics. Targets bba6dbe's singing 0.388 / korean 0.410 / english 0.667 plateau by attacking an untried axis: seed-specific residual-fit quirks. HistGBM random_state seeds subsample ordering and split tie-breaking so two HGBs on identical data produce slightly-different decision surfaces in the high-probability tail (p>0.98) where clean FPs (singing 2, korean 4 at p~0.982-0.99) sit. Soft-voting averages the per-seed disagreements out of predict_proba without changing bias — emits that are SEED-SPECIFIC (only seed-42 pushes them over the 0.982 gate) get pulled below by the other two. Real splice TPs typically score p>0.99 on ALL seeds (stable positions) so rarely lose the gate. Orthogonal to every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter, 2 model-class swaps (both changed FAMILY — HistGBM kept, ExtraTrees catastrophic), 2 calibration (isotonic bug-killed, sigmoid 0.419), 2 HPR routing, 3 remote-half, 1 class_weight, 5 audio MUTATION — ZERO prior ensemble of same-family models. Cost: 3x train time (~3min x 3 ≈ 9min absorbed in retrain budget) and 3x inference predict_proba at stride=0.12 dense scan (each call is ~75-dim matmul + tree traversal; VotingClassifier parallelizes via n_jobs=-1 so wall-clock cost sublinear). Eval budget 243/300s leaves ~60s headroom.  Risk-bounded: if seeds agree on all emits, ensemble = single-seed output (worst case reproduces bba6dbe 0.473); class ordering preserved by design of soft-voting; detector.py touches 'classes_' and 'predict_proba' both exposed identically by VotingClassifier.
+per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=0.387692
+
+# 2026-04-20 — hypothesis: soft-voting ensemble of 3 HistGBMs (seeds 42/123/456)
+
+(a) HYPOTHESIS. In `splice/classifier/train_classifier.py::make_pipeline`,
+    replace the single `HistGradientBoostingClassifier(random_state=42, ...)`
+    with `VotingClassifier(estimators=[(name, HGB(seed=s, ...)) for s in
+    (42,123,456)], voting='soft', n_jobs=-1)`. All HGB hyperparameters
+    (max_iter=200 / max_depth=3 / max_leaf_nodes=8 / learning_rate=0.07 /
+    l2_regularization=1.0 / min_samples_leaf=20) identical across the 3
+    seeds; only `random_state` varies. StandardScaler unchanged; training
+    data unchanged (bba6dbe pitch-shift aug preserved at 760/300/300).
+    `detector.py` interacts via `named_steps['clf'].classes_` and
+    `model.predict_proba(X)` — VotingClassifier exposes both with
+    identical semantics, so detector.py is byte-unchanged.
+
+(b) WHY this over the recent failures. 7 consecutive post-bba6dbe
+    discards have all operated on the SAME axes: extend aug scope
+    (f71c526), change aug mechanism (eabd6b2, 423014c), augment
+    spliced too (c0d438e), rebalance via class_weight (d5cc597),
+    isotonic calibration (bug-killed), sigmoid calibration (0.419).
+    Every one has assumed the problem is fixable via data/loss/
+    calibration while keeping a single HistGBM with random_state=42.
+    Untested: the **variance** of that specific seed's decision
+    surface. HistGBM is a boosting ensemble that fits residuals
+    sequentially; `random_state` seeds the subsample row order and
+    split-search tie-breaking, so two HistGBMs on identical data
+    produce slightly-different decision surfaces — particularly in
+    the high-probability tail (p>0.98), which is where the FP
+    cluster (singing clean_fp=2, korean clean_fp=4) sits and where
+    a single seed's quirks matter most. Soft-voting 3 seeds averages
+    the per-tree disagreements out of the probability estimate
+    without changing bias — borderline emits at p~0.982 that are
+    SEED-SPECIFIC (only the 42-seed model happens to push them over
+    the gate) get pulled back below 0.982 by the other two. Real
+    splice TPs typically score p>0.99 across seeds (stable
+    high-confidence positions), so rarely lose the gate.
+
+    Orthogonal to every prior axis. 2 model-class swaps tried
+    (HistGBM kept, ExtraTrees catastrophic 0.010); both swapped the
+    FAMILY. ZERO prior axes have ensembled multiple HistGBMs of the
+    same family. Cost: 3x train time (~9 min, absorbed into the
+    retrain budget) and 3x inference predict_proba calls on the
+    75-dim feature matrix — small vs the 243/300s eval budget.
+    Risk-bounded: VotingClassifier with soft voting is monotone in
+    the sense that each seed's predicted probability contributes
+    linearly; the class ordering is preserved; cv_results ordinal
+    comparisons with bba6dbe remain valid. If the 3 seeds all happen
+    to agree on current emits, the ensemble output equals the
+    current single-seed output and the result is a no-op (worst
+    case: eval reproduces bba6dbe's 0.473).
+
+(c) IF THIS FAILS. Three paths.
+    (1) Expand ensemble to 5 seeds (42/123/456/789/1000) — more
+        variance reduction if 3 wasn't enough.
+    (2) Introduce DIVERSITY by varying hyperparams too: seed42 @
+        max_depth=3, seed123 @ max_depth=4, seed456 @ max_depth=2 —
+        explicit model-capacity diversity complements seed diversity.
+    (3) Final escalation: replace soft voting with STACKING (sklearn
+        StackingClassifier with a LogisticRegression meta-learner on
+        the three HGB predict_proba outputs) — lets a second-level
+        classifier learn when to trust which base model.
+
+(d) Information gaps. (i) The 2 singing / 4 korean clean FP positions
+    (file, t_sec, p_hard, p_cross, p_splice) remain opaque — I can't
+    verify the 3-seed averaging pulls THOSE specific positions below
+    0.982 vs pulling real splice TPs below too. (ii) Per-seed OOF
+    F1 variance on a single HistGBM is not in CURRENT STATE — if
+    seeds produce near-identical OOF metrics, the ensemble averaging
+    will barely bite. A pre-iteration estimate `train --seed-sweep
+    --n 3` printing per-seed OOF F1 would tell me upfront whether
+    this hypothesis has enough seed-variance to work. (iii) The
+    exact `predict_proba` cost per inference call isn't in CURRENT
+    STATE — 3x inference at dense stride 0.12 might be tight
+    against the 243/300s budget. If retrain+eval together exceed
+    300s, the wrapper will time-out-crash and the axis will be
+    uninformative (similar to f71c526's joblib-skip).
+
+(e) Wrapper enhancements. (1) `scripts/seed_variance_probe.py
+    --n-seeds 5 --base-seed 42` — runs 5 quick HistGBM fits with
+    different seeds on the current training data and reports
+    per-seed OOF F1 mean/std + per-class F1 std, so I can preview
+    whether a seed-ensemble hypothesis has enough seed-variance to
+    be worth trying. (2) CLASSIFIER_STATE block in CURRENT STATE
+    showing on-disk joblib's class_counts, OOF F1, features_py_sha,
+    AND model_class (HistGBM vs VotingClassifier vs GBM). Removes
+    the classifier-identity ambiguity. (3) A per-domain EVAL
+    runtime printout so I can plan 3x-inference hypotheses
+    relative to the 300s budget.
+
