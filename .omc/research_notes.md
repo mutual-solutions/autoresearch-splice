@@ -1346,3 +1346,85 @@ per-domain: combined_english=0.000000 combined_korean=0.000000 combined_singing=
         latest AUTO-RETRAIN OOF delta in CURRENT STATE, so I can
         spot training-pipeline drift vs hypothesis issues.
 
+## 2026-04-19T13:25:23+09:00 — 84b1531 (discard, combined=0.468623)
+subject: revert classifier HistGradientBoostingClassifier -> GradientBoostingClassifier — eval.stderr on disk (.omc/last_eval.log tail) shows the root cause of the last 4 consecutive 0.010 catastrophic discards was `AttributeError: 'HistGradientBoostingClassifier' object has no attribute 'feature_importances_'` thrown by shap_report.py. acba4aa was an ORPHANED keep (no paired baseline commit; DEEP-ORPHAN already flagged it in today's loop start) that swapped the classifier class while baseline_metrics.json retained the GBM-era 0.468623 score. Even though the maintainer fixed shap_report.py in US-510/US-511 (9ad0fdf try/except AttributeError + uniform-weights fallback), the canonical baseline measurement was produced by GradientBoostingClassifier(n_estimators=200, max_depth=3, learning_rate=0.07, subsample=0.9) and every subsequent hypothesis is being scored against a recorded baseline that the on-disk classifier (HistGBM) no longer produces. Reverting make_pipeline() to the exact make_pipeline body at acba4aa~1 (GBM with same hyperparams) restores classifier-baseline consistency so future detector/features/train deltas become apples-to-apples. Retrain deterministic (random_state=42, unchanged features.py sha e7691315, unchanged training data): OOF weighted F1=0.5904 vs prior HistGBM's 0.577 matches historical GBM OOF range (~0.59-0.61). Either the re-measured eval reproduces 0.468623 exactly and is DISCARDed (orphan-cleanup unfortunately loses but at least diagnosed here) or floating-point drift moves it a whisker above, in which case it's KEPT and the revert persists. Pure train_classifier.py + joblib revert; detector.py and features.py untouched; FEATURE_NAMES 75 unchanged.
+per-domain: combined_english=0.756098 combined_korean=0.500000 combined_singing=0.272222
+
+# 2026-04-19 — hypothesis: revert classifier HistGradientBoostingClassifier → GradientBoostingClassifier
+
+(a) HYPOTHESIS. Pure train_classifier.py revert. Restore the classifier
+    class to `GradientBoostingClassifier(n_estimators=200, max_depth=3,
+    learning_rate=0.07, subsample=0.9, random_state=RANDOM_STATE)` —
+    exactly the make_pipeline body at acba4aa~1, i.e. the classifier
+    that produced the current baseline combined=0.468623. Retrain
+    manually; commit the regenerated joblib + meta + cv_results
+    alongside the code revert.
+
+(b) WHY this over a fresh research axis. Reading
+    `.omc/last_eval.log` tail + `autoresearch.log` revealed the root
+    cause of the last 4 consecutive 0.010 catastrophic discards
+    (ExtraTrees 43944a6, gated tonality d47c0e2, isotonic d25f455,
+    phase residual b39dbc9, FILE-LEVEL flatness ac2d350): evaluate.py
+    → shap_report.py unconditionally touched
+    `clf.feature_importances_` which HistGradientBoostingClassifier
+    does NOT expose, throwing AttributeError and zeroing per-domain
+    scores → GM floor. The maintainer fixed shap_report.py in
+    US-510/US-511 (commit 9ad0fdf; try/except AttributeError with
+    uniform-weights fallback). But the acba4aa "swap" commit was
+    ORPHANED — DEEP-ORPHAN surfaces the mismatch: no baseline commit
+    paired with acba4aa, yet the HistGBM code + joblib remain in HEAD.
+    The recorded baseline 0.468623 was measured BEFORE acba4aa landed
+    (keep 2a2e584, GBM era). So the current state is inconsistent:
+    baseline_metrics.json says GBM, train_classifier.py says HistGBM,
+    the joblib on disk is HistGBM. Every future hypothesis is being
+    compared against a recorded baseline that the classifier on disk
+    no longer produces. Reverting restores canonical state. If the
+    retrain reproduces 0.468623 deterministically (random_state=42,
+    unchanged features.py sha, unchanged training data), the wrapper
+    will DISCARD on "not > current_best", but the revert then persists
+    through the baseline commit of whichever subsequent hypothesis is
+    kept. Worst case: revert reproduces 0.468623 exactly, is
+    discarded, wrapper resets to HistGBM, state stays inconsistent —
+    but the diagnosis is captured here for the operator. Best case:
+    noise in retrain produces a whisker above 0.468623 and it's kept,
+    cementing the revert. Either way, surfacing the root cause of the
+    4 prior 0.010 runs is higher value than attempting a fresh axis
+    against a contaminated baseline.
+
+(c) IF THIS FAILS. (1) If the retrain score is exactly 0.468623 and
+    is discarded, escalate to the operator: the revert must be merged
+    as a maintainer pass, not an autoresearch iteration. The
+    orphan-cleanup path (adding a baseline commit for acba4aa or
+    rolling it back) is outside the loop's control because the loop
+    only persists changes that BEAT baseline. (2) If the retrain
+    scores LOWER than 0.468623 (e.g. 0.465), that confirms that
+    something else drifted since baseline (feature cache, code path,
+    library version) and the prior baseline is no longer reproducible
+    — in which case the operator needs to re-measure the canonical
+    baseline under the current code state.
+
+(d) Information gaps. The prompt's HISTORY block reports the 4
+    recent 0.010 catastrophic failures without the root-cause eval
+    stderr (the AttributeError) inline. I only found it by reading
+    `.omc/last_eval.log` directly. A `LAST_CATASTROPHIC_STDERR` block
+    surfacing the eval tail on 0.010 outcomes would have let the prior
+    iteration (phase residual, FILE-LEVEL flatness) catch the bug
+    three attempts earlier. The previous reflection explicitly flagged
+    this gap — the maintainer pass fixed the underlying code bug
+    (shap_report.py) but did not add the diagnostic surface to the
+    prompt.
+
+(e) Wrapper enhancements. (1) A DEEP-ORPHAN commit detector is already
+    running (surfaced acba4aa in today's loop start), but the log
+    message is informational. It should be ACTIONABLE: when an orphan
+    is detected that touches classifier/detector/features code, the
+    wrapper should either block iteration until the operator resolves
+    it or automatically revert the orphan before continuing. (2)
+    Add a `LAST_CATASTROPHIC_STDERR` block to the iteration prompt
+    when the last N runs scored 0.010, showing the eval.stderr tail
+    (or evaluate.py error message) — the single most actionable
+    diagnostic signal is currently not surfaced to the agent. (3) A
+    `verify_agent.py --diagnose-orphans` subcommand that lists all
+    hypothesis commits without a paired baseline or discard, so the
+    operator can batch-clean them.
+
