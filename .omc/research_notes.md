@@ -3012,3 +3012,105 @@ per-domain: combined_english=0.839506 combined_korean=0.526154 combined_singing=
     and the one whose regression I'm trying to understand).
 [auto] (no SHAP data for either 49bd0b1 or 32cac36)
 
+## 2026-04-20T03:19:30+09:00 — ff65865 (discard, combined=0.490508)
+subject: add voiced_chroma_far_cosine_dist feature (FEATURE_NAMES 77->78) — FAR-window companion to 32cac36's voiced_chroma_cosine_dist. Same mechanism (voiced-mask restricted mean 12-dim chroma + cosine distance) but pre=[t-2,t] vs post_far=[t+4,t+8] so GBM sees the (near, far) TIME-SCALE JOINT. Reuses cached feat_chroma + feat_vp — zero new librosa calls. Edge guard: t+8 > chunk_dur returns sentinel 0.0 (matches 9fe41d1 pattern). Sentinel 0.0 also on zero-voiced-frame windows and zero-norm vectors, matching 49bd0b1/32cac36 safety pattern. Pure features.py change; FEATURE_NAMES count bump triggers wrapper auto-retrain via US-505 sha gate. Targets 32cac36 current-keep (combined=0.532) where singing remains weakest at 0.341. Mechanism: chord cycle-backs within a song's 4-bar progression (I-vi-IV-V etc.) produce high NEAR chroma distance (near feature fires ~0.3-0.5 at each chord transition) BUT the progression returns to the root chord within 4-8s so FAR-window chroma comes back to the same key signature (far_dist ~0.05-0.15). Real cross-song splices land in a different key/mode that PERSISTS 4-8s after the cut (far_dist ~0.3-0.7). GBM with only the near feature cannot distinguish these; with the (near, far) joint, tree splits learn "near>0.25 AND far<0.15 -> chord cycle (NOT splice)" vs "near>0.25 AND far>0.25 -> real cross-song (splice)". Voicing-mask self-gating mirrors 49bd0b1/32cac36: on speech voiced=vowels whose far-window chroma swings with prosody regardless of splice -> high-variance noise -> GBM assigns low per-domain SHAP, feature functionally invisible on english/korean. On singing voiced=sustained sung notes whose pitch class IS the key signature -> clean discriminator. Cited option (2) from 32cac36(c)(2): "add a second feature voiced_chroma_dist_far (pre=[t-2,t] vs far=[t+4,t+8]) so GBM sees a joint (near, far) signature". Orthogonal to every prior axis: NOT 634cdd2 (no mask, +/-2s local), NOT 68004ca (external tonality-ratio gate, +/-2s local), NOT 9fe41d1 (POST-FILTER not feature, no voicing mask, default-norm chroma with tonality pre-gate), NOT 32cac36 (+/-2s LOCAL window, same mechanism DIFFERENT TIME SCALE), NOT 49bd0b1 (cepstral not pitch-class), NOT spec_rolloff_far_delta (spectral not pitch-class). First time-scale-paired companion feature in the voiced-chroma axis. Blast radius: features.py only — one new block + FEATURE_NAMES append. Per-t cost: 2 slices + voiced-mask mean + cosine on 12-dim vectors, sub-ms. Risk-bounded: edge-guard sentinel + voiced-empty sentinel + zero-norm sentinel prevent NaN; self-gating via voicing mask reproduces the 32cac36 safety on speech domains. Smoke: len(FEATURE_NAMES)==78, last name 'voiced_chroma_far_cosine_dist', tritone-shift chroma yields dist=1.0, chord-cycle-back yields dist=0.0, t+8>chunk_dur edge guard returns 0.0, unvoiced windows return 0.0.
+per-domain: combined_english=0.683544 combined_korean=0.495652 combined_singing=0.348333
+
+# 2026-04-20 — hypothesis: voiced_chroma_far_cosine_dist feature (FEATURE_NAMES 77→78)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE feature
+    `voiced_chroma_far_cosine_dist`. Mechanism identical to 32cac36's
+    `voiced_chroma_cosine_dist` but on a FAR post-window: pre=[t−2, t]
+    vs post_far=[t+4, t+8], voiced-mask restricted, cosine distance of
+    voiced-only mean 12-dim chroma vectors. Reuses existing `feat_chroma`
+    and `feat_vp` caches — zero new librosa calls. Edge guard: if
+    `t_sec + 8.0 > chunk_dur` return sentinel 0.0 (matches 9fe41d1
+    pattern). Sentinel 0.0 when either window has zero voiced frames,
+    matching 49bd0b1/32cac36. FEATURE_NAMES 77→78 triggers wrapper
+    auto-retrain via US-505 sha gate.
+
+(b) WHY this over the current state. 32cac36 (current keep, 0.532261)
+    lifted combined from 0.506→0.532 by adding voiced_chroma at ±2s,
+    partially recovering singing from 0.310→0.341 but singing is STILL
+    weakest. The remaining singing gap is chord cycle-backs — within a
+    song's 4-bar chord progression (I–vi–IV–V etc.), chord transitions
+    produce high LOCAL chroma distance (near feature fires ~0.3–0.5)
+    but the chord cycle returns to root within 4–8s so FAR-window
+    chroma comes back to the same key signature. Real cross-song
+    splices land in a DIFFERENT key/mode that PERSISTS far after the
+    cut. GBM with only the near feature cannot distinguish these two;
+    with the (near, far) joint, tree splits can learn
+    "near_dist>0.25 AND far_dist<0.15 → chord cycle (NOT splice)" vs
+    "near_dist>0.25 AND far_dist>0.25 → real cross-song (splice)".
+
+    Explicit cited next-step in 32cac36(c)(2): "add a second feature
+    `voiced_chroma_dist_far` (pre=[t−2, t] vs far=[t+4, t+8]) so GBM
+    sees a joint (near, far) signature — chord cycle-backs have high
+    near distance but low far distance (key returns); real cross-song
+    has both high." Voicing-mask self-gating mirrors the 49bd0b1 /
+    32cac36 pattern: on speech voiced=vowels whose far-window chroma
+    swings with prosody → high-variance noise → GBM assigns low
+    per-domain SHAP, feature functionally invisible on english /
+    korean. On singing voiced=sustained sung notes whose pitch class
+    IS the key signature → clean discriminator.
+
+    Orthogonal to every prior axis: NOT 634cdd2 (no mask, ±2s local),
+    NOT 68004ca (external tonality-ratio gate, ±2s local, verify-fail),
+    NOT 9fe41d1 (deterministic POST-FILTER not feature, no voicing
+    mask, default-norm chroma with tonality pre-gate), NOT 32cac36
+    (±2s LOCAL window, same mechanism DIFFERENT TIME SCALE), NOT
+    49bd0b1 (cepstral not pitch-class), NOT spec_rolloff_far_delta
+    (spectral not pitch-class). The distinguishing axis here is
+    TIME SCALE paired with the existing near feature — NO prior
+    feature has given GBM a near/far chroma pair.
+
+    Blast radius: features.py only — one new block + one cache-key
+    reuse + FEATURE_NAMES append. Zero new librosa calls (reuses
+    feat_chroma from 32cac36). Per-t cost: 2 slices + voiced-mask
+    mean + cosine distance on 12-dim vectors, sub-ms. Classifier
+    sha auto-invalidates so wrapper retrains (~3 min). Risk-bounded:
+    zero-voiced sentinel=0.0 and edge-guard sentinel=0.0 prevent
+    NaN; self-gating via voicing mask reproduces the 32cac36 safety
+    on speech domains.
+
+(c) IF THIS FAILS. (1) If singing TPs regress (real cross-song
+    splices sometimes have weak far-window pitch-class persistence
+    because the new song's vocal starts mid-phrase with unvoiced
+    consonants), widen to symmetric pre_far=[t−8, t−4] vs
+    post_far=[t+4, t+8] — more robust to asymmetric voicing.
+    (2) If GBM assigns ~0 SHAP (joint interaction not learned at
+    max_depth=3 with n_estimators=200), raise max_depth to 4 or
+    n_estimators to 300 to give boosting deeper joint-feature
+    capacity. (3) Final escalation: replace cosine with
+    jensen-shannon divergence between pitch-class histograms
+    (normalize per column then JS on voiced mean) — JS emphasizes
+    modal-scale shifts (3+ pitch classes differ) over single-
+    chord shifts (1–2 pitch classes differ).
+
+(d) Information gaps. (i) Per-position CLEAN_FP_POSITIONS still not
+    in CURRENT STATE — 15+ consecutive hypotheses calibrated from
+    theory not observed values. I cannot verify whether 32cac36's
+    2 surviving singing FPs have t+8 < chunk_dur (edge guard may
+    make the feature a no-op for them). (ii) SHAP rollup reports
+    "no keeps yet — rollup empty" for both recent keeps (49bd0b1
+    and 32cac36) — I cannot see which features 32cac36 actually
+    relied on per domain, so the chord-cycle-back hypothesis is
+    theoretical. (iii) Training-chunk voiced_chroma_dist distributions
+    per class (not_splice vs hard_cut vs crossfade) not surfaced;
+    cannot preview whether training rows exhibit the theoretical
+    near/far joint separability.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block —
+    persistent blocker for 15+ hypotheses. Per-FP (domain, file,
+    t_sec, label_id, p_splice, chunk_dur, voiced_chroma_dist_near,
+    voiced_mfcc_dist, top-5 |SHAP| features with values) would
+    flip feature/mask design from theory to data. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that trains
+    once and reports per-domain OOF-F1 delta — turns "is this
+    feature worth a 3-min retrain" into a numeric. (3) Per-keep
+    SHAP rollup populated IMMEDIATELY on keep commit. The
+    "no keeps yet — rollup empty" marker means I'm forming hypotheses
+    with zero per-domain SHAP data on the classifier I'm trying to
+    improve — the biggest information gap in the entire autoresearch
+    loop.
+
