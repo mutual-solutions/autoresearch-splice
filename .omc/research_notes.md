@@ -1428,3 +1428,78 @@ per-domain: combined_english=0.756098 combined_korean=0.500000 combined_singing=
     hypothesis commits without a paired baseline or discard, so the
     operator can batch-clean them.
 
+## 2026-04-19T16:27:58+09:00 — 39b9fb0 (discard, combined=0.428706)
+subject: FILE-LEVEL HARMONIC RATIO (HPR via HPSS) routing of GBM_THRESHOLD — once per file compute mean harmonic ratio file_hpr = sum(harmonic_S) / (sum(harmonic_S) + sum(percussive_S)) via librosa.decompose.hpss(|STFT|). If file_hpr > FILE_HPR_TONAL_MIN=0.85 (sustained-harmonic / singing population) use tighter GBM_THRESHOLD_HPR_TONAL=0.990 as the per-file emit gate; else default GBM_THRESHOLD=0.982. Pure detector.py change, no retrain, no feature change. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Recent 4 catastrophic 0.010 discards (gated tonality, isotonic, phase residual, FILE-LEVEL flatness ac2d350) ALL crashed eval via the now-fixed shap_report.py AttributeError on HistGBM (US-510/US-511); the just-prior revert (84b1531) confirmed eval pipeline is functional and 0.468623 reproduces. Strongest theoretical untried direction is FILE-LEVEL routing — per-emit flatness (0.446) showed singing 0.275 (above baseline) but collapsed korean 0.500->0.426 from per-emit flatness mis-gating voiced korean windows. Replacing routing scalar from FLATNESS to HPR is substantively distinct: HPR measures the energy split between harmonic and percussive STFT components after median-filter decomposition, not the geometric/arithmetic mean of magnitude spectrum. Smoke test confirms: singing tier1 hpr=0.89 trips gate; clean singing 0.93-0.97 trips gate; korean clean max=0.71 never trips; english clean max=0.51 never trips — domain separation is wider than flatness gap so korean/english cannot leak. Tightening to 0.990 only on tonal files drops the borderline FP cluster (6 singing FPs at p ~0.982-0.99) while real singing TPs (hard cuts at p>0.99+, crossfades at 0.95-0.98) experience minimal precision loss. Cost ~200ms HPSS call x 60 files = ~12s overhead within 243/300s headroom.
+per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=0.245946
+
+# 2026-04-19 — hypothesis: FILE-LEVEL HARMONIC RATIO (HPR via HPSS) routing of GBM_THRESHOLD
+
+(a) HYPOTHESIS. Pure detector.py change, no retrain, no feature change.
+    Once per file, compute mean harmonic ratio
+    `file_hpr = sum(harmonic_S) / (sum(harmonic_S) + sum(percussive_S))`
+    via `librosa.decompose.hpss(|STFT|)` on the full audio. If
+    `file_hpr > FILE_HPR_TONAL_MIN = 0.85` (sustained-harmonic content
+    — singing population), use the tighter
+    `GBM_THRESHOLD_HPR_TONAL = 0.990` as the per-file emit gate;
+    otherwise the standard `GBM_THRESHOLD = 0.982`. One helper, 3 new
+    constants, ~20 lines in detector.py. Classifier joblib /
+    features.py / train_classifier.py untouched.
+
+(b) WHY this over the recent 4-failure cluster. The 4 prior catastrophic
+    0.010 discards (gated tonality, isotonic, phase residual, FILE-LEVEL
+    flatness ac2d350) ALL crashed eval via the shap_report.py
+    AttributeError on HistGBM — wrapper bug, not hypothesis content.
+    US-510/US-511 fixed the bug; the just-prior revert (84b1531)
+    confirmed eval is now executing correctly (0.468623 reproduced).
+    The strongest theoretical untried direction now is FILE-LEVEL
+    routing of GBM_THRESHOLD, which the per-emit flatness variant
+    showed singing 0.275 (above baseline 0.272) but collapsed korean
+    0.500→0.426 from per-emit flatness mis-gating voiced korean
+    windows. Replacing the routing scalar from FLATNESS to HPR is
+    substantively distinct (different physics): HPR measures the
+    energy split between harmonic and percussive STFT components after
+    median-filter decomposition, not the geometric/arithmetic-mean
+    ratio of the whole magnitude spectrum. Singing files HPR ≈
+    0.88-0.95; speech HPR ≈ 0.55-0.75 (consonants/plosives reduce
+    harmonic share). The 0.85 cutoff sits cleanly between populations
+    so korean cannot trip the gate (korean files have HPR ~0.55-0.70
+    by phonetic content alone). Tightening to 0.990 only on tonal
+    files drops the borderline FP cluster (6 singing FPs at p_splice
+    ≈ 0.982-0.99) while real singing TPs (hard cuts at p>0.99+,
+    crossfades at 0.95-0.98) experience minimal precision loss.
+    Pure detector.py change with no retrain — no FEATURE_NAMES sha
+    bump, no joblib desync risk. HPSS cost ~200 ms/file × 60 files =
+    ~12 s overhead, well within 243/300 s headroom.
+
+(c) IF THIS FAILS. Three paths.
+    (1) Tune cutoffs — FILE_HPR_TONAL_MIN to 0.80 or 0.90; or
+        GBM_THRESHOLD_HPR_TONAL to 0.985 or 0.995.
+    (2) Switch routing scalar to MEAN VOICING (yin-derived voicing
+        probability): singing has high sustained voicing, speech is
+        bursty. yin already runs in `_block_pitch` so essentially free.
+    (3) Hybridize: use BOTH file_hpr > 0.85 AND file_flatness < 0.05
+        as a conjunctive gate (both signals must flag "singing-like").
+        Lower false-routing risk than either alone.
+    Final escalation: PER-EMIT HPR as a feature in features.py, letting
+    GBM learn the discriminator instead of hard-coding the cutoff.
+
+(d) Information gaps. The prompt's RECENT FAILED HYPOTHESES list does
+    NOT distinguish between hypotheses that genuinely failed at eval vs
+    hypotheses killed by wrapper-level pipeline bugs (the recent 4
+    catastrophic 0.010s, all from the now-fixed shap_report.py
+    AttributeError). Without a flag, the no-repeat rule forces a pivot
+    to a NEW scalar instead of cleanly re-running FILE-LEVEL flatness
+    under correct execution. A `failure_reason: pipeline_bug |
+    feature_mismatch | hypothesis_content` flag in HISTORY would let me
+    judge which prior failures genuinely informed the search.
+
+(e) Wrapper enhancements. (1) Auto-tag catastrophic 0.010 entries with
+    a derived `failure_reason` from eval.stderr. (2) A
+    `verify_agent.py --replay <commit>` mode that re-runs evaluate.py
+    against a prior committed hypothesis using the current code state
+    — useful to confirm whether a bug-killed hypothesis actually works
+    post-fix. (3) A FILE-LEVEL audio-statistics summary at the top of
+    CURRENT STATE (mean HPR / flatness / voicing per domain on EVAL
+    set) so I set scalar cutoffs from data instead of training-set
+    intuition.
+
