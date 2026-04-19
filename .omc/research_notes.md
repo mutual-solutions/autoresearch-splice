@@ -2701,3 +2701,116 @@ per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=
     runtime printout so I can plan 3x-inference hypotheses
     relative to the 300s budget.
 
+## 2026-04-20T01:04:45+09:00 — 273b8f5 (keep, combined=0.479100)
+subject: DSP-confirmation floor post-filter — drop GBM emits whose strongest DSP z-score (phase/T²/CPE) is below DSP_CONFIRMATION_MIN=2.0, applied BEFORE dedupe so a strong-DSP neighbor can still win a 3.5s cluster. Pure detector.py change, no retrain, no feature change. Targets bba6dbe's singing 0.388 / korean 0.410 / english 0.667 plateau where 8 consecutive post-bba6dbe classifier/training-data discards have failed. Mechanism: top-SHAP features are spec_rolloff_delta/spec_centroid_delta/spec_bandwidth_delta across all domains (400-890 mass in singing, 350-660 in english) but dsp_t2_z shows 83-230 mass across all 3 domains too — GBM already treats T² as a strong auxiliary signal. What GBM doesn't enforce is a REQUIREMENT that at least one DSP channel fires — its softmax can still emit on an overwhelming spectral signal alone (chord transition → big spec_*_delta but smooth phase, modest T², low CPE). Real cross-source splices produce at least one DSP spike (phase_z fires at mic/room mismatch in hard cuts, T² fires at spectral-distribution shift in crossfades, CPE fires at prediction failure). Threshold 2.0 is conservative — 2 std devs above chunk-local MAD z — leaving headroom for real splices (typically z=3-10 on at least one channel). Orthogonal to every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter (persistence/plateau/class-margin/tonality/onset-local-pct/HPR-remote-rolloff/global-half-centroid/mfcc-remote — all operate on spectral or probability-curve signals, NEVER on required-DSP confirmation), 2 model-class swap, 2 calibration, 2 HPR routing, 6 audio MUTATION, 1 ensemble. Blast radius: detector.py only, ~15 lines added, feature_names unchanged so classifier sha stable (no retrain). Per-emit cost: three float reads from already-computed feature vector, negligible. Smoke: detect_splices on 10s noise returns [] without error, DSP_CONFIRMATION_CHANNELS=('dsp_phase_z','dsp_t2_z','dsp_cpe_z') resolves via bundle.feature_names with graceful no-op if any channel missing.
+per-domain: combined_english=0.690476 combined_korean=0.410811 combined_singing=0.387692
+
+# 2026-04-20 — hypothesis: DSP-confirmation floor post-filter
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Before dedupe, filter every hit-mask emit by the MAX of the
+    three DSP z-score features already on the feature vector
+    (`dsp_phase_z`, `dsp_t2_z`, `dsp_cpe_z`). Drop the emit when
+    `max(...) < DSP_CONFIRMATION_MIN = 2.0`. Implementation: resolve
+    the three column indices once from `feature_names`, apply the test
+    inside the existing `for i in np.flatnonzero(hit_mask)` loop so
+    surviving emits (with at least one DSP channel >= 2.0) go into the
+    existing dedupe, and weak-DSP emits in a 3.5s cluster are removed
+    BEFORE dedupe (so a strong-DSP neighbor can still win the cluster).
+    Log a `diag.gbm.dsp_postfilter` line per chunk with dropped/kept
+    counts.
+
+(b) WHY this over the recent failures. Eight consecutive post-bba6dbe
+    discards have all operated on CLASSIFIER / TRAINING-DATA axes
+    (extend-aug-to-korean joblib-skip, class_weight=balanced
+    catastrophic, spliced-singing aug regressed singing, EQ-tilt
+    replacement lost gain, hybrid pitch+time-stretch regressed, 3-seed
+    soft-voting identical metrics likely joblib-skip) and clean FP
+    reduction has plateaued. The DIAGNOSTIC signal has been sitting
+    right there: top-SHAP features are spec_rolloff_delta /
+    spec_centroid_delta / spec_bandwidth_delta across all domains
+    (400-890 mass in singing, 350-660 in english), but `dsp_t2_z`
+    shows up at 83-230 mass across ALL three domains too, meaning GBM
+    already treats T² as a strong auxiliary signal. What GBM DOESN'T
+    enforce is a REQUIREMENT that at least ONE DSP channel fires —
+    its softmax can still emit on an overwhelming spectral signal
+    alone (spec_rolloff_delta ~ 2000 Hz from chord transition) even
+    when all three DSP channels are near zero. That is exactly the
+    clean-FP failure mode: chord transitions produce big spec deltas
+    but ZERO phase discontinuity (smooth harmonic progression), low
+    T² (energy redistributes rather than jumps), low CPE (complex
+    prediction succeeds on smooth transitions). Real cross-source
+    splices produce at least one DSP spike (phase_z fires at mic/room
+    mismatch in hard cuts, T² fires at spectral-distribution shift
+    in crossfades, CPE fires at prediction failure). Threshold 2.0 is
+    conservative — 2 std devs above the chunk-local MAD z — leaving
+    plenty of headroom for real splices (typically z=3-10 on at least
+    one channel). Orthogonal to every prior axis: 8 GBM hyperparam,
+    5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter
+    (persistence/plateau/class-margin/tonality/onset-local-pct/
+    HPR-remote-rolloff/global-half-centroid/mfcc-remote — all operate
+    on spectral or probability-curve signals, NEVER on required-DSP
+    confirmation), 2 model-class swap, 2 calibration, 2 HPR routing,
+    6 audio MUTATION, 1 ensemble. The DSP-floor post-filter is a
+    genuinely new branch — hardcoding an AND-gate between GBM and
+    DSP rather than letting GBM decide the tradeoff softly.
+
+    Blast radius: detector.py only, ~15 lines added in one place,
+    feature_names unchanged so classifier sha stable (no retrain).
+    Per-emit cost: three float reads from an already-computed vector
+    (O(1) per hit_mask position), totally negligible. If the floor
+    is too strict on a real splice (e.g., a subtle singing crossfade
+    where none of phase/T²/CPE reach 2.0), that emit is lost — worst
+    case eval drops modestly and the iteration gets discarded.
+
+(c) IF THIS FAILS. (1) Lower the floor to 1.5 (admits more DSP-weak
+    emits). (2) Require that the max DSP channel EITHER >= 2.0 AT t
+    OR >= 3.0 at any point in the chunk (file-level presence, less
+    strict). (3) Gate the post-filter to singing-likely files only —
+    compute chunk-level HPSS harmonic ratio and apply DSP floor only
+    when HPR > 0.85 (tonal singing population where chord-transition
+    FPs dominate, preserving speech recall at korean/english). (4)
+    Final escalation: replace the hard AND-gate with a SOFT score
+    combination — multiply the GBM p_splice by `sigmoid((dsp_max -
+    1.0) / 0.5)` and re-threshold at 0.70. This makes DSP a
+    multiplicative confidence weight instead of a binary gate.
+
+(d) Information gaps. (i) The per-emit DSP z-score values on the 2
+    singing and 4 korean clean FPs are not in CURRENT STATE — I'm
+    predicting which FPs get bitten from the SHAP magnitude (dsp_t2_z
+    ~ 85-230 mass means it's informative but not which direction).
+    A `CLEAN_FP_POSITIONS` block listing (domain, file, t_sec,
+    p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z) per clean FP would
+    let me calibrate the threshold from the actual failure set.
+    (ii) Plateau-filter (one of 7 verify-fails at 0.463218) and
+    class-margin post-filter are referenced in history but without
+    their exact definition / threshold — I'm confident my DSP-floor
+    is distinct (different signal source, different gating direction),
+    but a `POST_FILTERS_TRIED` block with one-line summaries would
+    remove the "am I re-doing a prior idea" uncertainty every
+    detector-side hypothesis carries. (iii) Whether an emit's
+    feature_vector in `all_emits` preserves the EXACT DSP values the
+    GBM saw is obvious from the code (`X[i].tolist()`), but whether
+    feature_names in the loaded bundle is guaranteed to match
+    FEATURE_NAMES is classifier-state-dependent — the bundle's
+    `feature_names` could be None in legacy cases.
+
+(e) Wrapper enhancements. (1) `CLEAN_FP_POSITIONS` block at top of
+    CURRENT STATE with per-position DSP z-scores — would turn
+    "singing clean_fp=2 / korean clean_fp=4" into actionable
+    (file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z)
+    tuples. Most detector-side hypotheses today are guessing which
+    scalar signal will bite which FP without ever seeing the
+    failure set's actual values. (2) `POST_FILTERS_TRIED` block —
+    one-line summaries (mechanism, threshold, scope) of every
+    post-filter hypothesis ever tried, so I can verify
+    orthogonality pre-commit instead of chasing keyword matches
+    in RECENT FAILED HYPOTHESES. (3) `scripts/dsp_signal_probe.py
+    --emit-threshold 0.982 --dsp-channel {phase,t2,cpe}` that
+    reports the distribution of the DSP z-scores on the subset of
+    dense-scan positions where p_splice > 0.982, per domain —
+    would let me preview the bite rate of a DSP-floor hypothesis
+    BEFORE committing (how many emits drop at threshold 1.5 / 2.0
+    / 2.5 per domain).
+[auto] (no SHAP data for either bba6dbe or 273b8f5)
+
