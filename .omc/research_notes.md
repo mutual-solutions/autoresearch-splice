@@ -3525,3 +3525,73 @@ per-domain: combined_english=0.707317 combined_korean=0.434286 combined_singing=
     pairwise_proximity values on emits passing MAX>=2.0 but failing
     SUM>=5.0 — confirms biteable population before commit.
 
+## 2026-04-20T02:12:34+09:00 — 3b365fe (discard, combined=0.488272)
+subject: additive pairwise-proximity DSP gate (eff_sum = sum+min(pw,2.0) >= 5.5)
+per-domain: combined_english=0.690476 combined_korean=0.428169 combined_singing=0.393750
+
+(a) HYPOTHESIS. Pure detector.py change — replace the MAX+SUM DSP gate with
+    an ADDITIVE effective-sum gate that treats `dsp_pairwise_proximity` as a
+    fourth cumulative channel with a capped contribution:
+      effective_sum = sum(phase_z, t2_z, cpe_z) + min(pairwise_proximity, 2.0)
+      keep iff max(phase_z, t2_z, cpe_z) >= 2.0 AND effective_sum >= 5.5
+    MAX gate at 2.0 unchanged; the SUM floor moves from 5.0 to a
+    pairwise-modulated continuous threshold. Cited untried escalation from
+    3e4e996(c)(3).
+
+(b) WHY over recent failures. 29c06cf (current keep) tightened SUM 4.5→5.0
+    but regressed singing 0.384→0.360 (now weakest). Five post-29c06cf
+    attempts failed:
+      - eb8984e class-routed SUM (hard_cut=5.0/crossfade=4.5): singing stuck
+        at 0.360 — lost TPs are hard_cut not crossfade, class axis wrong.
+      - 55b21e6 HPR-gated SUM: reproduced 29c06cf exactly — file-HPR routing
+        dead on this corpus.
+      - 6b28235 CPE floor >=1.0: korean tanked 0.457→0.362.
+      - d256901 class-routed channel: too strict 0.449.
+      - 3e4e996 binary pairwise routing (pw>=1.5 → sum_min=4.5): 0.490.
+    All five operate on binary gates. The additive gate is qualitatively
+    different — a CONTINUOUS proportional trade: at pw=0 effective threshold
+    behaves like 5.5 (STRICTER than current 5.0, biting low-pairwise FPs);
+    at pw=1.0 it behaves like 4.5 (looser, recovering singing hard_cut TPs
+    with block-structure confirmation); capped at pw=2.0 so one strong
+    pairwise channel cannot single-handedly admit weak-DSP emits. Real
+    splices typically have pw=2-5 (cross-block distance spike in
+    _detect_pairwise Hotelling-T² between segment pairs); chord transitions
+    and phoneme shifts have pw≈0 (cyclic intra-block variation, no
+    block-boundary signal). This gate tightens on FP-likely emits and
+    loosens on TP-likely emits simultaneously. Orthogonal to all prior DSP
+    variants (MAX, SUM uniform, SUM class-routed, SUM HPR-routed, CPE floor,
+    binary-pairwise routing) — none treated pairwise as additive. Blast
+    radius: detector.py only, ~6 lines (2 constants + 1 index + reworked
+    gate), features.py sha stable so no retrain. Per-emit cost: one extra
+    float read + min + add, negligible.
+
+(c) IF THIS FAILS. (1) If low-pw FP cut is too aggressive losing real TPs
+    with weak pairwise (subtle crossfades where block structure is washed
+    out), lower threshold to 5.25 keeping the additive shape. (2) Raise
+    the pairwise cap from 2.0 to 3.0 to let strong pairwise confirmation
+    rescue more borderline TPs. (3) Final escalation: 4-channel SUM that
+    includes pairwise without cap, re-tuned threshold around 6.5-7.0 —
+    makes pairwise first-class.
+
+(d) Information gaps. (i) Per-position DSP z-scores AND pairwise_proximity
+    on the 2 singing / 4 korean clean FPs surviving 29c06cf STILL not in
+    CURRENT STATE. I cannot verify whether the surviving FPs have pw<0.5
+    (additive gate bites them) or pw>=1.0 (gate doesn't bite). (ii)
+    LOST_TP_POSITIONS between 865d92f and 29c06cf unsurfaced — recovery
+    prediction is theoretical. (iii) Distribution of dsp_pairwise_proximity
+    across emits per domain still unknown — can't preview biteable
+    population.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block auto-emitted
+    by splice/evaluate.py with per-position (domain, file, t_sec,
+    label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    dsp_pairwise_proximity, sum, max, effective_sum) from the last keep's
+    eval — the single biggest blocker across 12+ detector-side hypotheses.
+    Every DSP-gate hypothesis calibrates thresholds from theory rather
+    than data. (2) `scripts/dsp_gate_sweep.py --additive
+    --thresholds "5.0,5.25,5.5,5.75" --pw-caps "1.5,2.0,3.0"` replaying
+    the last keep's emit trace and reporting per-domain
+    (TPs_recovered, FPs_dropped, FPs_re_admitted) — turns a guess-pick
+    into a numeric decision. (3) Per-domain pairwise_proximity histogram
+    on the surviving emits to confirm biteable bands.
+
