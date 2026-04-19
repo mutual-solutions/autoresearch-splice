@@ -3114,3 +3114,105 @@ per-domain: combined_english=0.683544 combined_korean=0.495652 combined_singing=
     improve — the biggest information gap in the entire autoresearch
     loop.
 
+## 2026-04-20T03:35:28+09:00 — 308aa5a (discard, combined=0.522259)
+subject: add voiced_tonnetz_cosine_dist feature (FEATURE_NAMES 77->78) — voiced-frame-only tonnetz (6-dim tonal-centroid projection of chroma) cosine distance between pre[t-2,t] and post[t,t+2]. Reuses cached feat_chroma (32cac36); adds one feat_tonnetz cache via librosa.feature.tonnetz(chroma=feat_chroma) — a ~0.4ms 6x12 matmul, zero new librosa STFT calls. Per-t cost is 2 slices + voiced-mask mean + cosine on 6-dim vectors, sub-ms. Sentinel 0.0 when either window has zero voiced frames, matching 49bd0b1/32cac36 safety pattern. Targets 32cac36's singing 0.341 weakest-domain plateau: 32cac36 proved voiced-chroma near-window works but singing still drags; ff65865 tried FAR-window voiced chroma and regressed english 0.840->0.684 (far-window speech-vowel chroma is noisy, breaks self-gating), ruling out time-scale companions on the voiced-chroma axis. Tonnetz is a 6-dim LINEAR projection of chroma onto perfect-fifths / major-thirds / minor-thirds axes — measures HARMONIC RELATIONSHIP not raw pitch-class overlap. Within a song's key chord progressions (I-IV-V-I) stay tight in tonnetz space; cross-song splices to a different key move across it. Smoke-verified on synthetic sine chords: C->G (in-key fifth) tonnetz_dist=0.95 vs chroma_dist=0.52; C->F# (out-of-key tritone) tonnetz_dist=1.82 vs chroma_dist=0.68. Tonnetz has ~50%% better in-key-vs-out-of-key discrimination ratio (1.92x vs chroma's 1.30x). GBM max_depth=3 cannot learn the 12->6 linear projection itself; providing tonnetz as an explicit feature gives the geometric embedding directly. Near window (+/-2s) preserves 32cac36 self-gating on speech: voiced=vowels whose per-vowel tonnetz swings with prosody -> high-variance noise -> GBM assigns low per-domain SHAP on english/korean, feature functionally invisible; on singing voiced=sustained notes whose tonnetz IS the key signature -> clean discriminator. Orthogonal to every prior axis: NOT 634cdd2 (raw chroma no mask), NOT 68004ca (external tonality-ratio gate, verify-fail), NOT 9fe41d1 (chroma persistence_far POST-FILTER 4-8s), NOT 32cac36 (voiced chroma — pitch-class not tonal-centroid; tonnetz geometrically distinct from 12-dim PCP), NOT ff65865 (far window), NOT 49bd0b1 (cepstral). Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505. Smoke: len(FEATURE_NAMES)==78, last name 'voiced_tonnetz_cosine_dist', synthetic tritone-shift at t=4s yields dist=1.82, synthetic noise yields sentinel 0.0.
+per-domain: combined_english=0.850000 combined_korean=0.490909 combined_singing=0.341379
+
+# 2026-04-20 — hypothesis: voiced_tonnetz_cosine_dist feature (FEATURE_NAMES 77→78)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new
+    feature `voiced_tonnetz_cosine_dist`. Precompute
+    `librosa.feature.tonnetz(chroma=feat_chroma)` once per chunk
+    (reuses the chroma cache added in 32cac36 — zero new librosa
+    calls beyond a ~0.4 ms 6×12 matmul); cache as `feat_tonnetz`.
+    Per position t_sec: slice voiced-flag `feat_vp` and tonnetz
+    frames on pre=[t−2, t] and post=[t, t+2]; keep only frames where
+    `vp==1.0`; return cosine distance of voiced-only mean 6-dim
+    tonnetz vectors. Sentinel 0.0 when either window has zero
+    voiced frames or zero-norm vectors, matching the 49bd0b1 /
+    32cac36 safety pattern. FEATURE_NAMES 77→78 triggers wrapper
+    auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 32cac36 (current keep, 0.532)
+    proved voiced-chroma near-window lifts singing but singing
+    REMAINS weakest at 0.341. ff65865 (discard, 0.490) tried a
+    FAR-window voiced chroma companion and REGRESSED english
+    0.840→0.684 — voicing-mask self-gating fails on speech at
+    far windows because speech far-vowel chroma is noisy. That
+    rules out further time-scale companions on the voiced-
+    chroma axis. Tonnetz is a 6-dim LINEAR projection of
+    chroma onto the tonal-centroid space (perfect-fifths axis,
+    major-thirds axis, minor-thirds axis) — functionally it
+    measures HARMONIC RELATIONSHIP not raw pitch-class overlap.
+    Within a song's key chord progressions (I-IV-V-I) stay in
+    a tight tonnetz region because every chord is harmonically
+    related to the tonic. Cross-song splices that land in a
+    different key move across tonnetz space. Smoke-verified on
+    synthetic sine chords: C→G (in-key fifth) tonnetz_dist=0.95
+    vs chroma_dist=0.52; C→F# (out-of-key tritone) tonnetz_dist
+    =1.83 vs chroma_dist=0.68. Tonnetz has ~50% BETTER in-key-
+    vs-out-of-key discrimination ratio (1.92x vs chroma's
+    1.30x). GBM max_depth=3 cannot learn the linear 12→6
+    projection itself; providing tonnetz as an explicit feature
+    gives the geometric embedding directly. Near window (±2s)
+    preserves 32cac36 self-gating success on speech: voiced=
+    vowels whose per-vowel tonnetz swings with prosody
+    regardless of splice → high-variance noise → GBM assigns
+    low per-domain SHAP on english/korean, feature functionally
+    invisible; on singing voiced=sustained sung notes whose
+    tonnetz IS the key signature → clean discriminator.
+    Orthogonal to every prior axis: NOT 634cdd2 (raw chroma no
+    mask), NOT 68004ca (chroma with external tonality-ratio
+    gate, verify-fail), NOT 9fe41d1 (chroma persistence_far
+    POST-FILTER 4-8s), NOT 32cac36 (voiced chroma — pitch-class
+    not tonal-centroid; tonnetz is a 6-dim harmonic-function
+    projection, geometrically distinct from 12-dim PCP), NOT
+    ff65865 (far window), NOT 49bd0b1 (cepstral). Blast radius:
+    features.py only — one new block + one cache-key +
+    FEATURE_NAMES append + assert bump. Per-t cost: 2 slices +
+    voiced-mask mean + cosine on 6-dim vectors, sub-ms.
+    Per-chunk cost: one 6×12 matmul on cached chroma (~0.4 ms),
+    absorbed within 243/300 s eval budget. Risk-bounded: self-
+    gating via voicing mask reproduces 32cac36 safety on speech;
+    zero-voiced sentinel prevents NaN.
+
+(c) IF THIS FAILS. (1) If GBM assigns ~0 SHAP (tonnetz-of-
+    chroma_stft too correlated with raw chroma for max_depth=3
+    to find additional splits), compute tonnetz from chroma_cqt
+    instead (logarithmic frequency bin centers give cleaner
+    tonal-centroid separation at cost of ~30 ms/chunk). (2) If
+    it lifts singing but regresses speech (near-window speech
+    tonnetz turns out to carry splice signal too), add an
+    HPSS-HARMONIC secondary mask requiring harmonic_energy >
+    0.7·(harm+perc) on contributing frames — singing voice
+    frames pass, speech voiced-vowel frames often fail. (3)
+    Final escalation: replace cosine with jensen-shannon
+    divergence on L1-normalized tonnetz PMFs — emphasizes
+    single-axis shifts (tonic modulation) over uniform spread.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS still absent from
+    CURRENT STATE after 15+ consecutive hypotheses. I cannot
+    verify whether 32cac36's 2 surviving singing FPs have
+    voiced frames in both pre and post ±2s windows (if
+    instrumental-only section, the new feature is a no-op for
+    them). (ii) SHAP rollup reports "no keeps yet — rollup
+    empty" for 49bd0b1 and 32cac36, so I cannot confirm which
+    features 32cac36 actually leans on per domain — the
+    chord-cycle-back hypothesis is theoretical. (iii) Training-
+    chunk voiced_tonnetz distributions per class unknown;
+    cannot preview separability pre-retrain.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block
+    — persistent blocker for 15+ hypotheses; per-FP (domain,
+    file, t_sec, label_id, p_splice, vp_pre_count, vp_post_count,
+    voiced_chroma_dist, voiced_mfcc_dist, top-5 |SHAP| features
+    with values) would flip feature design from theory to data.
+    (2) `scripts/feature_oof_preview.py --add <feature_fn>`
+    that trains once and reports per-domain OOF-F1 delta vs
+    current — turns "is this feature worth a 3-min retrain"
+    into a numeric. (3) Per-keep SHAP rollup populated
+    IMMEDIATELY on keep commit — current "no keeps yet — rollup
+    empty" marker means I'm forming hypotheses with zero
+    per-domain SHAP data on the classifier I'm trying to
+    improve, the biggest information gap in the loop.
+
