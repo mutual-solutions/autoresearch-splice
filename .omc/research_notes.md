@@ -2095,3 +2095,79 @@ per-domain: combined_english=0.620690 combined_korean=0.320482 combined_singing=
     eval-clean-positive rows across domains, so a new feature's
     discrimination can be visualized BEFORE committing it.
 
+## 2026-04-19T23:49:09+09:00 — bba6dbe (keep, combined=0.473315)
+subject: pitch-shift audio augmentation of CLEAN SINGING training chunks (±1 semitone) — first training-data MUTATION axis. Adds ~160 synthetic not_splice rows (class counts 600/300/300 -> 760/300/300) by processing 2 pitch-shifted variants per clean singing file via librosa.effects.pitch_shift. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272 by widening the not_splice distribution in top-SHAP spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta space — pitch-shifted chord transitions look like chord-transition events (transposed but preserved) in spec_*_delta so GBM learns they are NOT splices. Explicit untried escalation cited in 3 prior post-mortems. Orthogonal to every prior axis: 8 GBM hyperparam failures, 5 training-data SAMPLING failures (NEG counts/distance/curriculum/bootstrap-adversarial all on original audio), 12+ feature add/ablation failures, 8+ post-filter failures, 2 model-class swaps, 2 calibration failures — ZERO prior audio-content mutation. Singing-only + clean-only ensures korean (0.500) and english (0.756) training distributions are byte-identical; vs file_hpr FEATURE 0.357 which tanked korean via global perturbation. Same fid for augmented rows keeps GroupKFold clean. OOF weighted F1=0.6143 (vs baseline 0.5904) / not_splice F1=0.857 (class-level lift). ±1 semitone is gentle to minimize phase-vocoder artifacts vs ±3-6 shifts. Pure train_classifier.py change; features.py sha unchanged so wrapper's staleness gate passive.
+per-domain: combined_english=0.666667 combined_korean=0.410256 combined_singing=0.387692
+
+# 2026-04-19 — hypothesis: pitch-shift audio augmentation of CLEAN SINGING training chunks
+
+(a) HYPOTHESIS. In `splice/classifier/train_classifier.py`, after the
+    existing per-file feature extraction, add TWO pitch-shifted
+    variants (+1, -1 semitone) of EACH CLEAN SINGING chunk via
+    `librosa.effects.pitch_shift`. Sample NEG_PER_CLEAN=4 negatives
+    from each shifted chunk using a unique seed salt (shift value)
+    so positions differ from the original, preserving the same
+    `fid` so augmented rows stay in the same GroupKFold fold. Apply
+    ONLY to `ds_id == "singing" and not info.spliced`. Singing clean
+    count rises from ~80 to ~240 not_splice rows; korean/english
+    training data byte-identical. features.py unchanged (sha stable,
+    auto-retrain gate passive); manual retrain commits joblib + meta
+    + cv_results alongside.
+
+(b) WHY this over recent failures. Three prior post-mortems (mfcc
+    FEATURE / HPR-gated rolloff / spec_rolloff_far_delta) explicitly
+    cited "pitch-shift / time-stretch augmentation of clean training
+    files" as the single untried escalation. Every prior attempt has
+    been FEATURE-ENGINEERING (12+ variants: rolloff_far_delta,
+    hpr_remote_mfcc_sim, file_hpr, chroma_key_cosine, mfcc_cosine,
+    hpss_perc, hf_band, local_novelty_spec, chunk-level file_hpr,
+    etc.) or POST-FILTER (8+ variants) or THRESHOLD ROUTING, all of
+    which perturb GBM across ALL three domains unpredictably, and
+    the clean-singing FP cluster at p_splice~0.982-0.99 has not
+    budged. Training-data sampling axes (NEG counts, NEG_MIN_DIST,
+    POS_OFFSETS, curriculum hard-neg, bootstrap-adversarial) all
+    operated on ORIGINAL audio with different position picks — ZERO
+    prior attempts have MUTATED the audio content of training rows.
+    Pitch-shifting preserves the chord-transition structure of a song
+    (chord progression is TRANSPOSED but still present) so synthetic
+    negatives look like chord-transition events in the top-SHAP
+    `spec_rolloff_delta / spec_centroid_delta / spec_bandwidth_delta`
+    space — exactly the FP failure mode. Gentle ±1 semitone
+    minimizes phase-vocoder artifacts vs ±3-6 semitone. Target is
+    surgical: only the failing domain's negatives grow, korean/
+    english distributions are untouched (vs file_hpr FEATURE 0.357
+    which tanked korean via global perturbation).
+
+(c) IF THIS FAILS. (1) Widen shifts to ±2 semitones or add
+    time-stretch (rate 0.95 / 1.05) for wider distribution coverage.
+    (2) Apply augmentation to spliced singing files too (synthetic
+    positives with chord-transition structure augmented). (3)
+    Parametric-EQ-tilt augmentation (low-shelf ±3dB at 1kHz) to
+    directly widen `spec_centroid_delta / spec_rolloff_delta` in the
+    not_splice class without touching pitch content.
+
+(d) Information gaps. (i) The 6 singing clean FPs (file, t_sec,
+    p_hard, p_cross, p_splice) are STILL opaque — I can't verify
+    that augmented chunks actually cover those FP positions'
+    feature-space neighborhood. (ii) Per-class (hard_cut /
+    crossfade / not_splice) OOF F1 breakdown still absent — only
+    aggregate weighted F1. (iii) The pre-revert HistGBM vs GBM
+    ambiguity on disk may still cost me: meta.json shows
+    `features_py_sha: null` suggesting the maintainer-class retrain
+    happened outside the auto-retrain path.
+
+(e) Wrapper enhancements. (1) `data/train/clean_fp_positions.json`
+    auto-emitted by evaluate.py listing the 6 singing FPs'
+    `(file, t_sec, p_hard, p_cross, p_splice)` tuples — turns an
+    opaque scalar into actionable per-position diagnostics. (2) A
+    `scripts/training_aug_visualize.py <feature_name>` plotting the
+    feature distribution on original vs augmented training rows
+    per domain — lets me verify the augmentation moved the not_splice
+    distribution in the INTENDED direction (toward FP cluster) before
+    committing. (3) Pre-iteration retrain-cost estimator:
+    `verify_agent --estimate-retrain-cost` that simulates the extra
+    row count and projected retrain time from per-row timing — so I
+    can judge whether a data-augmentation hypothesis will fit in
+    budget before iterating.
+[auto] LOCAL KEEP at bba6dbe: top-3 features stable across all domains
+
