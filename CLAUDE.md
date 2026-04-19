@@ -6,7 +6,7 @@ Every subagent MUST be verified before its results are accepted.
 After any agent reports a `combined` score, run:
 
 ```
-PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <score>
+PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --verify --agent-name <name> --reported-combined <score>
 ```
 
 This performs 4 checks: metric re-run, git diff audit, anomaly detection, and preflight.
@@ -54,7 +54,7 @@ The verification system guards these from modification:
 
 Before evaluation, run: `PYTHONPATH=$PWD uv run python autoresearch/preflight.py`
 This verifies dataset integrity (file counts, ground truth hash).
-It runs automatically as part of verify_agent.py.
+It runs automatically as part of supervisor_agent.py.
 
 ## Baseline
 
@@ -85,13 +85,13 @@ Operator workflow:
 3. Dry-run first to enumerate candidates and predicted deltas. <5 s;
    writes `.omc/retest-report.md`; no mutation.
    ```
-   PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --retest <from-sha> --dry-run
+   PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --retest <from-sha> --dry-run
    ```
 4. Live run when the preview looks right. Replays discards in
    chronological order against a disk-sourced rolling baseline and
    invokes `run_autoresearch.sh _keep_path` on any real improvement.
    ```
-   PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --retest <from-sha> [--limit N]
+   PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --retest <from-sha> [--limit N]
    ```
 
 Outcomes (in the report): `recovered`, `still-lower`, `conflict`,
@@ -198,7 +198,7 @@ real emission.
 Phase 1 migrated `splice/evaluate.py` metric emissions (`splice_f1`, `clean_score`,
 `combined`, opus32k, aggregate, per-dataset, FP/crossfade/loc breakdowns)
 to the unified logger. The PROTECTED-FILE EXEMPTION is a one-time
-maintainer edit — `verify_agent`'s diff audit only fires during
+maintainer edit — `supervisor_agent`'s diff audit only fires during
 autoresearch hypothesis iterations, not maintainer commits, so this does
 not collide with the agent loop. The `RESULTS_TSV:` string line remains
 as a carve-out because `run_autoresearch.sh` greps it at 5 sites; that
@@ -210,8 +210,8 @@ migrates in phase 2 alongside the wrapper.
   phase 3a). Mirrored to `.omc/logs/child-stderr.log` via `tee` but the
   authoritative parse target remains `.omc/last_eval.log`.
 - `splice/evaluate.py` `combined_{ds.id}: ERROR (...)` line (parsed by
-  `verify_agent.run_diagnose`; phase 3c).
-- `verify_agent._write_retest_report` — operator-facing Markdown (phase 3b).
+  `supervisor_agent.run_diagnose`; phase 3c).
+- `supervisor_agent._write_retest_report` — operator-facing Markdown (phase 3b).
 - `.omc/last_reflection.md` — claude reflection scratch (IPC between the
   claude subprocess and `_append_note`, not a log). Truncated each
   iteration; remains out of the unified log.
@@ -236,7 +236,7 @@ Phase-2 migration landed with this PR. Scope:
 
 ## Package layout (US-516)
 
-- `autoresearch/` — runtime harness (loop wrapper, logger, verify_agent,
+- `autoresearch/` — runtime harness (loop wrapper, logger, supervisor_agent,
   log_reader, preflight, baseline_metrics, manifest). Reusable across
   detection problems.
 - `splice/` — audio-splice application (detector, features, ml_eval,

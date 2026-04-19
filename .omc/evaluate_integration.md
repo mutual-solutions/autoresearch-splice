@@ -177,7 +177,7 @@ print(f"combined: {agg['combined']:.6f}")
 
 Two baselines will coexist:
 
-1. `combined` — old 3-cell aggregate (legacy baseline, kept for verify_agent
+1. `combined` — old 3-cell aggregate (legacy baseline, kept for supervisor_agent
    continuity during the transition)
 2. `combined_forensic` — new 15-cell × FP aggregate (the Phase-1 target)
 
@@ -196,7 +196,7 @@ Proposal — add a new JSON field rather than replacing:
 }
 ```
 
-This way `verify_agent.py`'s existing check continues unchanged while the
+This way `supervisor_agent.py`'s existing check continues unchanged while the
 richer `combined_forensic` joins it as a diagnostic.
 
 ## baseline_metrics.json update
@@ -246,7 +246,7 @@ Expected:
 
 Then:
 ```
-uv run python autoresearch/verify_agent.py --agent-name after-patch \
+uv run python autoresearch/supervisor_agent.py --verify --agent-name after-patch \
     --reported-combined <actual>
 ```
 should return HIGH (delta < 0.15 from the updated baseline).

@@ -477,7 +477,7 @@ run_loop() {
     # HEAD can be an unverified `hypothesis: ...` commit sitting on top of
     # the last verified keep. Its effect is implicitly baked into whatever
     # future iterations build on. Either verify it or reset — we reset
-    # because the wrapper can't retroactively re-run verify_agent against
+    # because the wrapper can't retroactively re-run supervisor_agent against
     # a mutated baseline. A human can `git cherry-pick` the orphan back
     # if they want to revisit it.
     orphan_subject=$(git log -1 --format=%s 2>/dev/null)
@@ -494,7 +494,7 @@ run_loop() {
     # encrypted into data/eval.tar.gz.enc and shredded (see
     # scripts/eval_crypto.py). Decrypt once per loop into a fresh /tmp
     # dir, export OMC_EVAL_DATA_ROOT for evaluate.py + preflight +
-    # verify_agent (dataset_registry resolves eval_path against this at
+    # supervisor_agent (dataset_registry resolves eval_path against this at
     # import). The env var is explicitly UNSET in the claude subprocess's
     # env via `env -u` below, so the claude-driven iteration cannot
     # locate the decrypted tree; only this shell and its direct
@@ -942,7 +942,7 @@ except Exception:
             if [ $_retrain_rc -ne 0 ]; then
                 _log ERROR wrapper retrain.auto.failed rc="$_retrain_rc" \
                     followup="verify-fail"
-                uv run python autoresearch/verify_agent.py --diagnose \
+                uv run python autoresearch/supervisor_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 || true
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
@@ -989,7 +989,7 @@ except Exception:
         # Wrapper runs evaluate.py — claude never sees the decrypted
         # eval tree. OMC_EVAL_DATA_ROOT is already exported in this
         # shell, so evaluate.py + its subprocess children (preflight,
-        # verify_agent) inherit it.
+        # supervisor_agent) inherit it.
         _log INFO wrapper eval.start sha="$(git log -1 --format=%h "$hypothesis_commit")"
         # US-504: feature cache env vars. Invalidated automatically when
         # features.py sha changes (new sha → new cache subdir).
@@ -1012,7 +1012,7 @@ except Exception:
         if [ $eval_exit -ne 0 ]; then
             _log ERROR wrapper eval.crash exit="$eval_exit" \
                 tail="$(tail -1 "$PROJECT_DIR/.omc/last_eval.log" 2>/dev/null)"
-            uv run python autoresearch/verify_agent.py --diagnose \
+            uv run python autoresearch/supervisor_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1028,7 +1028,7 @@ except Exception:
         reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
         if [ -z "$reported" ]; then
             _log ERROR wrapper eval.parse_fail reason="no_combined_in_results_tsv"
-            uv run python autoresearch/verify_agent.py --diagnose \
+            uv run python autoresearch/supervisor_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1053,9 +1053,9 @@ except Exception:
             if [ "$_catastrophic" = "1" ]; then
                 _log WARN wrapper discard.catastrophic combined="$reported" \
                     floor=0.01 action=diagnose
-                uv run python autoresearch/verify_agent.py --diagnose \
+                uv run python autoresearch/supervisor_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 \
-                    || _log ERROR pipeline failure script=verify_agent.py arg=diagnose rc="$?"
+                    || _log ERROR pipeline failure script=supervisor_agent.py arg=diagnose rc="$?"
             fi
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1067,15 +1067,15 @@ except Exception:
             continue
         fi
 
-        # Strict improvement — run verify_agent for structural checks.
+        # Strict improvement — run supervisor_agent for structural checks.
         _log INFO wrapper verify.start combined="$reported" prev="$current_best"
         _phase_start verify
         set +e
-        # US-511: export OMC_HEAD_BEFORE so verify_agent's diff audit
+        # US-511: export OMC_HEAD_BEFORE so supervisor_agent's diff audit
         # catches committed protected-file edits (invisible to working-
         # tree / staged diffs after the agent's commit).
         verify_output=$(OMC_HEAD_BEFORE="$head_before" \
-            uv run python autoresearch/verify_agent.py \
+            uv run python autoresearch/supervisor_agent.py --verify \
             --agent-name autoresearch \
             --reported-combined "$reported" 2>&1)
         verify_exit=$?

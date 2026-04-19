@@ -6,7 +6,7 @@ from `.omc/logs/autoresearch.jsonl`. Phase 2 dropped the legacy-shim
 synthesizer; the wrapper emits the event natively via `_iter_summary()`.
 
 Phases tracked: claude (hypothesis formation), retrain, eval, verify
-(verify_agent structural checks), note (_append_note), total.
+(supervisor_agent structural checks), note (_append_note), total.
 """
 
 from __future__ import annotations

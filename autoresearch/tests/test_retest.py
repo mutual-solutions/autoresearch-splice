@@ -1,12 +1,12 @@
 """Tests for US-514 --retest subcommand.
 
 Mirrors the 10 cases listed in .omc/plans/ralplan-retest-discards.md step 8.
-The real correctness gate is `PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py
+The real correctness gate is `PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py
 --retest-self-test` (AC #17); these pytest mirrors exist for CI visibility
 and to exercise a few invariants the self-test cannot easily pin (sentinel
 SIGKILL-window, loop-start refusal, _keep_path byte-identity).
 
-Fixtures are throwaway git repos under tmp_path. We import the verify_agent
+Fixtures are throwaway git repos under tmp_path. We import the supervisor_agent
 module by explicit file path so tests are hermetic and do not depend on
 package-discovery rules.
 """
@@ -24,19 +24,19 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-VERIFY_AGENT_PATH = REPO_ROOT / "autoresearch" / "verify_agent.py"
+SUPERVISOR_AGENT_PATH = REPO_ROOT / "autoresearch" / "supervisor_agent.py"
 WRAPPER_SH = REPO_ROOT / "run_autoresearch.sh"
 
 
-def _load_verify_agent():
-    """Import verify_agent.py as an ephemeral module for each test.
+def _load_supervisor_agent():
+    """Import supervisor_agent.py as an ephemeral module for each test.
 
     Each call returns a FRESH module so per-test patching of module-level
     constants (PROJECT_DIR, _RESULTS_TSV, etc.) does not bleed across
     tests.
     """
     spec = importlib.util.spec_from_file_location(
-        f"_verify_agent_test_{id(object())}", VERIFY_AGENT_PATH
+        f"_supervisor_agent_test_{id(object())}", SUPERVISOR_AGENT_PATH
     )
     mod = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
@@ -112,7 +112,7 @@ def _write_baseline(repo: Path, combined: float) -> Path:
 # ---------------------------------------------------------------------------
 
 def test_candidate_enumeration_ordering_with_ct_tiebreaker(tmp_path):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, anchor = _init_fixture_repo(tmp_path)
 
     sha_a = _make_commit(repo, "a.txt", "A\n", "hypothesis: A",
@@ -154,7 +154,7 @@ def test_candidate_enumeration_ordering_with_ct_tiebreaker(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_dry_run_no_mutation(tmp_path, monkeypatch):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, anchor = _init_fixture_repo(tmp_path)
     sha_a = _make_commit(repo, "a.txt", "A\n", "hypothesis: A",
                          "2026-02-01T00:00:00")
@@ -218,7 +218,7 @@ def test_dry_run_no_mutation(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_worktree_atexit_cleanup_on_exception(tmp_path, monkeypatch):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, _ = _init_fixture_repo(tmp_path)
 
     # Add one more commit so worktree checkout has something reasonable.
@@ -248,7 +248,7 @@ def test_worktree_atexit_cleanup_on_exception(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_cherry_pick_conflict_skips_without_abort_leftover(tmp_path):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, _ = _init_fixture_repo(tmp_path)
 
     # Build a conflict scenario:
@@ -336,7 +336,7 @@ def test_cherry_pick_conflict_skips_without_abort_leftover(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_recovery_reads_baseline_from_disk_each_iteration(tmp_path):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, _ = _init_fixture_repo(tmp_path)
     bpath = _write_baseline(repo, 0.4)
 
@@ -403,7 +403,7 @@ def test_sentinel_blocks_loop_start(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_sentinel_survives_sigkill_window(tmp_path):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     sentinel = tmp_path / "retest-in-progress"
     mod._RETEST_SENTINEL = sentinel
     mod._RETEST_WORKTREE = tmp_path / "retest-worktree"
@@ -425,7 +425,7 @@ def test_sentinel_survives_sigkill_window(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_corpus_purged_mid_batch_reports_cutoff(tmp_path):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
 
     # Point _eval_root_ok at a path we control, then remove it.
     purged = tmp_path / "purged_eval_root"
@@ -540,7 +540,7 @@ def test_keep_path_verb_byte_identical_commit_message(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_check_git_diff_audit_warn_on_missing_env(tmp_path, monkeypatch):
-    mod = _load_verify_agent()
+    mod = _load_supervisor_agent()
     repo, _ = _init_fixture_repo(tmp_path)
 
     # Clean tree — no staged, no unstaged.

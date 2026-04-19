@@ -1,8 +1,17 @@
 #!/usr/bin/env python3
-"""Mandatory Agent Verification System for autoresearch-splice.
+"""Supervisor agent for the autoresearch-splice loop.
 
-Standalone CLI that verifies agent work via 4 independent checks.
-Usage: PYTHONPATH=$PWD uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <float>
+Renamed from verify_agent.py in US-517. Provides 4 subcommands:
+  --verify    Re-run metric + diff audit + anomaly + preflight check chain.
+  --diagnose  Diagnose last eval/retrain crash.
+  --maintain  Triage agent-requested enhancements and classify crashes (stub in commit 1; full impl in commit 2).
+  --retest    Replay discarded hypotheses from a given SHA.
+
+Usage:
+  PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --verify --agent-name <name> --reported-combined <float>
+  PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --diagnose
+  PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --maintain --trigger=manual
+  PYTHONPATH=$PWD uv run python autoresearch/supervisor_agent.py --retest <from-sha> [--dry-run]
 """
 
 import argparse
@@ -240,7 +249,7 @@ def check_clean_fp_bound(output: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 # US-508 Phase 1: --diagnose subcommand
 # ---------------------------------------------------------------------------
-# On eval/retrain crash the wrapper invokes `verify_agent.py --diagnose`.
+# On eval/retrain crash the wrapper invokes `supervisor_agent.py --diagnose`.
 # The subcommand reads .omc/last_eval.log, finds the last Traceback, extracts
 # exception class + message + top-3 frames, classifies into 6 categories,
 # redacts oracle signals, and APPENDS a structured block to
@@ -1510,73 +1519,17 @@ def _retest_self_test() -> int:
     return 0
 
 
-def main():
-    # --diagnose / --self-test / --retest short-circuit the original argparse
-    # so the wrapper's existing `--agent-name X --reported-combined Y` call
-    # shape is unaffected.
-    if "--diagnose" in sys.argv:
-        sys.exit(run_diagnose())
-    if "--self-test" in sys.argv:
-        sys.exit(_diagnose_self_test())
-    if "--retest-self-test" in sys.argv:
-        sys.exit(_retest_self_test())
-    if "--retest" in sys.argv:
-        # Parse retest flags manually to avoid breaking the wrapper's
-        # positional call shape.
-        argv = sys.argv[1:]
-        i = 0
-        from_sha = None
-        dry_run = False
-        limit: int | None = None
-        re_eval = False
-        while i < len(argv):
-            a = argv[i]
-            if a == "--retest":
-                if i + 1 >= len(argv):
-                    print("ERROR: --retest requires a <from-sha> argument",
-                          file=sys.stderr)
-                    sys.exit(1)
-                from_sha = argv[i + 1]
-                i += 2
-            elif a == "--dry-run":
-                dry_run = True
-                i += 1
-            elif a == "--limit":
-                if i + 1 >= len(argv):
-                    print("ERROR: --limit requires a value", file=sys.stderr)
-                    sys.exit(1)
-                try:
-                    limit = int(argv[i + 1])
-                except ValueError:
-                    print(f"ERROR: --limit {argv[i+1]!r} is not an integer",
-                          file=sys.stderr)
-                    sys.exit(1)
-                i += 2
-            elif a == "--retest-re-eval":
-                re_eval = True
-                i += 1
-            else:
-                i += 1
-        if from_sha is None:
-            print("ERROR: --retest <from-sha> is required", file=sys.stderr)
-            sys.exit(1)
-        sys.exit(run_retest(from_sha, dry_run=dry_run, limit=limit,
-                            re_eval=re_eval))
-
-    parser = argparse.ArgumentParser(description="Verify agent work")
-    parser.add_argument("--agent-name", required=True, help="Name of the agent being verified")
-    parser.add_argument("--reported-combined", required=True, type=float, help="Combined score reported by agent")
-    args = parser.parse_args()
-
-    print(f"\nVERIFICATION REPORT for agent [{args.agent_name}]:")
+def run_verify(agent_name: str, reported_combined: float) -> int:
+    """Run the 5-check verification chain. Returns 0 on HIGH/MEDIUM, 1 on LOW."""
+    print(f"\nVERIFICATION REPORT for agent [{agent_name}]:")
 
     # 1. Metric re-run
-    metric_status, metric_detail, metric_output = check_metric_rerun(args.reported_combined)
+    metric_status, metric_detail, metric_output = check_metric_rerun(reported_combined)
     print(f"  Metric re-run:    {metric_status} ({metric_detail})")
 
     # Parse actual combined for anomaly check
     actual_match = re.search(r"actual: ([\d.]+)", metric_detail)
-    actual_combined = float(actual_match.group(1)) if actual_match else args.reported_combined
+    actual_combined = float(actual_match.group(1)) if actual_match else reported_combined
 
     # 2. Git diff audit
     diff_status, diff_detail = check_git_diff_audit()
@@ -1605,7 +1558,116 @@ def main():
 
     print(f"  CONFIDENCE: {confidence}")
 
-    sys.exit(0 if confidence in ("HIGH", "MEDIUM") else 1)
+    return 0 if confidence in ("HIGH", "MEDIUM") else 1
+
+
+def run_maintain(trigger: str) -> int:
+    """Triage enhancement requests and classify crashes.
+
+    v2 stub — full implementation arrives in commit 2.
+    """
+    print("maintain: stub (commit 2 implements the subcommand)")
+    return 0
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        prog="supervisor_agent",
+        description=(
+            "Supervisor agent for the autoresearch loop: "
+            "verify hypotheses, diagnose crashes, maintain the pipeline."
+        ),
+    )
+
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--verify",
+        action="store_true",
+        help=(
+            "Re-run the metric + diff audit + anomaly + preflight check chain. "
+            "Requires --agent-name and --reported-combined."
+        ),
+    )
+    mode.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Diagnose last eval/retrain crash.",
+    )
+    mode.add_argument(
+        "--maintain",
+        action="store_true",
+        help=(
+            "Triage agent-requested enhancements and classify crashes. "
+            "Requires --trigger. (v2 — stub in this commit; full impl in commit 2.)"
+        ),
+    )
+    mode.add_argument(
+        "--retest",
+        metavar="FROM_SHA",
+        help="Replay discarded hypotheses from FROM_SHA.",
+    )
+
+    # --verify subflags
+    parser.add_argument("--agent-name", help="Name of the agent being verified (--verify).")
+    parser.add_argument(
+        "--reported-combined",
+        type=float,
+        help="Combined score reported by agent (--verify).",
+    )
+
+    # --maintain subflags
+    parser.add_argument(
+        "--trigger",
+        choices=["crash", "periodic", "manual"],
+        default="manual",
+        help="Trigger source for --maintain (ignored otherwise).",
+    )
+
+    # --retest subflags
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview retest candidates without running (--retest).",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help="Max candidates to process (--retest).",
+    )
+    parser.add_argument(
+        "--retest-re-eval",
+        action="store_true",
+        help="Force re-evaluation (--retest).",
+    )
+    parser.add_argument("--retest-origin", help=argparse.SUPPRESS)
+
+    # Debug flags (not in the mutually exclusive group — dev-only, not called by wrapper)
+    parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--retest-self-test", action="store_true", help=argparse.SUPPRESS)
+
+    args = parser.parse_args()
+
+    # Debug flags short-circuit before mode dispatch
+    if args.self_test:
+        sys.exit(_diagnose_self_test())
+    if args.retest_self_test:
+        sys.exit(_retest_self_test())
+
+    if args.verify:
+        if not args.agent_name or args.reported_combined is None:
+            parser.error("--verify requires --agent-name and --reported-combined")
+        sys.exit(run_verify(args.agent_name, args.reported_combined))
+    elif args.diagnose:
+        sys.exit(run_diagnose())
+    elif args.maintain:
+        sys.exit(run_maintain(trigger=args.trigger))
+    elif args.retest:
+        sys.exit(run_retest(
+            args.retest,
+            dry_run=args.dry_run,
+            limit=args.limit,
+            re_eval=args.retest_re_eval,
+        ))
 
 
 if __name__ == "__main__":

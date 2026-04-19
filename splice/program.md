@@ -87,7 +87,7 @@ LOOP FOREVER:
 8. Log to `results.tsv` (untracked):
    `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`
 9. If `combined` **improved** (strictly higher):
-   a. **Verify**: Run `uv run python autoresearch/verify_agent.py --agent-name autoresearch --reported-combined <score>`
+   a. **Verify**: Run `uv run python autoresearch/supervisor_agent.py --verify --agent-name autoresearch --reported-combined <score>`
    b. If verify **PASSES** (exit 0): keep the commit, advance branch. Log status=`keep`.
    c. If verify **FAILS** (exit 1): `git reset --hard HEAD~1`. Log status=`verify-fail`. Treat as discard.
 10. If equal or worse: `git reset --hard HEAD~1`. Log status=`discard`.
