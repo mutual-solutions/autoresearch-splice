@@ -2415,3 +2415,89 @@ per-domain: combined_english=0.643678 combined_korean=0.438356 combined_singing=
     turns "retrain side-effect on splice recall" into a measurable
     quantity pre-commit.
 
+## 2026-04-20T00:29:59+09:00 — eabd6b2 (discard, combined=0.362039)
+subject: EQ-tilt audio augmentation of CLEAN SINGING training chunks (coef ±0.3) — REPLACE pitch-shift mechanism with librosa.effects.preemphasis first-order IIR spectral tilt (coef=+0.3 brightens -3dB<500Hz/+1.6dB>10kHz; coef=-0.3 mirrors). Same 2-variants-per-file topology so class counts remain 760/300/300 (no new class-prior shift beyond bba6dbe baseline). Targets bba6dbe's singing 0.388 / korean 0.410 / english 0.667 state by eliminating the phase-vocoder artifacts pitch-shift introduces into clean-aug rows while preserving the +0.116 singing gain. Mechanism: pitch-shift is a phase-vocoder transform that introduces sub-frame timing smearing in STFT — those artifacts may look like splice discontinuities to the model, inflating clean p_splice even on transposed copies. EQ-tilt is a deterministic one-pole IIR filter: zero phase-vocoder, preserves all timing; it moves the formant / mastering axis directly — which is exactly the physical signature the top-3 SHAP features (spec_rolloff_delta/spec_centroid_delta/spec_bandwidth_delta) measure. Augmented chunks now look like "same song under a different master EQ / different room tonal balance" — the physical variation production pipelines naturally emit, precisely what GBM needs to learn does NOT indicate a splice. Explicit untried escalation cited in three prior post-mortems: bba6dbe(c)(3), d5cc597(c)(2), c0d438e(c)(2). Orthogonal to every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half variants, 1 class_weight, 3 pitch-shift-aug variants — ZERO prior attempts at EQ-based audio mutation. Smoke-verified: librosa.effects.preemphasis with coef=+0.3 gives -3dB below 500Hz and +1.6dB above 10kHz on white noise (4-5dB total spectral tilt). Manual retrain: OOF weighted F1 0.6103 (vs bba6dbe's 0.6143), class counts 760/300/300 identical, per-class F1 not_splice=0.857 (match) / hard_cut=0.323 (+0.012 vs bba6dbe's 0.311) / crossfade=0.271 (-0.030 vs 0.301) — OOF signal mixed but OOF poorly predicts eval (d5cc597 had higher OOF yet catastrophic eval). features.py sha unchanged so wrapper's auto-retrain gate passive; joblib+meta+cv_results+training_manifest committed alongside so wrapper cannot silently skip retrain (f71c526 joblib-skip lesson).
+per-domain: combined_english=0.731707 combined_korean=0.315000 combined_singing=0.205882
+
+# 2026-04-20 — hypothesis: EQ-tilt augmentation of clean singing (replacing pitch-shift)
+
+(a) HYPOTHESIS. In `splice/classifier/train_classifier.py`, REPLACE the
+    `librosa.effects.pitch_shift` call on clean singing chunks with a
+    `librosa.effects.preemphasis` first-order IIR tilt at coef ±0.3.
+    Same 2-variants-per-file topology so class counts remain 760/300/300
+    (no new class-prior shift beyond the bba6dbe baseline). Rename
+    constant `SINGING_AUG_SHIFTS_SEMITONES` → `SINGING_AUG_EQ_TILT_COEFS`.
+    Manifest key `pitch_shift_semitones` → `eq_tilt_coef`. Manual retrain
+    + joblib/meta/cv_results/training_manifest committed alongside.
+
+(b) WHY this over the recent failures. bba6dbe (current keep, 0.473)
+    PROVED clean-singing-only MUTATION works. Three attempts to fix the
+    recall regression it caused all failed: f71c526 (extend to korean,
+    identical metrics — joblib wasn't rebuilt), d5cc597 (class_weight
+    balanced, catastrophic 0.358 via global loss-scale distortion),
+    c0d438e (pitch-shift spliced singing too, singing dropped
+    0.388→0.293 because phase-vocoder on a 60s spliced chunk muddles
+    the splice boundary). Smoke-verified: librosa.effects.preemphasis
+    with coef=+0.3 gives -3dB below 500 Hz and +1.6dB above 10 kHz on
+    white noise; coef=-0.3 mirrors it. This is a genuine ~4-5dB
+    spectral-envelope tilt. Explicit untried escalation cited in three
+    prior post-mortems: bba6dbe(c)(3), d5cc597(c)(2), c0d438e(c)(2)
+    ("Parametric-EQ-tilt augmentation... directly widens
+    spec_centroid_delta / spec_rolloff_delta in the not_splice class
+    without touching pitch content"). Mechanism: pitch-shift is a
+    phase-vocoder transform that introduces sub-frame timing smearing
+    in the STFT domain; those smearing artifacts may superficially
+    look like splice discontinuities to the model, inflating clean
+    p_splice even on transposed copies. EQ-tilt is a simple one-pole
+    IIR filter: deterministic, zero phase-vocoder, preserves all
+    timing; it moves the formant / mastering axis directly — which is
+    exactly the physical signature the top-3 SHAP features
+    (spec_rolloff_delta/spec_centroid_delta/spec_bandwidth_delta)
+    measure. Augmented clean singing chunks now look like a "same
+    song under a different master EQ / different room tonal balance"
+    — precisely the physical variation the production pipeline
+    naturally emits and exactly what GBM needs to learn does NOT
+    indicate a splice. Orthogonal to every prior axis: 8 GBM
+    hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation,
+    8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing,
+    3 remote-half variants, 1 class_weight, 3 pitch-shift-aug
+    variants — ZERO prior attempts at EQ-based audio mutation.
+
+(c) IF THIS FAILS. (1) STACK pitch-shift + EQ-tilt so class counts
+    grow to 920/300/300 with two complementary mutation axes — if
+    both preserve singing gain, the union covers both the
+    formant/mastering axis AND the pitch-class axis. (2) Widen
+    coef to ±0.5 (~6 dB tilt) if the ±0.3 variant was too gentle to
+    materially shift the top-SHAP feature distributions. (3) Final
+    escalation: extend EQ-tilt to clean KOREAN chunks (the direction
+    f71c526 tried with pitch-shift but was inconclusive due to
+    joblib-skip); EQ-tilt on speech preserves formant transitions
+    while shifting overall spectral balance — mirrors real-world
+    mic/room variation between recording sessions.
+
+(d) Information gaps. (i) The 2 remaining singing clean FPs (file,
+    t_sec, p_hard, p_cross, p_splice) from the bba6dbe keep are not
+    in CURRENT STATE — can't verify EQ-tilt will bite the remaining
+    FPs vs re-open the 4 previously-bitten FPs. (ii) f71c526's
+    identical-metrics outcome is still ambiguous between
+    "joblib-not-rebuilt" and "korean aug truly a no-op" because the
+    wrapper's auto-retrain trigger conditions aren't surfaced.
+    (iii) Per-class OOF F1 breakdown per domain (hard_cut / crossfade
+    / not_splice × singing / korean / english) would make
+    side-effect attribution deterministic rather than inferred.
+
+(e) Wrapper enhancements. (1) CLASSIFIER_STATE block at top of prompt
+    showing on-disk joblib's class_counts, OOF_f1_weighted,
+    OOF_f1_per_class, features_py_sha, training_manifest row count
+    — removes the "which classifier will my code actually run
+    against" ambiguity every training-data hypothesis currently
+    carries. (2) `scripts/training_aug_visualize.py --mechanism eq_tilt
+    --feature spec_rolloff_delta` plotting augmented vs original
+    feature distributions per domain on a representative sample —
+    lets me verify the mutation landed where intended before
+    committing. (3) `supervisor_agent.py --diff-classifier <old-sha>
+    <new-sha>` reporting per-class OOF F1 delta between two joblibs
+    — turns "retrain side-effect on splice recall" into a measurable
+    pre-commit signal instead of a post-hoc inference from per-domain
+    combined.
+
