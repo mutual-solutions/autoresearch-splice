@@ -62,10 +62,12 @@ DSP_CONFIRMATION_MIN = 2.0
 # splices disrupt multiple physical signals simultaneously (mic/room mismatch
 # fires phase AND T² AND CPE), so the cumulative DSP magnitude is high (sum
 # 6-12). Single-channel firings — chord transitions firing only T² with smooth
-# phase / low CPE — sum to ~3-5. Threshold 4.5 demands ~2.5 of cumulative
-# support beyond the MAX floor of 2.0, biting single-channel-firing FPs while
-# preserving multi-channel-confirmed real splices.
-DSP_SUM_MIN = 4.5
+# phase / low CPE — sum to ~3-5. Threshold 5.0 demands 3.0 of cumulative
+# support beyond the MAX floor of 2.0, biting the borderline-FP band [4.5, 5.5]
+# (chord transitions with one strong channel + partial support, speech phoneme
+# shifts with T²≈2.5 + CPE≈1.0) while preserving multi-channel-confirmed real
+# splices (sum 6-12).
+DSP_SUM_MIN = 5.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
