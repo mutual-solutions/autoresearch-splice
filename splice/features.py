@@ -11,20 +11,21 @@ Entry point:
 Also exports FEATURE_NAMES: list[str] in the exact order the dict is populated,
 for SHAP labeling.
 
-Feature blocks (76 dims):
-    Block 1: DSP local @ t           (4)
-    Block 2: MFCC-13 deltas          (13)
-    Block 3: Spectral summary deltas  (6)
-    Block 4: Noise-floor color        (6)
-    Block 5: Pitch / voicing          (8)
-    Block 6: Energy envelope / ZCR    (6)
-    Block 7: Boundary region +/-200ms (3)
-    Block 8: ENF                      (5)
-    Block 9: Codec artifact           (4)
-    Block 10: Mel-PCA tail            (20)
-    Block 11: Voiced-MFCC cosine dist (1)
+Feature blocks (77 dims):
+    Block 1: DSP local @ t             (4)
+    Block 2: MFCC-13 deltas            (13)
+    Block 3: Spectral summary deltas    (6)
+    Block 4: Noise-floor color          (6)
+    Block 5: Pitch / voicing            (8)
+    Block 6: Energy envelope / ZCR      (6)
+    Block 7: Boundary region +/-200ms   (3)
+    Block 8: ENF                        (5)
+    Block 9: Codec artifact             (4)
+    Block 10: Mel-PCA tail              (20)
+    Block 11: Voiced-MFCC cosine dist   (1)
+    Block 12: Voiced-chroma cosine dist (1)
 
-Total: 4+13+6+6+8+6+3+5+4+20+1 = 76
+Total: 4+13+6+6+8+6+3+5+4+20+1+1 = 77
 
 Performance model:
     _ensure_feat_cache() runs ONCE per chunk, precomputing all expensive
@@ -139,9 +140,10 @@ FEATURE_NAMES: list[str] = (
        "codec_quant_residual_post", "codec_double_compression_score"]
     + [f"mel_pca_{i:02d}" for i in range(1, 21)]
     + ["voiced_mfcc_cosine_dist"]
+    + ["voiced_chroma_cosine_dist"]
 )
 
-assert len(FEATURE_NAMES) == 76, f"Expected 76, got {len(FEATURE_NAMES)}"
+assert len(FEATURE_NAMES) == 77, f"Expected 77, got {len(FEATURE_NAMES)}"
 
 # Shared hop/fft constants
 _HOP = 512
@@ -191,6 +193,8 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
                                                   hop_length=_HOP, n_fft=_N_FFT)
     zcr = librosa.feature.zero_crossing_rate(y=audio_f32, hop_length=_HOP)
     rms = librosa.feature.rms(y=audio_f32, hop_length=_HOP)
+    chroma = librosa.feature.chroma_stft(y=audio_f32, sr=sr,
+                                          hop_length=_HOP, n_fft=_N_FFT)
 
     # ---- yin pitch (full chunk) ----
     # Use librosa.yin (~30x faster than pyin, no Viterbi). Voicing is
@@ -410,6 +414,7 @@ def _ensure_feat_cache(audio: np.ndarray, sr: int, ctx: dict) -> None:
     ctx["feat_contrast"] = contrast
     ctx["feat_zcr"] = zcr
     ctx["feat_rms"] = rms
+    ctx["feat_chroma"] = chroma
     ctx["feat_frame_hop"] = _HOP
     # pitch
     ctx["feat_f0"] = f0
@@ -849,6 +854,50 @@ def _block_voiced_mfcc(ctx: dict, t_sec: float) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Block 12: Voiced-frame-only chroma cosine distance
+# ---------------------------------------------------------------------------
+
+def _block_voiced_chroma(ctx: dict, t_sec: float) -> dict[str, float]:
+    # Pitch-class-profile continuity restricted to voiced frames. Within a
+    # song's key most chord transitions share 3-5 of 12 pitch classes so
+    # voiced-chroma cosine distance is small; cross-source splices shift
+    # key entirely. On speech voiced=vowels whose per-vowel chroma swings
+    # with prosody regardless of splice -> high-variance noise, GBM learns
+    # low per-domain SHAP. Sentinel 0.0 when either window has no voiced
+    # frames.
+    chroma = ctx["feat_chroma"]
+    vp = ctx["feat_vp"]
+    hop = ctx["feat_frame_hop"]
+    sr = ctx["feat_sr"]
+
+    def _voiced_mean(t_lo: float, t_hi: float):
+        c = _slice_frames(chroma, hop, sr, t_lo, t_hi)      # (12, n_c)
+        v = _slice_frames(vp, hop, sr, t_lo, t_hi)          # (n_v,)
+        n = min(c.shape[1], v.shape[0])
+        if n <= 0:
+            return None
+        c = c[:, :n]
+        mask = v[:n].astype(bool)
+        if not mask.any():
+            return None
+        return np.mean(c[:, mask], axis=1)
+
+    pre_v = _voiced_mean(t_sec - 2.0, t_sec)
+    post_v = _voiced_mean(t_sec, t_sec + 2.0)
+    if pre_v is None or post_v is None:
+        return {"voiced_chroma_cosine_dist": 0.0}
+
+    norm_pre = float(np.linalg.norm(pre_v))
+    norm_post = float(np.linalg.norm(post_v))
+    if norm_pre < 1e-10 or norm_post < 1e-10:
+        return {"voiced_chroma_cosine_dist": 0.0}
+
+    cos_sim = float(np.dot(pre_v, post_v) / (norm_pre * norm_post))
+    cos_sim = max(-1.0, min(1.0, cos_sim))
+    return {"voiced_chroma_cosine_dist": float(1.0 - cos_sim)}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -896,6 +945,7 @@ def extract_features(
     feats.update(_block_codec(chunk_ctx, t_sec))
     feats.update(_block_mel_pca(chunk_ctx))
     feats.update(_block_voiced_mfcc(chunk_ctx, t_sec))
+    feats.update(_block_voiced_chroma(chunk_ctx, t_sec))
 
     assert len(feats) == len(FEATURE_NAMES), (
         f"Feature count mismatch: {len(feats)} != {len(FEATURE_NAMES)}"
@@ -936,9 +986,9 @@ if __name__ == "__main__":
     feats1 = extract_features(chunk, sr, t, chunk_ctx=ctx)
 
     # 1. Length check
-    assert len(feats1) == 76, f"FAIL: got {len(feats1)} features"
-    assert len(FEATURE_NAMES) == 76, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
-    print("PASS: len(dict) == len(FEATURE_NAMES) == 76")
+    assert len(feats1) == 77, f"FAIL: got {len(feats1)} features"
+    assert len(FEATURE_NAMES) == 77, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
+    print("PASS: len(dict) == len(FEATURE_NAMES) == 77")
 
     # 2. Bit-identical
     feats2 = extract_features(chunk, sr, t, chunk_ctx=ctx)
