@@ -2501,3 +2501,111 @@ per-domain: combined_english=0.731707 combined_korean=0.315000 combined_singing=
     pre-commit signal instead of a post-hoc inference from per-domain
     combined.
 
+## 2026-04-20T00:42:17+09:00 — 423014c (discard, combined=0.385591)
+subject: HYBRID pitch-shift + time-stretch aug on clean singing — REPLACE one of the two ±1-semitone pitch-shift variants on clean singing chunks with a time-stretch variant (rate=0.95) so class counts stay at bba6dbe's 760/300/300 (NO new class-prior shift). 1 pitch-shift variant (+1 semitone) + 1 time-stretch variant (rate=0.95, chunk grows 60→63.2s, _sample_candidates uses recomputed aug_dur_s) per clean singing file × 4 NEG_PER_CLEAN × 20 files = 160 aug rows total. Time-stretch is the explicit untried mutation axis cited in 3 prior post-mortems (bba6dbe(c), c0d438e(c)(3), eabd6b2(c)). Mechanism: pitch_shift modifies frequency axis preserving time; time_stretch modifies time axis preserving pitch — same librosa.effects family / same phase-vocoder smearing characteristics, rotated 90° in the time-frequency plane. Augmented chunks now look like 'same song at 5%% slower tempo' — natural performance variation that GBM should learn is NOT a splice. HYBRID addresses both prior failure patterns: keeps half of bba6dbe's proven pitch-axis coverage (avoiding eabd6b2's mechanism-replacement gain loss) AND adds an orthogonal phase-vocoder axis (avoiding f71c526/d5cc597/c0d438e's class-prior shifts). features.py sha unchanged so wrapper's auto-retrain gate is passive; joblib + meta + cv_results + training_manifest committed alongside (f71c526 joblib-skip lesson). OOF weighted F1=0.6202 (vs bba6dbe 0.6143), per-class hard_cut 0.311→0.329 (+0.018) crossfade 0.301→0.316 (+0.015) not_splice 0.857→0.855 (essentially match) — both splice classes lift on disk while not_splice holds, suggesting the time-axis variant gives slightly more diverse not_splice context than the dropped -1 pitch-shift. Orthogonal to every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half variants, 1 class_weight, 4 audio MUTATION variants — ZERO prior time-stretch.
+per-domain: combined_english=0.767442 combined_korean=0.256790 combined_singing=0.290909
+
+# 2026-04-20 — hypothesis: HYBRID pitch-shift + time-stretch aug on clean singing
+
+(a) HYPOTHESIS. Pure `train_classifier.py` change. REPLACE one of the
+    two ±1-semitone pitch-shift variants on clean singing with a
+    time-stretch variant (rate=0.95). Concretely:
+    `SINGING_AUG_SHIFTS_SEMITONES`: (+1, -1) → (+1,);
+    add `SINGING_AUG_TIME_STRETCH_RATES = (0.95,)`. Same 2 variants
+    per file × 4 NEG_PER_CLEAN × 20 clean singing files = 160 aug
+    rows; class counts stay at bba6dbe's 760/300/300 (NO new
+    class-prior shift). Time-stretch returns a chunk of different
+    duration (60→63.2s @ rate=0.95) so `aug_dur_s = len(aug_chunk)/sr`
+    is recomputed before `_sample_candidates`. `librosa.effects.time_stretch`
+    is the standard call; identical phase-vocoder hop_length defaults
+    so behavior matches detector-time STFT processing. Same `fid` and
+    seed-salting via `aug_name` keep GroupKFold clean. features.py sha
+    unchanged so the wrapper's auto-retrain trigger only depends on
+    train_classifier.py mtime — joblib + meta + cv_results +
+    training_manifest committed alongside the code so the wrapper
+    can't silently skip retrain (f71c526 lesson).
+
+(b) WHY this over the recent failures. Five sequential post-bba6dbe
+    attempts have now failed in different ways. Two patterns:
+      * Class-prior shifts cause regression. f71c526 (extend to korean)
+        was inconclusive (joblib bug); d5cc597 (class_weight balanced)
+        catastrophic 0.358 — global loss-scale distortion crushed the
+        singing aug benefits as much as it tried to recover korean/
+        english; c0d438e (pitch-shift spliced singing too) singing
+        dropped 0.388→0.293 because phase-vocoder smearing on a 60s
+        spliced chunk muddles the splice boundary.
+      * Replacing the mutation mechanism while keeping class counts
+        loses singing gain. eabd6b2 (EQ-tilt instead of pitch-shift)
+        dropped to 0.362; pre-emphasis is a pure IIR filter (no
+        phase-vocoder) so its augmented chunks don't reach the
+        feature-space neighborhood pitch-shift opens.
+    HYBRID (pitch-shift + time-stretch) addresses both lessons at once:
+    keeps half the proven pitch-axis coverage (+1 semitone variant
+    retained) AND adds a complementary phase-vocoder axis (time
+    stretch) without expanding class counts beyond bba6dbe's 760.
+    Time-stretch was explicitly cited as the next mutation axis in
+    THREE post-mortems (bba6dbe(c)(1)/(c)(3), c0d438e(c)(3),
+    eabd6b2(c)(2)). It is mechanically closer to pitch-shift than
+    EQ-tilt was: same `librosa.effects` family, same phase-vocoder
+    smearing characteristics — just rotated 90° in the time-frequency
+    plane (pitch_shift modifies frequency axis preserving time;
+    time_stretch modifies time axis preserving pitch). Augmented
+    chunks now look like "same song at 5% slower tempo" — a natural
+    physical variation (live performances vary tempo) precisely what
+    GBM needs as more not_splice training context. Orthogonal to
+    every prior axis: 8 GBM hyperparam, 5 training-data SAMPLING,
+    12+ feature add/ablation, 8+ post-filter, 2 model-class swap,
+    2 calibration, 2 HPR routing, 3 remote-half variants, 1
+    class_weight, 4 audio MUTATION variants (pitch-shift clean,
+    pitch-shift extend-to-korean, pitch-shift spliced, EQ-tilt) —
+    ZERO prior time-stretch.
+
+(c) IF THIS FAILS. Three paths.
+    (1) If singing regresses (the time-stretch variant is contributing
+        worse coverage than the dropped -1 pitch-shift variant), revert
+        to bba6dbe's symmetric (+1, -1) pitch-shift and instead test
+        time-stretch with rate=1.05 (faster, shorter chunks ~57.1s) as
+        the swap-in. Different phase-vocoder smearing pattern.
+    (2) If singing holds but neither korean nor english recovers, the
+        bba6dbe class-prior shift is the dominant issue and adjusting
+        the mechanism within the same class-count budget will not help.
+        Pivot to feature-axis: per-domain DOMAIN_INDICATOR feature (not
+        a routing scalar) appended to FEATURE_NAMES so GBM can split
+        differently per dataset internally without a hard-gated
+        per-domain rule.
+    (3) Final escalation: stack BOTH pitch-shift directions AND time-
+        stretch BUT halve NEG_PER_CLEAN (4→2) on the augmented variants
+        only — gives 3 mutation axes × 2 negs × 20 = 120 aug rows total
+        (smaller class-prior shift than bba6dbe's 160).
+
+(d) Information gaps. (i) The 2 remaining singing clean FPs and 4
+    korean clean FPs (file, t_sec, p_hard, p_cross, p_splice) are STILL
+    not in CURRENT STATE — every aug-design hypothesis is guessing
+    whether augmented chunks land in the failure-cluster's feature-
+    space neighborhood. (ii) f71c526's identical-metrics outcome
+    remains ambiguous: either korean aug is truly a no-op or the
+    wrapper's auto-retrain trigger conditions vs joblib commit
+    interaction is opaque. A `TRAIN_TRIGGER_CONDITIONS:` block in
+    CURRENT STATE listing exactly which file/sha changes cause the
+    wrapper to re-invoke `train_classifier.py` would remove the
+    "did the joblib actually rebuild" uncertainty every training-data
+    hypothesis carries. (iii) Per-class OOF F1 broken DOWN BY DOMAIN
+    (hard_cut/crossfade/not_splice × singing/korean/english) is still
+    absent from the prompt; aggregate weighted F1 hides which class is
+    being affected by training-data changes.
+
+(e) Wrapper enhancements. (1) `data/train/clean_fp_positions.json`
+    auto-emitted by evaluate.py listing every (domain, file, t_sec,
+    p_hard, p_cross, p_splice) for clean-file false positives on the
+    last KEPT classifier — turning "korean clean_fp=4" / "singing
+    clean_fp=2" from opaque scalars into actionable per-position
+    diagnostics. (2) `scripts/training_aug_visualize.py --mechanism
+    {pitch_shift,time_stretch,eq_tilt} --feature spec_rolloff_delta`
+    plotting augmented vs original feature distributions per domain on
+    a representative sample — lets me verify the mutation lands in the
+    intended feature-space region BEFORE committing. (3)
+    `supervisor_agent.py --diff-classifier <old-sha> <new-sha>`
+    reporting per-class OOF F1 delta between two joblibs — turns the
+    "retrain side-effect on splice recall" inference into a measurable
+    pre-commit signal.
+
