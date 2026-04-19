@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""US-515 phase-1 pre-merge smoke gate.
+"""US-515 pre-merge smoke gate (phases 1 + 2).
 
 Python-only stub: simulates one iteration's worth of logger emission into
-a temp fixture, then runs all four phase-1 gates against it.
+a temp fixture, then runs all four gates against it.
 
 DOES NOT invoke run_autoresearch.sh, evaluate.py, or any real dataset.
 Runs in <5 seconds. PR is not mergeable if any of the four gates fails.
@@ -12,6 +12,10 @@ Gates:
   2. Parse gate       — validate_logs.py --parse exits 0
   3. Reader gate      — phase_stats.py + dashboard.py produce non-empty output
   4. Redaction gate   — retest.diagnose.* records contain <REDACTED>, not 0.47
+
+Phase 2 update: the paired legacy `autoresearch.log` fixture and the
+`phase_stats.py --log <legacy_path>` hook are gone — the wrapper now
+emits native JSONL so readers consume the same file as gate 2 parses.
 
 Usage (exact command; NOT `python -m omc.*` — `.omc` has a leading dot so
 packaging under that name is impossible):
@@ -42,7 +46,6 @@ class SmokeIteration(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="us515_smoke_")
         self.root = Path(self._tmp.name)
         self.jsonl = self.root / "autoresearch.jsonl"
-        self.legacy = self.root / "autoresearch.log"
         self._prev_override = os.environ.get("OMC_LOG_OVERRIDE")
         self._prev_disabled = os.environ.get("OMC_LOGGER_DISABLED")
         os.environ["OMC_LOG_OVERRIDE"] = str(self.jsonl)
@@ -69,7 +72,7 @@ class SmokeIteration(unittest.TestCase):
         retest = lg.get_logger("retest.diagnose")
         detector = lg.get_logger("detector.gbm")
 
-        wrapper.emit("INFO", "wrapper.iteration.start", iter="abc1234",
+        wrapper.emit("INFO", "iteration.start", iter="abc1234",
                      discards_since_last_keep=4, claude_visible=True)
         classifier.emit("INFO", "classifier.retrain.trigger",
                         reason="features.py changed")
@@ -87,26 +90,17 @@ class SmokeIteration(unittest.TestCase):
                    combined_min=0.24)
         retest.emit("ERROR", "retest.diagnose.traceback",
                     detail="combined=0.47 crashed in hotelling")
-        wrapper.emit("INFO", "note.appended", file=".omc/research_notes.md",
-                     iter="abc1234")
-
-        self._write_legacy_fixture()
-        self.assertTrue(self.jsonl.exists(), "JSONL fixture not written")
-        self.assertTrue(self.legacy.exists(), "legacy fixture not written")
-
-    def _write_legacy_fixture(self) -> None:
-        """Paired legacy-line fixture — wrapper-shim events need these."""
-        self.legacy.write_text(
-            "2026-04-18T10:00:05+00:00 Starting iteration "
-            "(consecutive discards: 4)\n"
-            "2026-04-18T10:00:06+00:00 PHASE: claude start iter=abc1234\n"
-            "2026-04-18T10:00:16+00:00 PHASE: claude end\n"
-            "2026-04-18T10:00:17+00:00 PHASE: eval start\n"
-            "2026-04-18T10:00:35+00:00 PHASE: eval end\n"
-            "2026-04-18T10:00:40+00:00 ITER_SUMMARY iter=abc1234 "
-            "status=discard total=38 claude=10 retrain=- eval=19 verify=3 note=1\n"
-            "2026-04-18T10:00:41+00:00 Iteration: discard (discards: 5/50)\n"
+        # Phase-2 wrapper emits iteration.phase with per-phase seconds.
+        wrapper.emit(
+            "INFO", "iteration.phase",
+            iter="abc1234", status="discard",
+            total="38", claude="10", retrain="-",
+            eval="19", verify="3", note="1",
         )
+        wrapper.emit("INFO", "note.appended", file=".omc/research_notes.md",
+                     iter="abc1234", claude_visible=True)
+
+        self.assertTrue(self.jsonl.exists(), "JSONL fixture not written")
 
     def test_gate_1_fixture_emission(self) -> None:
         self._emit_iteration_fixture()
@@ -129,15 +123,18 @@ class SmokeIteration(unittest.TestCase):
         env = os.environ.copy()
         env["OMC_LOG_OVERRIDE"] = str(self.jsonl)
 
+        # phase_stats reads iteration.phase events natively from the
+        # unified JSONL; --log is the test-only path override.
         r_phase = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "phase_stats.py"),
-             "--log", str(self.legacy)],
+             "--log", str(self.jsonl)],
             capture_output=True, text=True, cwd=str(REPO), env=env,
         )
         self.assertEqual(r_phase.returncode, 0,
                          f"phase_stats.py failed: stderr={r_phase.stderr}")
-        self.assertTrue(r_phase.stdout.strip(),
-                        "phase_stats.py stdout is empty")
+        self.assertIn("discard", r_phase.stdout,
+                      f"phase_stats.py did not surface the iteration: "
+                      f"{r_phase.stdout!r}")
 
         r_dash = subprocess.run(
             [sys.executable, str(REPO / "scripts" / "dashboard.py"), "--help"],
