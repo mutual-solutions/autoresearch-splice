@@ -16,8 +16,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO / "scripts"))
-from log_reader import iter_events  # noqa: E402
+from autoresearch.log_reader import iter_events
 
 PHASES = ["total", "claude", "retrain", "eval", "verify", "note"]
 

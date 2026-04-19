@@ -20,7 +20,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 RESULTS = REPO / "results.tsv"
-BASELINE = REPO / ".omc" / "coordination" / "baseline_metrics.json"
+BASELINE = REPO / "autoresearch" / "baseline_metrics.json"
 SHAP_ROLLUP = REPO / ".omc" / "shap_rollup.json"
 VERSIONS = REPO / ".omc" / "classifier" / "versions.json"
 
@@ -28,8 +28,7 @@ VERSIONS = REPO / ".omc" / "classifier" / "versions.json"
 # drops the legacy shim so this reads `.omc/logs/autoresearch.jsonl`
 # exclusively. The dashboard's primary surface (results.tsv + baseline +
 # shap_rollup + versions + git log) is unchanged; iter_events() layers on.
-sys.path.insert(0, str(REPO / "scripts"))
-from log_reader import iter_events  # noqa: E402
+from autoresearch.log_reader import iter_events
 
 
 def _recent_pipeline_failures(limit: int = 3) -> list[dict]:

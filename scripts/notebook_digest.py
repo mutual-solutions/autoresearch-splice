@@ -26,8 +26,7 @@ NOTES = REPO / ".omc" / "research_notes.md"
 MAX_ENTRIES = 50
 SUMMARIZE_OLDEST = 20
 
-sys.path.insert(0, str(REPO / ".omc" / "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 
 _log = get_logger("notebook.digest")
 

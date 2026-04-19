@@ -27,8 +27,7 @@ REPO = Path(__file__).resolve().parent.parent
 RESULTS_TSV = REPO / "results.tsv"
 DETECTOR = REPO / "detector.py"
 
-sys.path.insert(0, str(REPO / ".omc" / "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 
 TUNABLES = ["GBM_THRESHOLD", "GBM_MIN_SEP_S", "ANALYSIS_STRIDE_S"]
 

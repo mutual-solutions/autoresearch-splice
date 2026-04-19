@@ -4,6 +4,7 @@
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+export PYTHONPATH="${PROJECT_DIR}:${PYTHONPATH:-}"
 SESSION="autoresearch"
 STOP_FILE="$PROJECT_DIR/.omc/autoresearch-stop"
 # US-515 phase 2: structured events go to the unified JSONL log (via `_log`).
@@ -20,7 +21,7 @@ MAX_CONSECUTIVE_DISCARDS=50
 # Reserved key=value flags: `claude_visible=true`, `oracle_sensitive=true`.
 # Failures are suppressed — logging must never block the loop.
 _log() {
-    uv run python "$PROJECT_DIR/.omc/coordination/log_cli.py" "$@" 2>>"$CHILD_STDERR_LOG" || true
+    uv run python "$PROJECT_DIR/autoresearch/log_cli.py" "$@" 2>>"$CHILD_STDERR_LOG" || true
 }
 
 _eval_cleanup() {
@@ -288,7 +289,7 @@ _do_keep_path() {
     python3 - "$PROJECT_DIR" <<'PYEOF'
 import json, os, subprocess, sys, re, datetime
 proj = sys.argv[1]
-bf = os.path.join(proj, '.omc/coordination/baseline_metrics.json')
+bf = os.path.join(proj, 'autoresearch/baseline_metrics.json')
 eval_log = os.path.join(proj, '.omc/last_eval.log')
 try:
     data = json.load(open(bf))
@@ -345,8 +346,8 @@ data["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime(
 json.dump(data, open(bf, "w"), indent=2)
 PYEOF
 
-    if ! git diff --quiet .omc/coordination/baseline_metrics.json; then
-        git add .omc/coordination/baseline_metrics.json
+    if ! git diff --quiet autoresearch/baseline_metrics.json; then
+        git add autoresearch/baseline_metrics.json
         git commit -m "baseline: combined=$reported $baseline_suffix" \
             >>"$CHILD_STDERR_LOG" 2>&1
     fi
@@ -598,10 +599,10 @@ run_loop() {
         # Authoritative current state from baseline_metrics.json: the
         # aggregate GM plus each domain's individual combined so claude
         # can spot the weakest domain to target.
-        current_best=$(python3 -c "import json; print(json.load(open('.omc/coordination/baseline_metrics.json')).get('combined', 0))" 2>/dev/null || echo "0")
+        current_best=$(python3 -c "import json; print(json.load(open('autoresearch/baseline_metrics.json')).get('combined', 0))" 2>/dev/null || echo "0")
         per_domain_state=$(python3 -c "
 import json
-d = json.load(open('.omc/coordination/baseline_metrics.json'))
+d = json.load(open('autoresearch/baseline_metrics.json'))
 per = d.get('per_dataset_combined', {})
 fp = d.get('per_dataset_clean_fp', {})
 if not per:
@@ -737,10 +738,10 @@ Read-only artifacts for deeper context:
   The wrapper will run evaluate.py against an encrypted-then-decrypted
   copy after you commit.
 - Do NOT run evaluate.py — the wrapper does this and parses the result.
-- Do NOT write to results.tsv or .omc/coordination/baseline_metrics.json
+- Do NOT write to results.tsv or autoresearch/baseline_metrics.json
   — the wrapper owns both.
-- Do NOT edit evaluate.py, .omc/coordination/manifest.json,
-  .omc/coordination/preflight.py — protected.
+- Do NOT edit evaluate.py, autoresearch/manifest.json,
+  autoresearch/preflight.py — protected.
 
 ==== ONE ITERATION ========================================================
 0. Read the RESEARCH NOTES above — your prior reflections about what you
@@ -941,7 +942,7 @@ except Exception:
             if [ $_retrain_rc -ne 0 ]; then
                 _log ERROR wrapper retrain.auto.failed rc="$_retrain_rc" \
                     followup="verify-fail"
-                uv run python .omc/coordination/verify_agent.py --diagnose \
+                uv run python autoresearch/verify_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 || true
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
@@ -1011,7 +1012,7 @@ except Exception:
         if [ $eval_exit -ne 0 ]; then
             _log ERROR wrapper eval.crash exit="$eval_exit" \
                 tail="$(tail -1 "$PROJECT_DIR/.omc/last_eval.log" 2>/dev/null)"
-            uv run python .omc/coordination/verify_agent.py --diagnose \
+            uv run python autoresearch/verify_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1027,7 +1028,7 @@ except Exception:
         reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
         if [ -z "$reported" ]; then
             _log ERROR wrapper eval.parse_fail reason="no_combined_in_results_tsv"
-            uv run python .omc/coordination/verify_agent.py --diagnose \
+            uv run python autoresearch/verify_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1052,7 +1053,7 @@ except Exception:
             if [ "$_catastrophic" = "1" ]; then
                 _log WARN wrapper discard.catastrophic combined="$reported" \
                     floor=0.01 action=diagnose
-                uv run python .omc/coordination/verify_agent.py --diagnose \
+                uv run python autoresearch/verify_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 \
                     || _log ERROR pipeline failure script=verify_agent.py arg=diagnose rc="$?"
             fi
@@ -1074,7 +1075,7 @@ except Exception:
         # catches committed protected-file edits (invisible to working-
         # tree / staged diffs after the agent's commit).
         verify_output=$(OMC_HEAD_BEFORE="$head_before" \
-            uv run python .omc/coordination/verify_agent.py \
+            uv run python autoresearch/verify_agent.py \
             --agent-name autoresearch \
             --reported-combined "$reported" 2>&1)
         verify_exit=$?
