@@ -2828,3 +2828,91 @@ diagnose: no-traceback
 tsv: RESULTS_TSV: combined=<REDACTED> combined_mean=<REDACTED> combined_min=<REDACTED> clean_fp=6 n_datasets=3 combined_english=<REDACTED> clean_fp_english=0 combined_korean=<REDACTED> clean_fp_korean=4 combined_singing=<REDACTED> clean_fp_singing=2
 note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
 
+## 2026-04-20T02:48:27+09:00 — 49bd0b1 (keep, combined=0.505589)
+subject: add voiced_mfcc_cosine_dist feature (FEATURE_NAMES 75->76) — voiced-frame-only MFCC cosine distance between pre[t-2,t] and post[t,t+2]. Reuses cached feat_mfcc + feat_vp; per-t cost is two slices + masked mean + cosine, sub-ms. Sentinel 0.0 when either window has zero voiced frames. Targets 29c06cf's singing 0.360 weakest-domain plateau where 9 consecutive DSP-post-filter variants since 29c06cf failed (3 reproducing exact 0.493815) and CLAUDE.md mandates structural change after 5+ same-axis failures. Mechanism: existing mfcc_delta_NN averages over ALL frames so chord-transition spectral envelope shifts trigger it on FPs; restricting to voiced frames isolates vocal-tract / instrument timbre — same singer across a chord boundary keeps voiced MFCC similar (cosine_dist ~0.05), real cross-source splice shifts it (~0.30+). On speech, voiced=vowels and pre/post may have different vowels regardless of splice → high-variance noise; GBM learns low SHAP per-domain via tree splits so feature is functionally invisible on english/korean. Self-gates via voiced flag requirement so won't regress speech (the 634cdd2/68004ca chroma verify-fail mode required external tonality-gate which lacked clean signal). Orthogonal to every prior axis: not DSP, not spectral delta, not chroma (cepstral not pitch-class), not pairwise, NOT remote-half MFCC (438080/411473 used long half-chunk averages dominated by file-mean character; this uses LOCAL +-2s VOICED-RESTRICTED mean), NOT raw mfcc_delta (different masking — voiced-only vs all-frames). Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505. Smoke: import + assert len(FEATURE_NAMES)==76 + last name 'voiced_mfcc_cosine_dist'.
+per-domain: combined_english=0.835443 combined_korean=0.498462 combined_singing=0.310345
+
+# 2026-04-20 — hypothesis: voiced-frame-only MFCC cosine-distance feature (FEATURE_NAMES 75→76)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new
+    feature `voiced_mfcc_cosine_dist`. Per position t_sec, restrict the
+    MFCC mean to frames where `vp==1.0` (precomputed voiced flag in
+    `feat_vp`) inside pre=[t−2, t] and post=[t, t+2], then return cosine
+    distance between the two 13-dim voiced-mean vectors. If either window
+    has zero voiced frames, return 0.0 sentinel. Reuses cached `feat_mfcc`
+    + `feat_vp`; per-t cost is two slices + masked mean + cosine, sub-ms.
+    FEATURE_NAMES 75→76 so wrapper auto-retrains via US-505 sha gate.
+
+(b) WHY this over recent failures. CLAUDE.md mandates STRUCTURAL after
+    5+ same-axis failures — the DSP-post-filter axis has burned 9
+    attempts since 29c06cf, and three recent attempts (55b21e6 HPR-gated
+    SUM, 9fe41d1 chroma persistence_far post-filter, 68004ca tonality-
+    gated chroma feature) reproduced the IDENTICAL 0.493815 / singing=
+    0.360 / korean=0.457 / english=0.732 triple — gates simply don't
+    fire on the eval emit population. Existing `mfcc_delta_NN` (block 2)
+    averages MFCC over ALL frames in pre/post — silences, breaths,
+    consonants, sustains all blended. On singing chord transitions, the
+    RAW pre/post MFCC mean shifts because the spectral envelope shifts
+    even without singer change → mfcc_delta fires on FPs. Restricting
+    to VOICED frames isolates the VOCAL-TRACT / INSTRUMENT TIMBRE
+    signature: same singer, same room → voiced MFCC stays similar
+    across a chord boundary (same vowel formants, same vibrato
+    envelope, same mic coloration), cosine_dist ~0.05. Real cross-
+    source splice: different singer / different mic → voiced MFCC
+    shifts, cosine_dist ~0.30+. On speech (korean/english), voiced =
+    vowels, and pre/post may have different vowels regardless of
+    splice → feature value high-variance noise; GBM learns low SHAP
+    on speech domains via tree splits, so feature is functionally
+    invisible on those. Orthogonal to every prior axis: not DSP, not
+    spectral delta, not chroma (cepstral not pitch-class), not pairwise,
+    not HPR-routed, NOT remote-half MFCC (438080/411473 used long
+    half-chunk averages dominated by file-mean character; this uses
+    LOCAL ±2s VOICED-RESTRICTED mean), NOT raw mfcc_delta (different
+    masking — voiced-only vs all-frames). Risk-bounded: zero-voiced
+    sentinel = 0.0 prevents NaN; verify-fail history (634cdd2/68004ca
+    chroma) was on a feature that LACKED voicing-conditioning, so
+    speech regressed; this feature SELF-GATES via the voiced flag
+    requirement.
+
+(c) IF THIS FAILS. (1) If GBM assigns ~0 SHAP (voiced-frame mask too
+    strict — drops too many frames in vibrato/staccato singing),
+    relax to ALL frames where rms > 0.5*median (energy-floor mask
+    instead of f0-validity mask). (2) If it lifts singing but
+    regresses speech (false discriminator on different vowels pre/
+    post), add a SECOND feature `voiced_frame_overlap` = fraction
+    of frames voiced in pre+post; GBM learns the JOINT (high voiced
+    overlap → trust the cosine_dist; low overlap → ignore). (3)
+    Final escalation: replace cosine with WASSERSTEIN-1 distance
+    between per-frame voiced MFCC distributions (captures shape
+    not just mean — same singer with strong vibrato has wider
+    distribution than monotone, distance discriminates beyond mean
+    shift).
+
+(d) Information gaps. (i) Per-position CLEAN_FP_POSITIONS (domain,
+    file, t_sec, vp_pre_count, vp_post_count, voiced_mfcc_pre,
+    voiced_mfcc_post, cosine_dist) STILL not in CURRENT STATE — same
+    persistent blocker for 13+ detector-side hypotheses. I'm
+    calibrating the voiced-mask mechanism from physical theory
+    rather than observed FP voicing patterns. (ii) The exact-
+    triple reproduction of 0.493815 across 3+ recent commits
+    raises a wrapper question: are these hypotheses actually
+    landing in the eval-time classifier? A DETECTOR_BUNDLE_SHA
+    line in RESULTS_TSV would let me distinguish "no-bite" from
+    "no-load". (iii) Per-domain weighted-F1 OOF lift from adding
+    a candidate feature is not previewable pre-commit; I'm betting
+    a 3-min retrain on theory.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE with per-FP (domain, file, t_sec, label_id,
+    p_splice, top-5 features by |SHAP|, voiced-frame counts in
+    pre/post windows). Single biggest blocker across 13+ hypotheses
+    — flips threshold/mask/feature design from theory-driven to
+    data-driven. (2) `scripts/feature_oof_preview.py --add
+    <feature_fn>` retrains once and reports per-domain OOF-F1
+    delta vs current — turns "is this feature worth a retrain"
+    from a bet into a numeric. (3) DETECTOR_BUNDLE_SHA + EMIT_COUNT
+    line in RESULTS_TSV / wrapper log — disambiguates the
+    "exact-triple reproduction" mystery (is the gate not firing,
+    or is the wrapper byte-reusing a stale joblib?).
+[auto] (no SHAP data for either 29c06cf or 49bd0b1)
+
