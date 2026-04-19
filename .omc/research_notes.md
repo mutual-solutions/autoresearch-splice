@@ -1729,3 +1729,92 @@ per-domain: combined_english=0.627907 combined_korean=0.452381 combined_singing=
     under current-fixed code; would unblock isotonic/phase-residual/
     FILE-LEVEL-flatness without violating the no-repeat rule.
 
+## 2026-04-19T19:31:21+09:00 — 0c5ba88 (discard, combined=0.357329)
+subject: add file_hpr (chunk-level harmonic ratio) as GBM feature (75 -> 76)
+per-domain: combined_english=0.773256 combined_korean=0.289655 combined_singing=0.203704
+
+# 2026-04-19 — hypothesis: add file_hpr as GBM feature (chunk-level harmonic ratio)
+
+(a) HYPOTHESIS. Add ONE new feature `file_hpr` to features.py
+    (FEATURE_NAMES 75→76). Computed ONCE per chunk in
+    `_ensure_feat_cache` via `librosa.decompose.hpss` applied to the
+    already-computed |Zxx_bnd| magnitude STFT (reuses the existing
+    chunk-level STFT, zero new librosa calls). `file_hpr =
+    sum(H) / (sum(H) + sum(P))`, stored in ctx["feat_file_hpr"],
+    emitted as the same scalar for every position in that chunk.
+    Minimum-diff: new block `_block_file_hpr` appended AFTER
+    `_block_mel_pca` in extract_features. Classifier auto-retrains
+    via US-505 features.py sha gate.
+
+(b) WHY this over the recent failures. HPR has been PROVEN to
+    separate domains cleanly — smoke-tested in 39b9fb0 (singing
+    0.88-0.97 vs korean ≤0.71 vs english ≤0.51, gap at 0.85 wide
+    enough that korean cannot leak into "tonal" bucket). Every prior
+    HPR attempt used it as a HARD-CODED GATE: 39b9fb0 (threshold
+    routing, combined=0.428, singing=0.246 — tightened singing
+    pushed real TPs below gate); e228236 (post-filter gate,
+    combined=0.427, singing=0.244 — dropped too aggressively).
+    HARD-CODED RULES constrain the model to ONE specific conditional
+    logic that clearly didn't match the decision surface.
+
+    HPR as a FEATURE lets GBM LEARN the conditional rule instead of
+    hard-coding it. Concretely the model can find interactions like:
+    "IF file_hpr > 0.85 AND spec_rolloff_delta moderate → likely
+    chord-transition (not_splice)" via tree splits, or inverse: "IF
+    file_hpr ≤ 0.75 AND nf_kl_divergence high → speech splice".
+    GBM naturally represents conditional boolean logic via split
+    chains — this is the model capability that hard-coded gates
+    bypass.
+
+    Orthogonal to every prior axis (6 primary tunables bracketed,
+    8 GBM hyperparam failures, 5 training-data failures, 12+ feature
+    add/ablation failures, 7+ post-filter failures, 2 model-class
+    swaps, 2 calibration attempts, 2 file-level HPR ROUTING attempts,
+    remote-half MFCC sim feature discarded). NO prior attempt added
+    a FILE-LEVEL domain-indicator as a feature. All prior features
+    are PER-POSITION (pre/post window deltas); this is the first
+    CHUNK-LEVEL CONSTANT feature giving GBM file-identity context.
+
+    Cost: HPSS on existing |STFT| ≈ 50ms per chunk × ~120 chunks
+    ≈ 6s in the 243/300s budget. No new STFT call (reuses
+    Zxx_bnd). Risk-bounded: one new float feature, if uninformative
+    GBM gives it SHAP≈0 and ignores it. If informative, next
+    iteration will see it in the SHAP top-6 rollup.
+
+(c) IF THIS FAILS. (1) Add a SECOND chunk-level feature:
+    file_voicing_fraction (mean of existing vp array) — voicing is
+    complementary to HPR (HPR measures harmonic/percussive split;
+    voicing measures "is it pitched at all"). GBM sees richer
+    file-identity context. (2) Switch to a DIRECTIONAL pair — compute
+    HPR separately on pre-half [0, t_sec] and post-half [t_sec, end]
+    so real splices show HPR DIVERGENCE between halves. (3) Final
+    escalation: re-attempt HPR-gated remote-half MFCC sim as a
+    feature — the one hybrid variant that combines the proven
+    singing signal (f6192f6 hit singing=0.288 new high) with HPR
+    domain-gating to prevent english regression.
+
+(d) Information gaps. Per-class OOF F1 breakdown (hard_cut /
+    crossfade / not_splice) is not in CURRENT STATE — only aggregate
+    weighted F1. For a file-level feature I specifically want to
+    know whether the SINGING clean_fp=6 cluster triggers p_hard or
+    p_cross to predict which class sigmoid might help. Also still
+    missing: a per-KEEP SHAP-DELTA block showing whether a newly
+    added feature is being USED (high SHAP) or IGNORED (SHAP≈0),
+    directly informs next-iteration pivot.
+
+(e) Wrapper enhancements. (1) Emit a CHUNK-LEVEL-FEATURE-RATIO
+    metric at train-time: for each FEATURE_NAMES entry, print the
+    per-chunk coefficient of variation (std/mean within a chunk).
+    Features with CV≈0 are constant-per-chunk (like file_hpr by
+    design), letting me verify the feature was computed correctly
+    and letting future research pick which block to put a feature
+    in. (2) `verify_agent.py --shap-for-feature <name>` printing
+    global SHAP rank + mean |SHAP| for a specified feature across
+    the last N KEPT classifiers. Would let me detect when a new
+    feature is truly being used by the model vs carried along at
+    SHAP≈0. (3) A `data/train/clean_fp_positions.json` auto-emitted
+    by evaluate.py listing (domain, file, t_sec, p_hard, p_cross)
+    for every clean-file false positive — turns "singing clean_fp=6"
+    from an opaque scalar into actionable per-position diagnostics
+    that directly drive feature-design.
+
