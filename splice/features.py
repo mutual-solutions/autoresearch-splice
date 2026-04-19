@@ -24,8 +24,9 @@ Feature blocks (77 dims):
     Block 10: Mel-PCA tail              (20)
     Block 11: Voiced-MFCC cosine dist   (1)
     Block 12: Voiced-chroma cosine dist (1)
+    Block 13: Voiced-spec-contrast cos  (1)
 
-Total: 4+13+6+6+8+6+3+5+4+20+1+1 = 77
+Total: 4+13+6+6+8+6+3+5+4+20+1+1+1 = 78
 
 Performance model:
     _ensure_feat_cache() runs ONCE per chunk, precomputing all expensive
@@ -141,9 +142,10 @@ FEATURE_NAMES: list[str] = (
     + [f"mel_pca_{i:02d}" for i in range(1, 21)]
     + ["voiced_mfcc_cosine_dist"]
     + ["voiced_chroma_cosine_dist"]
+    + ["voiced_spec_contrast_cosine_dist"]
 )
 
-assert len(FEATURE_NAMES) == 77, f"Expected 77, got {len(FEATURE_NAMES)}"
+assert len(FEATURE_NAMES) == 78, f"Expected 78, got {len(FEATURE_NAMES)}"
 
 # Shared hop/fft constants
 _HOP = 512
@@ -898,6 +900,50 @@ def _block_voiced_chroma(ctx: dict, t_sec: float) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Block 13: Voiced-frame-only spectral-contrast cosine distance
+# ---------------------------------------------------------------------------
+
+def _block_voiced_spec_contrast(ctx: dict, t_sec: float) -> dict[str, float]:
+    # 7-band peak-to-valley amplitude ratio (mastering / mix signature)
+    # restricted to voiced frames. Within one song the mastering chain is
+    # fixed, so chord transitions preserve per-band peak/valley profile;
+    # cross-song splices cross mastering chains (different compression /
+    # EQ / limiter settings). Self-gating on speech: voiced vowels have
+    # per-phoneme formant peaks at different bands -> high-variance noise
+    # -> GBM learns low per-domain SHAP on english/korean.
+    contrast = ctx["feat_contrast"]
+    vp = ctx["feat_vp"]
+    hop = ctx["feat_frame_hop"]
+    sr = ctx["feat_sr"]
+
+    def _voiced_mean(t_lo: float, t_hi: float):
+        c = _slice_frames(contrast, hop, sr, t_lo, t_hi)    # (7, n_c)
+        v = _slice_frames(vp, hop, sr, t_lo, t_hi)          # (n_v,)
+        n = min(c.shape[1], v.shape[0])
+        if n <= 0:
+            return None
+        c = c[:, :n]
+        mask = v[:n].astype(bool)
+        if not mask.any():
+            return None
+        return np.mean(c[:, mask], axis=1)
+
+    pre_v = _voiced_mean(t_sec - 2.0, t_sec)
+    post_v = _voiced_mean(t_sec, t_sec + 2.0)
+    if pre_v is None or post_v is None:
+        return {"voiced_spec_contrast_cosine_dist": 0.0}
+
+    norm_pre = float(np.linalg.norm(pre_v))
+    norm_post = float(np.linalg.norm(post_v))
+    if norm_pre < 1e-10 or norm_post < 1e-10:
+        return {"voiced_spec_contrast_cosine_dist": 0.0}
+
+    cos_sim = float(np.dot(pre_v, post_v) / (norm_pre * norm_post))
+    cos_sim = max(-1.0, min(1.0, cos_sim))
+    return {"voiced_spec_contrast_cosine_dist": float(1.0 - cos_sim)}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -946,6 +992,7 @@ def extract_features(
     feats.update(_block_mel_pca(chunk_ctx))
     feats.update(_block_voiced_mfcc(chunk_ctx, t_sec))
     feats.update(_block_voiced_chroma(chunk_ctx, t_sec))
+    feats.update(_block_voiced_spec_contrast(chunk_ctx, t_sec))
 
     assert len(feats) == len(FEATURE_NAMES), (
         f"Feature count mismatch: {len(feats)} != {len(FEATURE_NAMES)}"
@@ -986,9 +1033,9 @@ if __name__ == "__main__":
     feats1 = extract_features(chunk, sr, t, chunk_ctx=ctx)
 
     # 1. Length check
-    assert len(feats1) == 77, f"FAIL: got {len(feats1)} features"
-    assert len(FEATURE_NAMES) == 77, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
-    print("PASS: len(dict) == len(FEATURE_NAMES) == 77")
+    assert len(feats1) == 78, f"FAIL: got {len(feats1)} features"
+    assert len(FEATURE_NAMES) == 78, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
+    print("PASS: len(dict) == len(FEATURE_NAMES) == 78")
 
     # 2. Bit-identical
     feats2 = extract_features(chunk, sr, t, chunk_ctx=ctx)
