@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-04-19T16:04:45Z",
-  "git_sha": "273b8f5",
+  "timestamp": "2026-04-19T16:27:56Z",
+  "git_sha": "865d92f",
   "phase": "phase2_cross_dataset_gm",
-  "combined": 0.4791,
+  "combined": 0.487946,
   "combined_dsp": 0.785316,
   "splice_f1": 0.835443,
   "clean_score": 0.94,
@@ -15,12 +15,12 @@
   "analysis_stride_s": 0.3,
   "note": "Post-parser-fix. Orphan hypothesis 4014531 (GBM_THRESHOLD 0.983) verified HIGH manually; baseline advanced to reflect its measured combined.",
   "gbm_min_sep_s": 2.5,
-  "combined_mean": 0.496326,
-  "combined_min": 0.387692,
+  "combined_mean": 0.506364,
+  "combined_min": 0.383607,
   "per_dataset_combined": {
-    "english": 0.690476,
-    "korean": 0.410811,
-    "singing": 0.387692
+    "english": 0.707317,
+    "korean": 0.428169,
+    "singing": 0.383607
   },
   "per_dataset_clean_fp": {
     "english": 0,
