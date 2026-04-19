@@ -3216,3 +3216,106 @@ per-domain: combined_english=0.850000 combined_korean=0.490909 combined_singing=
     per-domain SHAP data on the classifier I'm trying to
     improve, the biggest information gap in the loop.
 
+## 2026-04-20T03:50:25+09:00 — df6fc0a (discard, combined=0.522818)
+subject: add unvoiced_mfcc_cosine_dist feature (FEATURE_NAMES 77->78) — MIRROR of 49bd0b1's voiced-mask MFCC on the complementary frame set. Per position t_sec slice feat_vp + feat_mfcc on pre=[t-2,t] and post=[t,t+2]; keep frames where vp==0.0 (UNVOICED); return cosine distance of unvoiced-only mean 13-dim MFCC vectors. Sentinel 0.0 when either window has zero unvoiced frames or zero-norm vectors, matching 49bd0b1/32cac36 safety pattern. Zero new caches, zero new librosa calls — pure slice + mask flip + mean + cosine, sub-ms per t. Targets 32cac36 current-keep singing 0.341 weakest-domain plateau where voiced-mask features (49bd0b1 voiced_mfcc + 32cac36 voiced_chroma) have saturated the timbre-continuity axis but are actively REDUCING singing recall because real singing splices are often SAME-SINGER-DIFFERENT-SONG and voiced_mfcc stays similar across them. Accompaniment (drums/bass/mastering) is what cross-song splices consistently disrupt, and unvoiced frames in singing carry exactly that signal — between-phrase breath intakes, sibilants, vocal-gap windows where accompaniment dominates. Same-song accompaniment stable giving cosine distance ~0.05-0.15; cross-song accompaniment shifts giving ~0.30-0.60. Self-gating on speech comes free from the mask flip: unvoiced speech frames = consonants (plosive/fricative/silence) whose MFCC varies radically per phoneme regardless of splice -> high-variance noise -> GBM assigns low per-domain SHAP on english/korean. Orthogonal to every prior axis: NOT 49bd0b1 (INVERSE mask — complementary frame set; voiced captures vocal-tract, unvoiced captures accompaniment); NOT 32cac36 voiced_chroma (pitch-class not cepstral); NOT 308aa5a voiced_tonnetz; NOT ff65865 voiced_chroma_far (different time scale); NOT remote-half MFCC 438080/411473 (long half-chunk averages dominated by file-mean character — this uses LOCAL ±2s UNVOICED-RESTRICTED mean). First feature targeting accompaniment continuity directly. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505. Smoke: import + assert len(FEATURE_NAMES)==78 + last name 'unvoiced_mfcc_cosine_dist' + pure-sine/noise synthetic confirms sentinel 0.0 on zero-unvoiced-frame pre window (correct mask logic).
+per-domain: combined_english=0.814815 combined_korean=0.555385 combined_singing=0.315789
+
+# 2026-04-20 — hypothesis: unvoiced_mfcc_cosine_dist feature (FEATURE_NAMES 77→78)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE feature
+    `unvoiced_mfcc_cosine_dist`, the MIRROR of 49bd0b1's voiced-mask MFCC.
+    Per position t_sec: slice `feat_vp` and `feat_mfcc` on pre=[t−2, t]
+    and post=[t, t+2]; keep frames where `vp == 0.0` (UNVOICED); return
+    cosine distance of unvoiced-only mean 13-dim MFCC vectors. Sentinel
+    0.0 when either window has zero unvoiced frames or zero-norm vectors,
+    matching 49bd0b1/32cac36 safety pattern. Zero new caches, zero new
+    librosa calls — pure slice + mask flip + mean + cosine, sub-ms per t.
+    FEATURE_NAMES 77→78 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 32cac36 (current keep, 0.532) has
+    singing STILL weakest at 0.341. Post-32cac36 feature attempts on the
+    voiced-mask axis have stalled: ff65865 voiced_chroma_far (english
+    regressed 0.840→0.684 — far-window speech-vowel chroma is noisy,
+    breaks self-gating); 308aa5a voiced_tonnetz (english 0.850 good,
+    but singing stuck 0.341 and korean regressed slightly). Root cause
+    of the singing plateau: 49bd0b1's voiced_mfcc signal measures
+    VOCAL-TRACT continuity — real singing splices are often
+    SAME-SINGER-DIFFERENT-SONG (common in evaluation corpora), so
+    voiced_mfcc stays similar across such splices and LOWERS p_splice
+    on real TPs. Voiced-mask features have saturated the "timbre
+    continuity" axis for english/korean (speech splices are
+    different-speaker) but are actively REDUCING recall on singing.
+    What singing splices DO disrupt consistently is ACCOMPANIMENT
+    (drums/bass/production) — and unvoiced frames carry exactly that
+    signal. In a singing chunk, unvoiced frames are gaps between
+    vocal phrases, breath intakes, sibilants — windows where
+    accompaniment dominates. Within one song the accompaniment is
+    stable (same drum kit, same mastering, same bass line) → unvoiced
+    MFCC cosine distance ~0.05-0.15. Cross-song splice: different
+    drum kit / different mastering / different tempo bass → unvoiced
+    MFCC cosine distance ~0.30-0.60.
+
+    Self-gating on speech is strong and comes free from the mask flip:
+    unvoiced speech frames = consonants (plosive/fricative/silence)
+    are EXTREMELY phoneme-dependent. Consonant MFCC varies radically
+    across [s, p, t, k, silence] regardless of splice, so
+    unvoiced_mfcc distance is high-variance noise on speech domains.
+    GBM tree splits will assign low per-domain SHAP on english/korean
+    (same mechanism that made 49bd0b1 invisible on singing), leaving
+    the feature functionally active only on singing.
+
+    Orthogonal to every prior axis: NOT 49bd0b1 (INVERSE mask —
+    complementary frame set; voiced captures vocal-tract, unvoiced
+    captures accompaniment); NOT 32cac36 (pitch-class not cepstral);
+    NOT 308aa5a tonnetz; NOT ff65865 (far-window, different time
+    scale); NOT remote-half MFCC (438080/411473 — used long
+    half-chunk averages dominated by file-mean character; this uses
+    LOCAL ±2s UNVOICED-RESTRICTED mean). First feature targeting
+    accompaniment continuity directly. Blast radius: features.py
+    only — one new block + FEATURE_NAMES append + assert bump. Per-t
+    cost: 2 slices + mask flip + mean + cosine on 13-dim vectors,
+    sub-ms. Classifier sha auto-invalidates so wrapper retrains
+    (~3 min). Risk-bounded: zero-unvoiced sentinel = 0.0 prevents
+    NaN; mask-flip guarantees complementary-set behavior so singing
+    TPs that voiced_mfcc suppresses (same singer) get RAISED
+    p_splice via unvoiced_mfcc firing on accompaniment change — the
+    two features work in tandem without stepping on each other.
+
+(c) IF THIS FAILS. (1) If singing has too few unvoiced frames in
+    ±2s windows (continuous-vocal performances), combine with an
+    RMS-floor mask — a frame counts as "accompaniment-carrying" if
+    unvoiced OR has below-median RMS (vocal-quiet moments). (2) If
+    GBM assigns ~0 SHAP on singing (unvoiced MFCC noisy even on
+    accompaniment), replace MFCC with chroma — unvoiced chroma
+    cosine distance captures accompaniment HARMONY content. (3)
+    Final escalation: combine voiced AND unvoiced into a single
+    `accompaniment_mfcc_asymmetry` feature =
+    `unvoiced_mfcc_cosine_dist − voiced_mfcc_cosine_dist`, encoding
+    "accompaniment changed more than voice" (positive =
+    same-singer-different-song splice; negative = intra-song
+    phoneme variation).
+
+(d) Information gaps. (i) Per-position CLEAN_FP_POSITIONS still not
+    in CURRENT STATE after 16+ consecutive hypotheses — cannot verify
+    whether the 2 surviving singing FPs have unvoiced frames in
+    both pre/post ±2s windows (continuous-vocal phrases → empty mask
+    → feature is no-op). (ii) SHAP rollup reports "no keeps yet —
+    rollup empty" so the theoretical claim "voiced_mfcc is
+    over-suppressing same-singer splice TPs" is untestable. (iii)
+    Per-file unvoiced-frame-fraction distribution per domain is
+    unknown — on singing it's theoretical that accompaniment-only
+    windows exist within ±2s of real splice positions.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent blocker for 16+ hypotheses; per-FP
+    (domain, file, t_sec, label_id, p_splice, voiced_mfcc_dist,
+    vp_pre_frac, vp_post_frac, top-5 |SHAP| features with values)
+    would flip mask design from theory to data. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that trains
+    once and reports per-domain OOF-F1 delta — turns "is this
+    feature worth a 3-min retrain" into a numeric. (3)
+    LOST_TP_POSITIONS between consecutive keeps — per-file list of
+    real-splice positions detected at commit N-1 but lost at commit
+    N. Would directly confirm/deny the "voiced_mfcc suppresses
+    same-singer singing TPs" hypothesis driving THIS iteration.
+
