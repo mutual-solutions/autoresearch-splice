@@ -3445,3 +3445,83 @@ per-domain: combined_english=0.708861 combined_korean=0.362295 combined_singing=
     reports per-domain (TPs_lost, FPs_dropped). Turns "pick a
     threshold" from a guess into a numeric decision.
 
+## 2026-04-20T02:06:41+09:00 — 3e4e996 (discard, combined=0.490259)
+subject: pairwise-proximity-confirmed relaxation of DSP SUM gate (1.5 -> 4.5)
+per-domain: combined_english=0.707317 combined_korean=0.434286 combined_singing=0.383607
+
+# 2026-04-20 — hypothesis: pairwise-proximity-confirmed relaxation of the DSP SUM gate
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Add `DSP_PAIRWISE_CONFIRM_MIN = 1.5` and
+    `DSP_SUM_MIN_PAIRWISE_CONFIRMED = 4.5`. Resolve
+    `dsp_pairwise_proximity` column index from `feature_names`. In the
+    existing gate at line 305, route the SUM threshold per-emit: when
+    `row[pw_idx] >= 1.5` use relaxed 4.5, else strict `DSP_SUM_MIN = 5.0`.
+    MAX floor unchanged at 2.0. Only admits extra emits whose pairwise
+    block-structure detector independently confirms position.
+
+(b) WHY this over recent failures. 29c06cf (current keep, 0.494)
+    tightened SUM 4.5→5.0, winning korean/english but regressing
+    singing 0.384→0.360 (weakest). Four recovery attempts failed:
+      - eb8984e (class-routed SUM): singing stuck 0.360 → lost TPs
+        are hard_cut, not crossfade.
+      - 55b21e6 (HPR-gated SUM): reproduced 29c06cf exactly — file-
+        level HPR is a dead axis on the eval corpus.
+      - 6b28235 (CPE floor >= 1.0): korean tanked 0.457→0.362.
+      - d256901 (class-routed channel): too strict 0.449.
+    All four TIGHTENED. Untried direction: a DIFFERENT independent
+    DSP signal that RELAXES only when it confirms.
+    `dsp_pairwise_proximity` is already computed (SHAP mass 29.8
+    english / 12.0 singing — proven discriminative) but never
+    touched by the gate. It derives from `_detect_pairwise`, a
+    SEPARATE Hotelling-T²-over-segment-pairs block-structure detector
+    (F-ratio between-block / within-block) — distinct physics from
+    phase_z / T²_z / CPE_z. Real splices create cross-block distance
+    spikes so pw_score ≈ 2-5 at splice time, proximity ≈ pw_score at
+    the emit. Chord progressions are within-block cyclic variation so
+    clean-singing pw_score ≈ 0.5-1.0 or pw_time=None → proximity ≈ 0.
+    Mechanism: singing hard_cut TPs lost in [4.5, 5.0] sum band have
+    strong pairwise confirmation (independent detector finds the
+    splice) → relaxed floor admits them. Chord-transition FPs in the
+    same sum band have proximity ≈ 0 → strict 5.0 still applies →
+    still dropped.
+
+    Orthogonal to every prior axis: different scalar than HPR
+    (pairwise is per-chunk block F-ratio, not file tonality);
+    different semantics than class-routing (no label dependency);
+    different direction than all floor tightening (relaxes on
+    confirmation, not AND-floor); first use of pairwise as a GATE.
+    Blast radius: ~5 lines (2 constants + 1 index + 1-line
+    conditional). features.py unchanged → no retrain. Per-emit cost:
+    one float read + compare, negligible. Risk-bounded: worst case
+    1.5 too loose, FPs creep back but bounded by emits in
+    p>0.982 × sum∈[4.5,5.0] × pairwise>=1.5, small set per file.
+
+(c) IF THIS FAILS. (1) Tighten DSP_PAIRWISE_CONFIRM_MIN to 2.0 or
+    2.5 if FPs creep back on speech via coincident weak block
+    structure. (2) If singing doesn't recover (lost TPs don't have
+    pairwise confirmation), pivot to tightening MAX to 2.2 (untried
+    from 7255ec6(c)(1)). (3) Final escalation: additive gate
+    effective_sum = sum(phase,T²,CPE) + min(pairwise_proximity, 2.0),
+    threshold 5.5 — makes pairwise a 4th cumulative channel.
+
+(d) Information gaps. (i) Per-position DSP z-scores AND
+    pairwise_proximity on 2 singing / 4 korean clean FPs STILL not in
+    CURRENT STATE — cannot verify clean-singing chord-transitions
+    have pairwise < 1.5 on eval corpus. (ii) LOST_TP positions
+    between 865d92f and 29c06cf not surfaced — inferring recovery
+    from theory. (iii) Distribution of dsp_pairwise_proximity across
+    emits per domain unknown; can't preview whether the 1.5
+    threshold has biteable population.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON auto-emitted
+    by splice/evaluate.py including pairwise_proximity alongside
+    phase/T²/CPE — turns DSP-gate hypotheses from theory-driven to
+    data-driven. Single biggest blocker across 10+ detector
+    hypotheses. (2) `scripts/dsp_gate_sweep.py --axes
+    "pw_confirm:1.0,1.5,2.0,2.5 | sum_confirmed:4.0,4.5,5.0"`
+    replaying last keep's emit trace, reporting per-domain
+    (TPs_recovered, FPs_re_admitted). (3) Per-domain breakdown of
+    pairwise_proximity values on emits passing MAX>=2.0 but failing
+    SUM>=5.0 — confirms biteable population before commit.
+
