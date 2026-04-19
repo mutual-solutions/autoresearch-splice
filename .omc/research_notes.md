@@ -3336,3 +3336,112 @@ per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=
     domain (TPs_lost, FPs_dropped) — turns guess-thresholds
     into pre-commit numeric decisions.
 
+## 2026-04-20T01:58:20+09:00 — 6b28235 (discard, combined=0.448740)
+subject: add dsp_cpe_z >= 1.0 channel-specific floor (stacked on MAX>=2.0 + SUM>=5.0) — cited untried from 29c06cf(c)(2) and 865d92f(c)(2). Pure detector.py change, no retrain, no feature change. DSP_CPE_MIN=1.0 added as third condition in the existing DSP gate at line 305, stacked on top of max>=2.0 and sum>=5.0. Targets 29c06cf's singing 0.360 (weakest domain) where 2 clean FPs survive — chord-transition FPs have smooth harmonic continuation so CPE typically 0.5-1.0 (complex prediction handles chord progressions well); a CPE>=1.0 floor surgically bites them. Real splices break cross-source prediction catastrophically so CPE=1.5-3 comfortably above the floor (0.5+ safety margin). Speech phoneme-shift FPs (korean mode) have CPE 0.8-1.5 so floor bites bottom half — partial win on a non-weakest domain. Orthogonal within the DSP-post-filter axis: 3 prior DSP variants (MAX at 2.0 kept, class-routed channel phase/T² at 2.0 failed, SUM at 4.5/5.0 kept, SUM-class-routed failed, SUM-HPR-routed dead) — ZERO prior CPE-specific channel floor. Orthogonal to d256901 (class-routed primary-channel at 2.0) because CPE is the THIRD channel never gated, and threshold 1.0 is BELOW MAX floor 2.0 so acts as secondary backstop not primary. Orthogonal to every other axis: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablate, 2 model-class swap, 2 calibration, 2 HPR routing, 6 audio MUTATION, 1 ensemble. Risk-bounded: can only DROP emits past MAX+SUM, never create TPs; drop requires dsp_vals[2] (cpe_z column, index verified as 2 matching DSP_CONFIRMATION_CHANNELS order) < 1.0. Per-emit cost: one extra float compare past the stacked gate, negligible. Blast radius: detector.py only, 1 constant (+7 line comment block) + 1 new condition in 3-line gate, features.py sha stable (no retrain). Smoke: constants resolve DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0 DSP_CPE_MIN=1.0; DSP_CONFIRMATION_CHANNELS.index('dsp_cpe_z')=2 confirming dsp_vals[2] is cpe_z column.
+per-domain: combined_english=0.708861 combined_korean=0.362295 combined_singing=0.351852
+
+# 2026-04-20 — hypothesis: dsp_cpe_z >= 1.0 channel-specific floor (stacked on MAX>=2.0 + SUM>=5.0)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Add `DSP_CPE_MIN = 1.0` constant. Extend the existing
+    gate at line 305 with a third condition: drop the emit when
+    `dsp_vals[2]` (the dsp_cpe_z column — third entry in
+    DSP_CONFIRMATION_CHANNELS) is below 1.0. Stacks on top of
+    MAX>=2.0 + SUM>=5.0 so the new gate ONLY bites emits that
+    already passed MAX and SUM but have weak CPE.
+
+(b) WHY this over the recent failures. 29c06cf (current keep, 0.494)
+    tightened SUM 4.5→5.0, lifting combined but regressing singing
+    0.384→0.360 (now WEAKEST at 0.360). Three post-29c06cf attempts
+    to recover singing failed in different ways:
+      * eb8984e (class-conditioned SUM: hard_cut=5.0, crossfade=4.5)
+        — failed 0.480 with singing stuck at 0.360, proving the lost
+        singing TPs are hard_cut-labelled not crossfade. Class axis
+        wrong.
+      * 55b21e6 (HPR-gated SUM: tonal files relax to 4.5) —
+        reproduced 29c06cf's exact 0.494 metrics, meaning the HPR
+        gate at >0.85 admitted ZERO extra emits on the eval corpus.
+        Either all singing eval files' HPR<=0.85 via HPSS-on-mid-30s
+        or no singing emits had sum in [4.5, 5.0). File-HPR routing
+        is a dead axis on the current corpus.
+    The SUM axis has now been fully explored at uniform thresholds
+    (4.5 kept, 5.0 kept) and modulated routing (class + HPR, both
+    failed). The remaining DSP post-filter axis is CHANNEL-SPECIFIC
+    floors that don't collapse across the sum. dsp_cpe_z is the
+    cleanest single-channel target:
+      * Chord transitions (2 singing FPs): CPE typically 0.5-1.0
+        because complex prediction handles harmonic continuations
+        smoothly — a CPE>=1.0 floor bites most chord-transition FPs.
+      * Real splices: CPE 1.5-3.0 by physical construction
+        (cross-source prediction fails catastrophically since the
+        model trained on one source cannot predict the other's
+        continuation). CPE>=1.0 leaves 0.5+ safety margin.
+      * Speech phoneme shifts (korean FPs): CPE 0.8-1.5 — CPE>=1.0
+        only bites the bottom half of korean FPs, which is an
+        acceptable partial win on a non-weakest domain.
+    Explicit untried direction cited in two consecutive post-mortems:
+    29c06cf(c)(2) and 865d92f(c)(2): "add a CPE-specific minimum
+    (dsp_cpe_z ≥ 1.0) — chord transitions almost universally have
+    CPE<1.0 while real splices have CPE≥1.5". Orthogonal to
+    d256901 (class-routed channel-specific at ≥2.0, too strict —
+    required phase OR T² strong per class label) because CPE is
+    the THIRD channel that d256901 never gated, and threshold 1.0
+    is below the MAX-gate threshold 2.0 so this is a secondary
+    backstop not a primary gate. Orthogonal to every prior axis:
+    8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature
+    add/ablation, 8+ post-filter, 2 model-class swap, 2 calibration,
+    2 HPR routing, 6 audio MUTATION, 1 ensemble, 4 DSP-gate variants
+    (MAX, class-channel, SUM-uniform, SUM-class-routed,
+    SUM-HPR-routed) — ZERO prior attempts at a channel-specific
+    minimum on CPE. Risk-bounded by stacking: can only DROP emits
+    passing MAX+SUM, never create TPs. Pure 1-constant + 1-line
+    gate addition, features.py sha stable (no retrain), per-emit
+    cost is one float compare, negligible.
+
+(c) IF THIS FAILS. (1) If bite is too gentle (singing FPs had CPE
+    just above 1.0, e.g., 1.1-1.3), escalate to CPE>=1.5 — catches
+    speech phoneme shifts too (korean FPs CPE 0.8-1.5) at modest
+    risk to real crossfade TPs whose CPE might sit in [1.5, 2.0].
+    (2) If singing TPs regress (CPE-low real singing hard_cuts
+    exist — possibly slow crossfades with gradual prediction drift
+    keeping CPE<1.0), combine with an HPR-gate: apply CPE>=1.0
+    ONLY when file_hpr<=0.85 (speech population) so singing
+    escapes the new gate. Inverts 55b21e6's dead routing direction.
+    (3) Final escalation: replace the uniform CPE floor with a
+    weighted combination gate `0.4*phase_z + 0.4*t2_z + 1.2*cpe_z
+    >= 3.5` — upweights CPE as the best FP discriminator while
+    still leveraging multi-channel info. Physically grounded:
+    CPE captures prediction failure, the truest single-channel
+    splice signature.
+
+(d) Information gaps. (i) Per-position DSP z-scores (phase, T², CPE,
+    sum, max) on the 2 singing / 4 korean clean FPs surviving
+    29c06cf's SUM>=5.0 are STILL not in CURRENT STATE — threshold
+    calibration is theoretical, not data-driven. A CLEAN_FP_POSITIONS
+    JSON block is the single biggest blocker across 10+ detector-
+    side hypotheses. (ii) The 55b21e6 HPR-gated-SUM reproducing
+    29c06cf exactly raises a CONFIGURATION question: was the
+    `_file_hpr` helper actually invoked (wrapper delivered code),
+    or does the eval corpus simply have no singing files with
+    HPR>0.85 via HPSS-on-mid-30s? A per-file HPR distribution line
+    per keep would disambiguate dead-axis from dead-call. (iii)
+    Real-splice CPE distribution per domain per class is unknown —
+    my "real splices have CPE 1.5-3.0" claim is theoretical.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON auto-emitted
+    by splice/evaluate.py: per-position (domain, file, t_sec,
+    label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    dsp_pairwise_proximity, file_hpr, sum, max) for every clean
+    FP on the last kept classifier. Flip detector-side hypotheses
+    from theory-driven to data-driven in one block. (2)
+    LOST_TP_POSITIONS block: per-position diagnostic for splice
+    TPs that existed at last-keep but are missing at second-to-last
+    keep. Would immediately confirm whether 29c06cf-lost singing
+    TPs are hard_cut with low CPE (testable with this hypothesis)
+    vs crossfade with some other profile. (3)
+    `scripts/dsp_gate_sweep.py --axes "cpe:0.5,1.0,1.5,2.0 |
+    sum:4.5,5.0,5.5 | max:1.5,2.0,2.5"` that replays a prior
+    keep's emit trace through candidate gate combinations and
+    reports per-domain (TPs_lost, FPs_dropped). Turns "pick a
+    threshold" from a guess into a numeric decision.
+
