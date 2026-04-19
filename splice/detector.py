@@ -58,6 +58,14 @@ GBM_MIN_SEP_S = 3.5
 # win a cluster.
 DSP_CONFIRMATION_CHANNELS = ("dsp_phase_z", "dsp_t2_z", "dsp_cpe_z")
 DSP_CONFIRMATION_MIN = 2.0
+# SUM-based companion floor stacked on top of the MAX gate. Real cross-source
+# splices disrupt multiple physical signals simultaneously (mic/room mismatch
+# fires phase AND T² AND CPE), so the cumulative DSP magnitude is high (sum
+# 6-12). Single-channel firings — chord transitions firing only T² with smooth
+# phase / low CPE — sum to ~3-5. Threshold 4.5 demands ~2.5 of cumulative
+# support beyond the MAX floor of 2.0, biting single-channel-firing FPs while
+# preserving multi-channel-confirmed real splices.
+DSP_SUM_MIN = 4.5
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -291,8 +299,8 @@ def _gbm_detect_splices(
         for i in np.flatnonzero(hit_mask):
             if dsp_confirm_idx:
                 row = X[i]
-                dsp_max = max(row[j] for j in dsp_confirm_idx)
-                if dsp_max < DSP_CONFIRMATION_MIN:
+                dsp_vals = [row[j] for j in dsp_confirm_idx]
+                if max(dsp_vals) < DSP_CONFIRMATION_MIN or sum(dsp_vals) < DSP_SUM_MIN:
                     chunk_dsp_dropped += 1
                     continue
             t_local = float(t_grid[i])
