@@ -2893,3 +2893,86 @@ per-domain: combined_english=0.682353 combined_korean=0.394805 combined_singing=
     from an opaque scalar into calibrated per-position diagnostics,
     the single biggest blocker across every detector-side hypothesis.
 
+## 2026-04-20T01:19:08+09:00 — d256901 (discard, combined=0.448578)
+subject: class-specific DSP channel routing stacked on the MAX floor — after the existing max(phase_z,t2_z,cpe_z)>=2.0 filter (273b8f5), drop emits where the predicted class's primary DSP channel is below 2.0: hard_cut (label=1) requires dsp_phase_z>=2.0 (mic/room phase break), crossfade (label=2) requires dsp_t2_z>=2.0 (spectral-distribution shift). Pure detector.py change, no retrain, no feature change. Targets singing 0.388 / korean 0.411 post-273b8f5 plateau where 2 singing + 4 korean clean FPs sit. Mechanism: chord transitions and speech phoneme shifts typically fire T² (smooth spectral-distribution change over chord/phoneme window) but NOT phase_z (no mic/room discontinuity); when GBM predicts hard_cut on such an emit, the current MAX filter keeps it (T²>=2.0 wins the max). Class-specific routing drops hard_cut emits with phase_z<2.0 — exactly the channel-class-mismatch FPs. Real hard-cut TPs have strong phase_z by physical construction (cross-source phase cannot smooth); real crossfade TPs have strong T² (a spectral-distribution shift IS the definition of a crossfade). Explicit untried next-step from 7255ec6(c)(2). Orthogonal to every prior post-filter (persistence/plateau/class-margin/tonality/onset-local-pct/HPR-remote-rolloff/global-half-centroid/mfcc-remote/DSP-MAX-floor all used a single global scalar without class→channel mapping). Risk-bounded because stacked: emit must satisfy BOTH max DSP>=2.0 AND class's primary channel>=2.0, so this can only DROP emits, never create new TPs; drops require the MISMATCH pattern. Per-emit cost: one extra float compare past the MAX gate, negligible. Blast radius: detector.py only, ~10 lines added, feature_names unchanged, classifier sha stable (no retrain). Smoke: detect_splices on 10s noise returns [] without error, DSP_CLASS_CHANNEL={1:'dsp_phase_z',2:'dsp_t2_z'} resolves via bundle.feature_names with graceful no-op if any channel missing.
+per-domain: combined_english=0.623377 combined_korean=0.415625 combined_singing=0.348387
+
+# 2026-04-20 — hypothesis: CLASS-SPECIFIC DSP channel routing (stacked on the MAX floor)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. AFTER the existing MAX-based DSP-confirmation floor (273b8f5,
+    `max(phase_z, t2_z, cpe_z) >= 2.0`), ADD a second gate keyed on the
+    emit's predicted class: if label_id == 1 (hard_cut) require
+    `dsp_phase_z >= 2.0`; if label_id == 2 (crossfade) require
+    `dsp_t2_z >= 2.0`. Drop the emit when its predicted class's primary
+    DSP channel is below 2.0 (even when another channel pushed the MAX
+    over 2.0). Move the `label_id` argmax from AFTER the filter to
+    BEFORE so class-to-channel routing runs per emit. Same threshold
+    value (2.0), different routing — each splice class's physical
+    signature drives its own confirmation requirement:
+      - hard_cut (abrupt discontinuity) → requires `phase_z` (mic/room
+        phase break)
+      - crossfade (spectral-distribution shift) → requires `t2_z`
+        (Hotelling T² on spectral distribution)
+
+(b) WHY this over recent failures. 273b8f5 (current keep, 0.479) kicked
+    2 english FPs (0.667→0.690) but left singing (0.388) and korean
+    (0.411) unmoved. The MAX-based floor passes any emit where at
+    least one of the three DSP channels fires — including emits where
+    the FIRING channel is mismatched to the PREDICTED class. Chord
+    transitions (singing FPs) and speech phoneme shifts (korean FPs)
+    typically fire T² (spectral distribution changes smoothly over
+    phoneme/chord transitions) but NOT phase_z (no mic/room
+    discontinuity). When GBM predicts hard_cut on such an emit, the
+    current filter keeps it (T² >= 2.0 wins the MAX). Under
+    class-specific routing, hard_cut + phase_z < 2.0 gets dropped —
+    exactly the channel-class-mismatch FPs. Real hard-cut TPs have
+    strong phase_z by physical construction (a splice across mic/room
+    cannot smooth phase); real crossfade TPs have strong T² (a
+    spectral distribution shift IS the definition of a crossfade).
+    Explicit untried next-step from 7255ec6(c)(2). Orthogonal to every
+    prior post-filter (persistence / plateau / class-margin / tonality
+    / onset-local-pct / HPR-remote-rolloff / global-half-centroid /
+    mfcc-remote / DSP-MAX-floor all used a single global scalar
+    without the class→channel map). Risk-bounded because stacked on
+    top of the MAX filter: an emit must satisfy BOTH max DSP >= 2.0
+    AND the class's primary channel >= 2.0 to survive — this can only
+    DROP emits, never create new TPs, and a drop requires the mismatch
+    pattern. Per-emit cost: one extra float compare past the MAX gate.
+
+(c) IF THIS FAILS. (1) Add a CPE escape hatch: keep the emit if
+    dsp_cpe_z >= 2.5 regardless of class mismatch — preserves real
+    splices whose phase/T² channel happens to be noisy. (2) RAISE the
+    class-specific threshold from 2.0 to 2.5 on the primary channel
+    to bite more FPs if the first attempt was too gentle. (3) Compose
+    with a SUM-based companion (`|phase_z| + |t2_z| + |cpe_z| >= 4.0`)
+    for multi-channel confirmation on top of class-routed single-
+    channel confirmation.
+
+(d) Information gaps. (i) The 2 singing / 4 korean clean FP positions
+    (file, t_sec, label_id, p_hard, p_cross, p_splice, dsp_phase_z,
+    dsp_t2_z, dsp_cpe_z) still not in CURRENT STATE — I cannot verify
+    whether the FPs are predominantly labelled hard_cut (bitten by the
+    phase_z requirement) or crossfade (bitten by the t2_z-only
+    requirement). (ii) The per-class counts of emits at
+    p_splice ≈ 0.982-0.99 per domain are unknown — I do not know
+    whether GBM predicts mostly hard_cut or crossfade on the borderline
+    singing/korean FPs. (iii) The english FPs bitten by 273b8f5's MAX
+    floor — were they hard_cut or crossfade labelled? If mostly
+    hard_cut, phase_z was already pivotal on english (my new gate is a
+    no-op there); if mostly crossfade, T² was doing the work.
+
+(e) Wrapper enhancements. (1) `CLEAN_FP_POSITIONS` JSON block in CURRENT
+    STATE with per-position (domain, file, t_sec, label_id, p_hard,
+    p_cross, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z) from the last
+    kept classifier's eval — the single biggest blocker across every
+    detector-side hypothesis (I keep guessing which channel will bite).
+    (2) A `DSP_DROP_CLASSIFICATION` diagnostic emitted per file: emits
+    dropped by each gate component (MAX floor, class-specific
+    phase_z, class-specific t2_z), so a keep/discard post-mortem can
+    distinguish "filter under-fired" from "filter over-fired". (3)
+    `scripts/dsp_signal_probe.py --by-class {hard_cut,crossfade}
+    --channel {phase_z,t2_z,cpe_z} --threshold X` that simulates
+    per-class channel-specific drops on a prior classifier's emit
+    trace, so I can preview bite rate BEFORE committing.
+
