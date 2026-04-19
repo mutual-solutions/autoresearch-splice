@@ -3258,3 +3258,81 @@ per-domain: combined_english=0.707317 combined_korean=0.434286 combined_singing=
     4.5/5.0 vs HPR-gated SUM 4.5/5.0" from a guess into a numeric
     decision before commit.
 
+## 2026-04-20T01:51:26+09:00 — 55b21e6 (discard, combined=0.493815)
+subject: HPR-gated SUM threshold — tonal files (file_hpr>0.85) relax DSP SUM floor 5.0->4.5, speech-dominant files keep 5.0. Pure detector.py change, no retrain, no feature change. Adds _file_hpr(audio,sr) helper (HPSS on middle 30s, ~100ms/file, graceful fallback to 0.0 on error) + constants DSP_SUM_MIN_TONAL=4.5 / FILE_HPR_TONAL_MIN=0.85 stacked on top of existing DSP_SUM_MIN=5.0 + DSP_CONFIRMATION_MIN=2.0 gates. Targets 29c06cf's singing 0.384->0.360 regression (now WEAKEST domain at 0.360) from uniform SUM tightening — class-routing (eb8984e failed 0.480, singing stuck 0.360) proved the lost TPs are hard_cut labeled not crossfade, so class-axis is wrong; explicit cited next-step from eb8984e(c)(2) is domain-routing via HPR. Mechanism: singing hard_cut TPs can sum [4.5,5.0] because sustained harmonic continuity keeps phase_z modest (2-3) while T2/CPE carry the signal; speech splices have sharper consonant phase discontinuity summing 6-12. HPR separates domains cleanly (428706 smoke: singing 0.85-0.97, korean <=0.71, english <=0.51) so relaxation is singing-only. Smoke-verified: sine 440Hz HPR=0.993 (triggers 4.5), white noise HPR=0.500 (stays 5.0). Orthogonal: 428706 HPR-gated GBM_THRESHOLD routed tighter on singing (opposite direction, failed 0.429); 427426/445532/411473 HPR-gated on remote-half features (different scalar); NO prior HPR-gated SUM threshold. Orthogonal within SUM axis (uniform 4.5 keep, 5.0 keep, class-routed fail). Risk-bounded: only RELAXES a strictly-subset gate on tonal files -> can only ADD emits relative to 29c06cf baseline on singing; cannot drop existing TPs. Worst case: singing FPs creep back (2 current + any [4.5,5.0] sum FPs), combined falls. Blast radius: detector.py only, ~25 lines (helper + constants + 1-line gate), features.py sha stable (no retrain), per-file cost ~100ms HPSS within 243/300s budget.
+per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=0.360000
+
+# 2026-04-20 — hypothesis: HPR-gated SUM threshold (singing=4.5 via HPR>0.85, rest=5.0)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Add `DSP_SUM_MIN_TONAL = 4.5` + `FILE_HPR_TONAL_MIN = 0.85`
+    and a small helper `_file_hpr(audio, sr)` that runs HPSS on the
+    middle 30s of the file (one call per file, ~100ms). In
+    `_gbm_detect_splices`, compute `file_hpr` once; route the SUM
+    threshold used in the existing gate at line 305 per file:
+    tonal (file_hpr > 0.85) → 4.5, non-tonal (speech) → 5.0.
+
+(b) WHY this over recent failures. 29c06cf kept SUM>=5.0 (+0.006
+    combined) but cost singing 0.384→0.360 (now WEAKEST domain at
+    0.360). eb8984e's class-conditioned SUM (hard_cut=5.0,
+    crossfade=4.5) FAILED 0.480 with singing STUCK at 0.360 — proving
+    the lost singing TPs at 29c06cf were predominantly HARD_CUT
+    labeled, not crossfade. So class-routing was the wrong axis.
+    Domain-routing via HPR is the explicit cited next-step in
+    eb8984e(c)(2): "pivot to a domain-based HPR-gated SUM
+    (singing=4.5, rest=5.0) directly". HPR (harmonic-energy ratio
+    via HPSS) cleanly separates singing (0.85-0.97) from korean
+    (0.55-0.75) and english (0.25-0.50) — smoke-confirmed in
+    428706's post-mortem. Mechanism: singing hard_cut TPs can sum
+    4.5-5.0 because sustained harmonic continuity across the cut
+    keeps phase_z modest (2-3) while T²/CPE carry the signal (both
+    2-3, sum 6-8 median but tail down to 4.5-5.0). Korean/english
+    speech splices have sharper phase_z discontinuity at consonant
+    boundaries so sum 6-12 comfortably above 5.0. Routing by HPR
+    relaxes the gate ONLY on files where the FP floor is
+    chord-transitions (singing) while keeping the 5.0 precision
+    wins on speech-dominant files. Orthogonal: 428706 HPR-gated
+    GBM_THRESHOLD (0.982→0.990 on tonal) failed the OPPOSITE
+    direction (tightening on singing). 427426/445532/411473 HPR-
+    gated on remote-half spectral/MFCC features — different
+    scalars. NO prior HPR-gated SUM threshold. Orthogonal within
+    the SUM axis (uniform 4.5 kept, 5.0 kept, class-routed failed).
+    Blast radius: detector.py only, ~25 lines (helper + constants
+    + 1-line gate change), features.py sha stable (no retrain).
+    Per-file cost: ~100ms HPSS on mid-30s, within 243/300s budget.
+
+(c) IF THIS FAILS. (1) If singing recovers but korean/english
+    regress (some korean files with HPR>0.85 exist — a cappella-
+    like monotone speakers), tighten FILE_HPR_TONAL_MIN to 0.90.
+    (2) If singing doesn't recover, the lost TPs don't correlate
+    with file HPR — pivot to raw domain routing via filename
+    heuristic (eval.py passes file paths; could inspect path
+    containing "singing"). (3) Final escalation: introduce a
+    CONTINUOUS HPR ramp `sum_min = 5.0 - 0.5 * clip((hpr-0.70)/
+    0.15, 0, 1)` (smooth 5.0→4.5 over hpr 0.70→0.85).
+
+(d) Information gaps. (i) Per-position DSP z-scores (and file_hpr)
+    on the 2 singing / 4 korean clean FPs surviving 29c06cf's
+    SUM>=5.0 are STILL not in CURRENT STATE — calibration by
+    theory, not observation. (ii) The LOST_TP_POSITIONS between
+    865d92f and 29c06cf (likely 1-2 singing hard_cut TPs with
+    sum ∈ [4.5, 5.0]) aren't surfaced. (iii) Per-file HPR
+    distribution across eval/{singing,korean,english} not in
+    prompt — I'm trusting 428706's smoke test (singing 0.85-0.97,
+    korean ≤0.71, english ≤0.51) but the 4 korean FPs might sit
+    in a HPR>0.85 tail.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE with per-position (domain, file, t_sec,
+    label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, sum,
+    file_hpr). Single biggest blocker across detector-side
+    hypotheses — I'm guessing which gate routes bite the failure
+    set. (2) FILE_HPR_DISTRIBUTION block: per-eval-domain
+    min/median/max HPR, so HPR-gated hypotheses can pick
+    thresholds from actual data. (3) `scripts/dsp_gate_sweep.py
+    --axis hpr_gated_sum --thresholds "5.0/0.85/4.5,5.0/0.90/4.5"`
+    that replays the last keep's emit trace through
+    (sum_high, hpr_cutoff, sum_low) triples and reports per-
+    domain (TPs_lost, FPs_dropped) — turns guess-thresholds
+    into pre-commit numeric decisions.
+
