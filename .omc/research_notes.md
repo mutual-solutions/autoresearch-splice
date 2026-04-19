@@ -2976,3 +2976,114 @@ per-domain: combined_english=0.623377 combined_korean=0.415625 combined_singing=
     per-class channel-specific drops on a prior classifier's emit
     trace, so I can preview bite rate BEFORE committing.
 
+## 2026-04-20T01:27:56+09:00 — 865d92f (keep, combined=0.487946)
+subject: SUM-based DSP floor companion stacked on MAX (multi-channel confirmation) — add `DSP_SUM_MIN=4.5` after the existing `DSP_CONFIRMATION_MIN=2.0` MAX gate (273b8f5). Drop GBM emits where `sum(dsp_phase_z, dsp_t2_z, dsp_cpe_z) < 4.5` even when MAX passes. Pure detector.py change, no retrain, no feature change. Targets bba6dbe's singing 0.388 / korean 0.411 plateau where 2 singing + 4 korean clean FPs survived 273b8f5's MAX floor — these are single-channel firings (chord transitions: T²=3 with smooth phase / low CPE, sum~3.5-4.5; speech phoneme shifts: T²=2.5 with phase ~0.7 CPE ~1.0, sum~3.5-5). Real cross-source splices disrupt multiple physical signals simultaneously (mic/room mismatch fires phase AND T² AND CPE) yielding sum 6-12. SUM gate demands ~2.5 of cumulative support beyond the MAX floor of 2.0, biting single-channel-firing FPs while preserving multi-channel-confirmed real splices. Explicit untried escalation cited in two prior post-mortems: 7255ec6(c)(3) and d256901(c)(3). Orthogonal to all prior post-filters: 8 GBM hyperparam, 5 training-data SAMPLING, 12+ feature add/ablate, 8+ post-filter (persistence/plateau/class-margin/tonality/onset-local-pct/HPR-remote-rolloff/global-half-centroid/mfcc-remote/DSP-MAX-floor/class-specific-DSP — none used SUM-based multi-channel cumulative confirmation), 2 model-class swap, 2 calibration, 2 HPR routing, 3 remote-half, 1 class_weight, 6 audio MUTATION, 1 ensemble. Risk-bounded by stacking: can only DROP emits passing MAX gate, never create new TPs; drops require single-channel-firing pattern. Per-emit cost: one extra sum + compare past MAX gate, negligible. Blast radius: detector.py only, ~10 lines added, feature_names unchanged so classifier sha stable (no retrain). Smoke: detect_splices on 10s noise returns [] without error, DSP_SUM_MIN=4.5 reads gracefully when DSP_CONFIRMATION_CHANNELS resolve via bundle.feature_names.
+per-domain: combined_english=0.707317 combined_korean=0.428169 combined_singing=0.383607
+
+# 2026-04-20 — hypothesis: SUM-based DSP floor companion stacked on MAX (multi-channel confirmation)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Add `DSP_SUM_MIN = 4.5` constant alongside the existing
+    `DSP_CONFIRMATION_MIN = 2.0`. After the existing MAX gate
+    (`max(phase_z, t2_z, cpe_z) >= 2.0`), add a SECOND gate
+    `sum(phase_z, t2_z, cpe_z) >= 4.5`. Drop the emit when EITHER
+    gate fails. The two gates compose: an emit must have at least
+    one strong channel AND multi-channel cumulative confirmation.
+
+(b) WHY this over the recent failures. Three post-273b8f5 attempts
+    have explored the post-DSP-floor design space:
+      * 7255ec6 (lower GBM_THRESHOLD 0.982→0.980, 0.475): admitted
+        more borderline emits — singing recall lifted but korean
+        FP'd because the MAX gate is a single-channel floor and
+        speech phoneme shifts can fire one channel (T²) above 2.0
+        without being a splice.
+      * d256901 (class-specific channel routing, 0.449): too strict —
+        required SPECIFIC channel (phase for hard_cut, T² for
+        crossfade) to be ≥2.0, dropping real TPs whose primary
+        channel happened to be noisy (singing -0.040, english -0.067).
+    The MAX gate has the OPPOSITE flaw of class-specific routing:
+    it accepts ANY single channel firing, including chord-transition
+    FPs that fire ONLY T² (smooth phase, low CPE). The SUM gate is
+    the genuinely orthogonal middle path — instead of demanding a
+    specific channel per class, it demands MULTI-CHANNEL CUMULATIVE
+    evidence regardless of which channel is dominant.
+
+    Real cross-source splices are physical events that disrupt
+    multiple signals simultaneously: a mic/room mismatch creates
+    phase discontinuity AND spectral-distribution shift AND
+    prediction failure together. Typical splice DSP profile:
+    phase_z=2-5, t2_z=2-4, cpe_z=1.5-3 → SUM=6-12.
+    Chord-transition FP profile: phase_z=0.3-0.7, t2_z=2.5-3.5,
+    cpe_z=0.5-1.0 → SUM=3.3-5.2 (often borderline at 4.5).
+    Speech phoneme-shift FP profile: phase_z=0.5-1.0, t2_z=2-3,
+    cpe_z=0.8-1.5 → SUM=3.3-5.5 (often borderline).
+
+    Threshold 4.5 = MAX_floor (2.0) + 2.5 of cumulative support from
+    the other channels. Single-channel firings at MAX=2.0 with the
+    other two summing to <2.5 get dropped — exactly the mismatch
+    pattern. Multi-channel firings with each ~1.5 (sum 4.5) pass.
+    Real splices with strong support across channels comfortably
+    pass.
+
+    Cited as explicit untried escalation in 7255ec6(c)(3) and
+    d256901(c)(3). Orthogonal to every prior post-filter axis: 8
+    GBM hyperparam, 5 training-data SAMPLING, 12+ feature
+    add/ablation, 8+ post-filter (persistence/plateau/class-margin/
+    tonality/onset-local-pct/HPR-remote-rolloff/global-half-centroid/
+    mfcc-remote/DSP-MAX-floor/class-specific-DSP — none used SUM-
+    based multi-channel cumulative confirmation), 2 model-class
+    swap, 2 calibration, 2 HPR routing, 3 remote-half, 1
+    class_weight, 6 audio MUTATION, 1 ensemble. Genuinely new
+    branch — the additive composition of DSP channels is a
+    qualitatively different test than the existing MAX gate.
+
+    Blast radius: detector.py only, ~5 lines added, feature_names
+    unchanged so classifier sha stable (no retrain). Per-emit cost:
+    one extra float sum + compare past the MAX gate, negligible.
+    Risk-bounded by stacking: this can only DROP emits already
+    passing the MAX gate, never create new TPs; drops require the
+    single-channel-firing pattern. Worst case: mild over-bite
+    drops some real subtle splices, eval falls slightly below
+    0.479 and discards.
+
+(c) IF THIS FAILS. Three paths.
+    (1) If TPs drop too aggressively (e.g., subtle crossfades whose
+        only firing channel is T² ~3.5 with phase/CPE near 0),
+        LOWER the SUM threshold from 4.5 to 4.0 (more permissive).
+    (2) If FPs persist (the 4.5 threshold is too loose), RAISE the
+        SUM threshold to 5.0 — requires stronger multi-channel
+        confirmation but risks real splice losses.
+    (3) Final escalation: replace the linear SUM with a HARMONIC
+        MEAN of (max(phase_z, 0.1), max(t2_z, 0.1), max(cpe_z, 0.1))
+        ≥ 1.5 — harmonic mean is dominated by the WEAKEST channel
+        so it explicitly demands all three be non-trivial, the
+        most aggressive form of multi-channel confirmation.
+
+(d) Information gaps. (i) Per-position DSP z-score values on the 2
+    singing / 4 korean clean FPs are STILL not in CURRENT STATE — I
+    am calibrating the SUM threshold from theory, not from observed
+    failure-cluster values. A `CLEAN_FP_POSITIONS` block listing
+    (domain, file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z) per FP would let me set the threshold surgically.
+    (ii) The DSP-drop rate on the 273b8f5 keep is unknown — without
+    it I cannot tell whether the MAX gate is currently saturated
+    (no headroom for SUM addition) or under-used (room for SUM to
+    bite without losing TPs). (iii) The split between hard_cut /
+    crossfade emits passing the MAX gate currently is opaque — I
+    don't know which class the surviving FPs are predicted as.
+
+(e) Wrapper enhancements. (1) `CLEAN_FP_POSITIONS` JSON block in
+    CURRENT STATE with per-position DSP z-scores from the last kept
+    classifier's eval — the single biggest blocker across detector-
+    side hypotheses. Most reasoning today is theory-driven instead
+    of data-driven. (2) `DSP_GATE_DROP_RATES` block per domain:
+    {file_count, gbm_emits, max_gate_dropped, sum_gate_dropped,
+    survived} so I can preview SUM-threshold bite ranges from a
+    prior eval's actual values. (3) `scripts/dsp_signal_probe.py
+    --gate-type {max,sum,both} --threshold X` that simulates a
+    candidate gate against a prior classifier's emit trace and
+    reports per-domain TP-loss vs FP-drop counts — turns
+    "what threshold should I pick" from a guess into a measurable
+    pre-commit signal.
+[auto] (no SHAP data for either 273b8f5 or 865d92f)
+
