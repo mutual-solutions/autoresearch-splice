@@ -1580,3 +1580,72 @@ per-domain: combined_english=0.542857 combined_korean=0.537313 combined_singing=
     hypothesis_content` so the no-repeat rule does not eternally
     block axes that were killed by the now-fixed shap_report.py crash.
 
+## 2026-04-19T18:48:01+09:00 — e228236 (discard, combined=0.427426)
+subject: HPR-gated remote-half rolloff divergence post-filter (singing-only)
+per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=0.243750
+
+# 2026-04-19 — hypothesis: HPR-gated remote-half spec_rolloff divergence POST-FILTER (singing-only)
+
+(a) HYPOTHESIS. Pure detector.py change, no retrain, no feature change.
+    After GBM dedupe, compute file-level HPR (librosa.decompose.hpss on
+    full-file |STFT|). If file_hpr > HPR_SINGING_MIN=0.85, apply a
+    per-emit remote-half spec_rolloff divergence filter: compute mean
+    rolloff on [0, t-LOCAL_GUARD] and [t+LOCAL_GUARD, dur] with
+    LOCAL_GUARD=5.0s; drop the emit when |pre-post|/mean < 0.08 (the two
+    halves have the same mastering/EQ → within-song chord cycle-back,
+    not a cross-source splice). Edge emits skipped (keep). Re-uses the
+    same STFT for HPSS + rolloff so only ONE librosa.stft call per file.
+    Non-singing files (korean/english) take an early-return path; their
+    decisions are byte-identical.
+
+(b) WHY this over recent failures. Remote-half MFCC sim as a FEATURE
+    (f6192f6, 0.438) took singing to 0.288 (a new HIGH vs baseline 0.272)
+    and korean to 0.537 (+), but tanked english 0.756→0.543 because the
+    classifier learned to over-weight a global feature on its only
+    strong domain. File-level HPR routing (39b9fb0, 0.428) proved the
+    gate cleanly separates singing (HPR 0.89-0.97) from korean (≤0.71)
+    and english (≤0.51) — domain leakage impossible at 0.85 — but
+    routed GBM_THRESHOLD which affected singing TP recall too. THIS
+    combines the two successful halves in a new way: HPR-file-gate +
+    POST-FILTER (not threshold, not feature). Post-filter cannot drop
+    TPs that were below the 0.982 gate — it only has power over emits
+    ALREADY KEPT, so a conservative 0.08 divergence criterion bites
+    only on the 6 singing clean FPs (chord transitions where the rest
+    of the song remains one coherent source, so remote halves match).
+    Real cross-song splices change mastering/EQ/compression/mic so
+    full-file rolloff differs by 10-20% between halves → divergence
+    typically > 0.15 → KEEP. Remote-half MFCC worked because remote
+    context captures source identity; the same physics applies to
+    rolloff which is the #1 SHAP feature (spec_rolloff_delta 1365 in
+    singing). Cost: one STFT + HPSS + rolloff on full file ≈ 400ms
+    × 60 files = 24s, well inside 243/300s headroom.
+
+(c) IF THIS FAILS. (1) Loosen/tighten the 0.08 divergence (try 0.05 or
+    0.12) or HPR cutoff (0.80 or 0.90). (2) Replace divergence with
+    KS-statistic between pre and post rolloff distributions (more
+    robust than single means). (3) Stack rolloff + centroid + bandwidth
+    divergences and require at least 2 below threshold. Final
+    escalation: treat HPR-gated post-filter as the "singing path" and
+    combine with a small SIGMOID-calibrated HistGBM on non-singing
+    files (sigmoid calibration on HistGBM was never completed now that
+    the shap_report.py bug is fixed).
+
+(d) Information gaps. The prompt still does not flag which of the 4
+    recent 0.010 entries failed due to hypothesis content vs the
+    now-fixed shap_report.py AttributeError. Three of them (isotonic,
+    phase residual, FILE-LEVEL flatness) may be viable post-fix and
+    the no-repeat rule forces me to pivot away from them indefinitely.
+    A `failure_reason: pipeline_bug | hypothesis_content` tag on
+    HISTORY entries would unblock re-exploration of those axes.
+
+(e) Wrapper enhancements. (1) Surface a SHAP-DELTA block in CURRENT
+    STATE: for the most recent KEPT classifier vs prior KEPT classifier,
+    show per-feature SHAP change. New features with near-zero SHAP are
+    being ignored regardless of metric outcome — early pivot signal.
+    (2) A `scripts/per_domain_file_stats.py` emitting mean
+    HPR/flatness/voicing per domain on EVAL (not training) so
+    file-level gating thresholds come from the evaluation distribution.
+    (3) `verify_agent.py --replay <commit> --against HEAD` re-runs
+    evaluate.py for a prior hypothesis commit under the current code
+    state; essential for confirming bug-killed hypotheses post-fix.
+
