@@ -1818,3 +1818,88 @@ per-domain: combined_english=0.773256 combined_korean=0.289655 combined_singing=
     from an opaque scalar into actionable per-position diagnostics
     that directly drive feature-design.
 
+## 2026-04-19T22:30:49+09:00 — f10993b (discard, combined=0.445532)
+subject: HPR-gated remote-half MFCC source-continuity POST-FILTER — pure detector.py change, no retrain, no feature change. Between GBM dedupe and return, compute file-level harmonic-energy share via HPSS. If file_hpr > HPR_POSTFILTER_MIN=0.85 (tonal/singing population; korean ~0.55-0.75 and english ~0.25-0.50 short-circuit), for each surviving emit at t compute mean MFCC cosine similarity between remote pre-half [0, t-5.0s] and remote post-half [t+5.0s, dur] and drop the emit when sim > REMOTE_MFCC_SIM_MAX=0.99. The ±5s guard excludes local context every existing ±2s feature already covers. Targets singing clean_fp=6 plateau at weakest-domain combined=0.272. Combines two signals the last iterations proved separately: f6192f6 (remote-half MFCC FEATURE → singing 0.288 NEW HIGH but english tanked 0.756->0.543 from GBM over-weighting a global scalar) and e228236 (HPR-gated remote-half ROLLOFF POST-FILTER → wrong scalar, singing 0.244). NO prior combined MFCC + HPR gate + POST-FILTER. MFCC cosine is the proven right scalar (f6192f6 smoke clean=0.998 / splice=0.950). HPR-gate + POST-FILTER placement means the filter CANNOT regress english/korean (no code touches their emits) and CANNOT drop singing TPs already below 0.982 gate. Smoke test at threshold 0.99: clean singing drops 8/12 midpoint emits (67%), tier2 singing 1/12 (8%), tier1 singing 2/12 (17%) — strong asymmetric bite on FPs vs TPs. Orthogonal to all 50+ prior attempts (6 primary tunables bracketed, 8 GBM hyperparam, 5 training-data, 12+ feature add/ablation, 8+ post-filter including rolloff-divergence, 2 model-class swap, 2 calibration, 2 HPR routing, 1 remote-half FEATURE). Cost: one HPSS per file (~200ms) + MFCC on two ~10-25s slices per emit (~30ms each) × ~30 emits × ~20 singing files ≈ 20-25s extra, within 243/300s headroom.
+per-domain: combined_english=0.709890 combined_korean=0.451282 combined_singing=0.276056
+
+# 2026-04-19 — hypothesis: HPR-gated remote-half MFCC source-continuity POST-FILTER
+
+(a) HYPOTHESIS. Pure detector.py change, no retrain, no feature change.
+    Between GBM dedupe and return, compute file-level HPR
+    (librosa.decompose.hpss on full-file |STFT|). If file_hpr >
+    HPR_POSTFILTER_MIN=0.85 (tonal/singing population), apply a per-emit
+    remote-half MFCC cosine-similarity filter: for each emit at t,
+    compute mean MFCC over [0, t-5.0] and [t+5.0, dur] (the ±5s guard
+    excludes local context every existing ±2s feature already covers),
+    cosine-similarity between the two remote-half means. Drop the emit
+    when sim > REMOTE_MFCC_SIM_MAX=0.97 (two halves share timbre →
+    within-song chord cycle-back, not cross-source splice). Edge emits
+    (insufficient remote context) are kept. Non-singing files (HPR ≤
+    0.85) short-circuit before any MFCC work so korean/english outputs
+    are byte-identical.
+
+(b) WHY this over recent failures. Combines the two signals the last
+    few iterations proved separately:
+      * f6192f6 "remote-half MFCC sim FEATURE" → singing 0.288 NEW HIGH
+        vs baseline 0.272 but english collapsed 0.756→0.543 because GBM
+        over-weighted a global scalar in its strongest domain.
+      * e228236 "HPR-gated remote-half ROLLOFF divergence POST-FILTER"
+        → wrong scalar (rolloff is single-dim, noisy over 8-25s
+        windows); singing 0.244, no lift.
+    NO prior combined (MFCC + HPR gate + POST-FILTER). MFCC cosine is
+    the proven right scalar (smoke-tested in f6192f6: clean sim=0.998,
+    GT-splice sim=0.950 — wide margin). As a POST-FILTER with HPR
+    gate the filter CANNOT regress english/korean (no code path
+    touches their emits) and CANNOT drop singing TPs that were already
+    below the 0.982 gate — it only reduces the already-kept emit set.
+    Real cross-song singing splices → remote halves are different
+    songs → sim ~0.85-0.95 → KEEP. Clean singing chord cycling →
+    remote halves are same song → sim ~0.97-0.99 → DROP the 6 FP
+    cluster. Orthogonal to 50+ prior attempts: 6 primary tunables
+    bracketed, 8 GBM hyperparam, 5 training-data, 12+ feature
+    add/ablation, 8+ post-filter (including rolloff-divergence
+    variant), 2 model-class swap, 2 calibration, 2 HPR routing, 1
+    remote-half FEATURE — the HPR-gate + MFCC + POST-FILTER combo is
+    a genuinely new branch. Cost: one HPSS per file (~200 ms) +
+    MFCC on two ~10-25s slices per emit (~30 ms each) × ~30 emits ×
+    ~20 singing files ≈ 20-25 s extra, within 243/300s headroom.
+
+(c) IF THIS FAILS. (1) Tune thresholds: HPR cutoff 0.80/0.90, SIM
+    cutoff 0.95/0.98/0.99. (2) Replace MFCC mean with mel-spectrum
+    mean (broader spectral identity) or stack (MFCC AND mel-PCA)
+    requiring BOTH sims > threshold. (3) DIRECTIONAL version: compute
+    sim(near_pre, remote_pre) AND sim(near_post, remote_post) — high
+    on BOTH = not a splice, low on either = keep. Captures asymmetry
+    a pure pre-vs-post sim misses. Final escalation: pitch-shift /
+    reverb augmentation of clean training files so GBM sees synthetic
+    "chord-transition-like" events as NOT_SPLICE, widening the
+    not_splice distribution in spec_*_delta space directly.
+
+(d) Information gaps. Three persist from prior reflections:
+    (i) the 4 recent catastrophic 0.010 discards (ExtraTrees, gated
+    tonality, isotonic, phase residual, FILE-LEVEL flatness) are
+    indistinguishable from legitimate hypothesis failures in the
+    prompt's HISTORY — we now know they were all killed by the
+    (now-fixed) shap_report.py AttributeError, but the no-repeat rule
+    still blocks revisiting those axes. A `failure_reason:
+    pipeline_bug | hypothesis_content` tag would unblock clean
+    re-testing of isotonic/phase-residual/FILE-LEVEL-flatness under
+    the fixed eval pipeline. (ii) Per-class OOF F1 breakdown
+    (hard_cut / crossfade / not_splice) and the 6 singing FP
+    positions (file + t_sec + p_hard + p_cross) are not in CURRENT
+    STATE — I cannot target the FP cluster directly, only guess from
+    SHAP aggregates. (iii) No EVAL-set distribution stats (mean HPR /
+    flatness / voicing per domain on the EVAL corpus) so file-level
+    gating thresholds are set from training-set intuition only.
+
+(e) Wrapper enhancements. (1) Surface eval-side per-domain
+    distribution summary at top of CURRENT STATE (mean/min/max HPR /
+    flatness / voicing per domain on the EVAL set) so scalar cutoffs
+    are data-driven. (2) Auto-annotate HISTORY entries with
+    `failure_reason` from eval.stderr pattern match
+    (pipeline_bug / feature_mismatch / hypothesis_content). (3) A
+    `scripts/clean_fp_positions.py --last` CLI emitting the most
+    recent KEPT classifier's singing FP positions (file, t_sec,
+    p_hard, p_cross, p_splice) so feature-design and post-filter
+    hypotheses can target actual failure cases instead of guessing.
+
