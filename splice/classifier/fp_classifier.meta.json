@@ -74,7 +74,8 @@
     "mel_pca_17",
     "mel_pca_18",
     "mel_pca_19",
-    "mel_pca_20"
+    "mel_pca_20",
+    "voiced_mfcc_cosine_dist"
   ],
   "label_names": [
     "not_splice",
@@ -99,6 +100,6 @@
       "2": 300
     }
   },
-  "features_py_sha": "d47fa048f1cf489b738e86583929c72d2213a240",
-  "training_timestamp": "2026-04-19T14:44:21Z"
+  "features_py_sha": "1e09d9c0ece121d82cd54eb23f89d08077e089d0",
+  "training_timestamp": "2026-04-19T17:41:26Z"
 }

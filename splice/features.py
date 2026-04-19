@@ -11,7 +11,7 @@ Entry point:
 Also exports FEATURE_NAMES: list[str] in the exact order the dict is populated,
 for SHAP labeling.
 
-Feature blocks (75 dims):
+Feature blocks (76 dims):
     Block 1: DSP local @ t           (4)
     Block 2: MFCC-13 deltas          (13)
     Block 3: Spectral summary deltas  (6)
@@ -22,8 +22,9 @@ Feature blocks (75 dims):
     Block 8: ENF                      (5)
     Block 9: Codec artifact           (4)
     Block 10: Mel-PCA tail            (20)
+    Block 11: Voiced-MFCC cosine dist (1)
 
-Total: 4+13+6+6+8+6+3+5+4+20 = 75
+Total: 4+13+6+6+8+6+3+5+4+20+1 = 76
 
 Performance model:
     _ensure_feat_cache() runs ONCE per chunk, precomputing all expensive
@@ -137,9 +138,10 @@ FEATURE_NAMES: list[str] = (
     + ["codec_frame_align_offset", "codec_quant_residual_pre",
        "codec_quant_residual_post", "codec_double_compression_score"]
     + [f"mel_pca_{i:02d}" for i in range(1, 21)]
+    + ["voiced_mfcc_cosine_dist"]
 )
 
-assert len(FEATURE_NAMES) == 75, f"Expected 75, got {len(FEATURE_NAMES)}"
+assert len(FEATURE_NAMES) == 76, f"Expected 76, got {len(FEATURE_NAMES)}"
 
 # Shared hop/fft constants
 _HOP = 512
@@ -806,6 +808,47 @@ def _block_mel_pca(ctx: dict) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Block 11: Voiced-frame-only MFCC cosine distance
+# ---------------------------------------------------------------------------
+
+def _block_voiced_mfcc(ctx: dict, t_sec: float) -> dict[str, float]:
+    # Vocal-tract / instrument timbre signature restricted to voiced frames.
+    # Same singer across a chord boundary keeps voiced MFCC similar; a
+    # cross-source splice shifts it. Sentinel 0.0 when either window has
+    # no voiced frames so GBM sees a clean no-signal floor.
+    mfcc = ctx["feat_mfcc"]
+    vp = ctx["feat_vp"]
+    hop = ctx["feat_frame_hop"]
+    sr = ctx["feat_sr"]
+
+    def _voiced_mean(t_lo: float, t_hi: float):
+        m = _slice_frames(mfcc, hop, sr, t_lo, t_hi)        # (13, n_m)
+        v = _slice_frames(vp, hop, sr, t_lo, t_hi)          # (n_v,)
+        n = min(m.shape[1], v.shape[0])
+        if n <= 0:
+            return None
+        m = m[:, :n]
+        mask = v[:n].astype(bool)
+        if not mask.any():
+            return None
+        return np.mean(m[:, mask], axis=1)
+
+    pre_v = _voiced_mean(t_sec - 2.0, t_sec)
+    post_v = _voiced_mean(t_sec, t_sec + 2.0)
+    if pre_v is None or post_v is None:
+        return {"voiced_mfcc_cosine_dist": 0.0}
+
+    norm_pre = float(np.linalg.norm(pre_v))
+    norm_post = float(np.linalg.norm(post_v))
+    if norm_pre < 1e-10 or norm_post < 1e-10:
+        return {"voiced_mfcc_cosine_dist": 0.0}
+
+    cos_sim = float(np.dot(pre_v, post_v) / (norm_pre * norm_post))
+    cos_sim = max(-1.0, min(1.0, cos_sim))
+    return {"voiced_mfcc_cosine_dist": float(1.0 - cos_sim)}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -852,6 +895,7 @@ def extract_features(
     feats.update(_block_enf(chunk_ctx, t_sec))
     feats.update(_block_codec(chunk_ctx, t_sec))
     feats.update(_block_mel_pca(chunk_ctx))
+    feats.update(_block_voiced_mfcc(chunk_ctx, t_sec))
 
     assert len(feats) == len(FEATURE_NAMES), (
         f"Feature count mismatch: {len(feats)} != {len(FEATURE_NAMES)}"
@@ -892,9 +936,9 @@ if __name__ == "__main__":
     feats1 = extract_features(chunk, sr, t, chunk_ctx=ctx)
 
     # 1. Length check
-    assert len(feats1) == 75, f"FAIL: got {len(feats1)} features"
-    assert len(FEATURE_NAMES) == 75, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
-    print("PASS: len(dict) == len(FEATURE_NAMES) == 75")
+    assert len(feats1) == 76, f"FAIL: got {len(feats1)} features"
+    assert len(FEATURE_NAMES) == 76, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
+    print("PASS: len(dict) == len(FEATURE_NAMES) == 76")
 
     # 2. Bit-identical
     feats2 = extract_features(chunk, sr, t, chunk_ctx=ctx)
