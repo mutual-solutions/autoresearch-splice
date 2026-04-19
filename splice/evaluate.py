@@ -20,15 +20,13 @@ import numpy as np
 import soundfile as sf
 
 # Import the detector (the mutable file)
-from detector import detect_splices
+from splice.detector import detect_splices
 
 # US-515 phase 1: unified structured logger companion emits.
 # Dual-emit only: no print() is deleted; the RESULTS_TSV: contract line
 # (search "RESULTS_TSV:" below) is NOT migrated. Covered by the one-time
 # maintainer exemption recorded in CLAUDE.md (US-515).
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                ".omc", "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 _ev_log = get_logger("eval")
 
 TOLERANCE_S = 1.0  # ±1s matching tolerance — "이 근처에 편집 있음"
@@ -563,7 +561,7 @@ if __name__ == "__main__":
         if args.codec:
             evaluate_codec(args.data_dir)
         if args.shap:
-            from ml_eval import export_shap_reports
+            from splice.ml_eval import export_shap_reports
             export_shap_reports(result, args.data_dir)
         _ev_log.emit("INFO", "eval.single.combined",
                      data_dir=str(args.data_dir), combined=result["combined"])
@@ -571,9 +569,9 @@ if __name__ == "__main__":
         # Default: iterate dataset_registry.DATASETS and report the
         # geometric-mean `combined` across all eval_weight>0 entries. This
         # is the metric autoresearch optimizes.
-        from dataset_registry import DATASETS, aggregate_combined
+        from splice.dataset_registry import DATASETS, aggregate_combined
         if args.shap:
-            from ml_eval import export_shap_reports
+            from splice.ml_eval import export_shap_reports
 
         split_label = "test" if args.test else "eval"
 

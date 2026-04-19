@@ -44,24 +44,24 @@ Allowed techniques (non-exhaustive):
 
 ## Files
 
-- **`evaluate.py`** — evaluation oracle (protected). Runs `detector.py` on test data,
+- **`splice/evaluate.py`** — evaluation oracle (protected). Runs `splice/detector.py` on test data,
   computes F1 vs ground truth, prints metrics. **Do NOT modify** (only the human edits this).
-- **`detector.py`** — splice detector. Runs a multi-class GBM over features from
-  `features.py` at every `ANALYSIS_STRIDE_S` candidate. Edit `GBM_THRESHOLD`,
+- **`splice/detector.py`** — splice detector. Runs a multi-class GBM over features from
+  `splice/features.py` at every `ANALYSIS_STRIDE_S` candidate. Edit `GBM_THRESHOLD`,
   `GBM_MIN_SEP_S`, or `ANALYSIS_STRIDE_S` for instant-effect experiments. Must stay
   importable as `detect_splices(audio, sr) -> list[float]`.
-- **`features.py`** — 75-dim feature extractor feeding the GBM. Extending
-  FEATURE_NAMES requires retraining via `.omc/classifier/train_classifier.py`.
-- **`.omc/classifier/train_classifier.py`** — multi-class GBM trainer. `make_pipeline()`
+- **`splice/features.py`** — 75-dim feature extractor feeding the GBM. Extending
+  FEATURE_NAMES requires retraining via `splice/classifier/train_classifier.py`.
+- **`splice/classifier/train_classifier.py`** — multi-class GBM trainer. `make_pipeline()`
   is the GBM hyperparameter knob (`n_estimators`, `max_depth`, `learning_rate`,
-  `subsample`). Retrain with `uv run python .omc/classifier/train_classifier.py`.
-- **`program.md`** — instructions for the agent (this file). Only the human edits this.
+  `subsample`). Retrain with `uv run python splice/classifier/train_classifier.py`.
+- **`splice/program.md`** — instructions for the agent (this file). Only the human edits this.
 
 ## Setup
 
 1. Agree on a run tag (e.g. `apr15`). Branch `autoresearch/<tag>` must not exist.
 2. `git checkout -b autoresearch/<tag>` from main.
-3. Read `README.md`, `evaluate.py`, and `detector.py` in full.
+3. Read `README.md`, `splice/evaluate.py`, and `splice/detector.py` in full.
 4. Verify `data/eval/{singing,korean,english}/` each contain `ground_truth.json` and `tier1/` / `tier2/` / `clean/` subdirs.
 5. Initialize `results.tsv` with just the header row.
 6. Confirm and begin.
@@ -71,23 +71,23 @@ Allowed techniques (non-exhaustive):
 LOOP FOREVER:
 
 1. Check git state (current branch and commit).
-2. Read `detector.py` and `results.tsv` to understand where you are.
+2. Read `splice/detector.py` and `results.tsv` to understand where you are.
 3. Form a **hypothesis**: a specific idea expected to improve combined score.
-   Valid knobs: detector.py constants (GBM_THRESHOLD, GBM_MIN_SEP_S,
-   ANALYSIS_STRIDE_S), features.py feature additions (requires retrain), or
-   .omc/classifier/train_classifier.py hyperparameters (requires retrain).
+   Valid knobs: splice/detector.py constants (GBM_THRESHOLD, GBM_MIN_SEP_S,
+   ANALYSIS_STRIDE_S), splice/features.py feature additions (requires retrain), or
+   splice/classifier/train_classifier.py hyperparameters (requires retrain).
    Write it as a one-line comment at the top of your planned change.
 4. Edit the relevant file(s) with the smallest viable change. If the change is
    feature- or hyperparameter-level, also run
-   `uv run python .omc/classifier/train_classifier.py` to refresh the bundle.
+   `uv run python splice/classifier/train_classifier.py` to refresh the bundle.
 5. `git commit -m "hypothesis: <one line>"`
-6. Run evaluation: `uv run evaluate.py --shap > run.log 2>&1`
+6. Run evaluation: `uv run python splice/evaluate.py --shap > run.log 2>&1`
    - Must finish in <240s. If it hangs past 270s, kill it (treat as crash).
 7. Read results: `grep "^splice_f1:\|^clean_score:\|^combined:" run.log`
 8. Log to `results.tsv` (untracked):
    `commit  combined  splice_f1  clean_score  precision  recall  fp_rate  clean_fp  status  description`
 9. If `combined` **improved** (strictly higher):
-   a. **Verify**: Run `uv run python .omc/coordination/verify_agent.py --agent-name autoresearch --reported-combined <score>`
+   a. **Verify**: Run `uv run python autoresearch/verify_agent.py --agent-name autoresearch --reported-combined <score>`
    b. If verify **PASSES** (exit 0): keep the commit, advance branch. Log status=`keep`.
    c. If verify **FAILS** (exit 1): `git reset --hard HEAD~1`. Log status=`verify-fail`. Treat as discard.
 10. If equal or worse: `git reset --hard HEAD~1`. Log status=`discard`.
@@ -112,7 +112,7 @@ Deleting code and matching or beating prior F1 is always a win.
 
 ## Crash handling
 
-If `evaluate.py` crashes (import error, shape mismatch, etc.):
+If `splice/evaluate.py` crashes (import error, shape mismatch, etc.):
 - If it's a trivial fix (typo, wrong axis), fix and re-run.
 - If the idea is fundamentally broken, log as `crash` and reset.
 

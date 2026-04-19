@@ -6,7 +6,7 @@ Every subagent MUST be verified before its results are accepted.
 After any agent reports a `combined` score, run:
 
 ```
-uv run python .omc/coordination/verify_agent.py --agent-name <name> --reported-combined <score>
+uv run python autoresearch/verify_agent.py --agent-name <name> --reported-combined <score>
 ```
 
 This performs 4 checks: metric re-run, git diff audit, anomaly detection, and preflight.
@@ -23,8 +23,8 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 - Every detection must be explainable (statistical test or spectral anomaly).
 - Full evaluation must complete in under 300 seconds (cross-dataset GM).
 - Held-out test evaluation must complete in under 1200 seconds (20 min).
-- `evaluate.py` and `program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
-- `detector.py` (GBM thresholds + sliding window geometry), `features.py` (feature set), and `.omc/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `uv run python .omc/classifier/train_classifier.py`.
+- `splice/evaluate.py` and `splice/program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
+- `splice/detector.py` (GBM thresholds + sliding window geometry), `splice/features.py` (feature set), and `splice/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `uv run python splice/classifier/train_classifier.py`.
 
 ## Data layout (post-unification)
 
@@ -48,17 +48,17 @@ the file (singing) or speaker (korean, english) level.
 ## Protected Files
 
 The verification system guards these from modification:
-`evaluate.py`, `program.md`, `data/eval/**/*`, `data/test/**/*`, `.omc/coordination/manifest.json`, `.omc/coordination/preflight.py`
+`splice/evaluate.py`, `splice/program.md`, `data/eval/**/*`, `data/test/**/*`, `autoresearch/manifest.json`, `autoresearch/preflight.py`
 
 ## Preflight
 
-Before evaluation, run: `uv run python .omc/coordination/preflight.py`
+Before evaluation, run: `uv run python autoresearch/preflight.py`
 This verifies dataset integrity (file counts, ground truth hash).
 It runs automatically as part of verify_agent.py.
 
 ## Baseline
 
-Baseline metrics are stored in `.omc/coordination/baseline_metrics.json`.
+Baseline metrics are stored in `autoresearch/baseline_metrics.json`.
 Anomaly detection flags deltas > 0.15 from baseline combined score.
 
 ## Retest (US-514)
@@ -85,13 +85,13 @@ Operator workflow:
 3. Dry-run first to enumerate candidates and predicted deltas. <5 s;
    writes `.omc/retest-report.md`; no mutation.
    ```
-   uv run python .omc/coordination/verify_agent.py --retest <from-sha> --dry-run
+   uv run python autoresearch/verify_agent.py --retest <from-sha> --dry-run
    ```
 4. Live run when the preview looks right. Replays discards in
    chronological order against a disk-sourced rolling baseline and
    invokes `run_autoresearch.sh _keep_path` on any real improvement.
    ```
-   uv run python .omc/coordination/verify_agent.py --retest <from-sha> [--limit N]
+   uv run python autoresearch/verify_agent.py --retest <from-sha> [--limit N]
    ```
 
 Outcomes (in the report): `recovered`, `still-lower`, `conflict`,
@@ -126,24 +126,21 @@ confirmed to have landed.
 ## Unified logging (US-515 phases 1 + 2)
 
 All emission — Python **and** bash wrapper — goes through
-`.omc/coordination/logger.py`. Canonical log file:
+`autoresearch/logger.py`. Canonical log file:
 `.omc/logs/autoresearch.jsonl` (gitignored; rotation-aware — 50 MB per
 roll, keeps up to 10 rolls). Freeform subprocess stdout/stderr lives
 alongside it at `.omc/logs/child-stderr.log` so the JSONL stream stays
 structured.
 
 ```python
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                ".omc", "coordination"))
-from logger import get_logger
+from autoresearch.logger import get_logger
 log = get_logger("detector.gbm")
 log.emit("INFO", "diag.gbm.dedupe", before=120, after=80)
 ```
 
-The `.omc/` directory has a leading dot, so `python -m omc.coordination.*`
-is impossible — always invoke via direct file paths
-(`uv run python .omc/coordination/tests/test_smoke_iteration.py`).
+Imports resolve via `PYTHONPATH=$PWD` (set by `run_autoresearch.sh`'s
+`export PYTHONPATH` line). Direct operator invocations outside the wrapper
+require: `PYTHONPATH=$PWD uv run python autoresearch/tests/test_smoke_iteration.py`.
 
 Level policy: `DEBUG` / `INFO` / `WARN` / `ERROR` / `CRITICAL`. Event names
 are dotted and live in the taxonomy docstring at the top of `logger.py`
@@ -154,7 +151,7 @@ warns (not fails) on unknown events.
 ### Bash emission (phase 2)
 
 `run_autoresearch.sh` emits structured events via its `_log` helper, which
-shells out to `.omc/coordination/log_cli.py`:
+shells out to `autoresearch/log_cli.py`:
 
 ```bash
 _log LEVEL SUBSYSTEM EVENT [key=value ...]
@@ -192,13 +189,13 @@ real emission.
   must emit exclusively via `_log`).
 - `uv run python scripts/validate_logs.py --parse .omc/logs/autoresearch.jsonl`
   — schema-parse every line; warn on events outside the taxonomy.
-- `uv run python .omc/coordination/tests/test_smoke_iteration.py` —
+- `PYTHONPATH=$PWD uv run python autoresearch/tests/test_smoke_iteration.py` —
   pre-merge smoke stub. Four gates: fixture emission, parse, reader
   non-empty, redaction.
 
-### evaluate.py one-time maintainer exemption
+### splice/evaluate.py one-time maintainer exemption
 
-Phase 1 migrated `evaluate.py` metric emissions (`splice_f1`, `clean_score`,
+Phase 1 migrated `splice/evaluate.py` metric emissions (`splice_f1`, `clean_score`,
 `combined`, opus32k, aggregate, per-dataset, FP/crossfade/loc breakdowns)
 to the unified logger. The PROTECTED-FILE EXEMPTION is a one-time
 maintainer edit — `verify_agent`'s diff audit only fires during
@@ -209,10 +206,10 @@ migrates in phase 2 alongside the wrapper.
 
 ### Carve-outs (remaining after phase 2)
 
-- `evaluate.py` `RESULTS_TSV:` line (`run_autoresearch.sh` greps at 4 sites;
+- `splice/evaluate.py` `RESULTS_TSV:` line (`run_autoresearch.sh` greps at 4 sites;
   phase 3a). Mirrored to `.omc/logs/child-stderr.log` via `tee` but the
   authoritative parse target remains `.omc/last_eval.log`.
-- `evaluate.py` `combined_{ds.id}: ERROR (...)` line (parsed by
+- `splice/evaluate.py` `combined_{ds.id}: ERROR (...)` line (parsed by
   `verify_agent.run_diagnose`; phase 3c).
 - `verify_agent._write_retest_report` — operator-facing Markdown (phase 3b).
 - `.omc/last_reflection.md` — claude reflection scratch (IPC between the
@@ -223,11 +220,11 @@ migrates in phase 2 alongside the wrapper.
 
 Phase-2 migration landed with this PR. Scope:
 
-- `_log` bash helper + `.omc/coordination/log_cli.py` CLI wrapper
+- `_log` bash helper + `autoresearch/log_cli.py` CLI wrapper
 - All 47+ `echo ... >> $LOG_FILE` sites in `run_autoresearch.sh` rewritten
   as `_log` calls
 - Subprocess stdout/stderr redirected to `.omc/logs/child-stderr.log`
-- Legacy-shim `_iter_legacy_events` deleted from `scripts/log_reader.py`
+- Legacy-shim `_iter_legacy_events` deleted from `autoresearch/log_reader.py`
   (readers now pure JSONL)
 - `scripts/tunable_frontier.py` emits `tunable.frontier.snapshot`; wrapper
   captures its stdout block directly for prompt injection
@@ -235,4 +232,24 @@ Phase-2 migration landed with this PR. Scope:
 - Legacy files deleted: `.omc/autoresearch.log`, `.omc/autoresearch-debug.log`,
   `.omc/autoresearch-debug.log.1`, `.omc/tunable_frontier.txt`
 - `scripts/validate_logs.py --audit` gained bash tier
-- `.omc/coordination/tests/test_log_readers.py` rewritten for native JSONL
+- `autoresearch/tests/test_log_readers.py` rewritten for native JSONL
+
+## Package layout (US-516)
+
+- `autoresearch/` — runtime harness (loop wrapper, logger, verify_agent,
+  log_reader, preflight, baseline_metrics, manifest). Reusable across
+  detection problems.
+- `splice/` — audio-splice application (detector, features, ml_eval,
+  evaluate, classifier/). Not reusable; swap this dir to target a
+  different detection problem.
+- `scripts/` — operator tools (dashboard, phase_stats, log_monitor,
+  eval_crypto, test_crypto, tunable_frontier, diagnose_repeat_rate,
+  notebook_digest, shap_shift, shap_rollup, validate_logs). Thin CLIs
+  that import from `autoresearch` / `splice`.
+- `.omc/` — pure runtime state (logs, plans, specs, research_notes,
+  retest artifacts, feature_cache, sentinels). Zero `*.py`.
+
+Imports resolve via `PYTHONPATH=$PWD uv run python ...`, which the
+wrapper `run_autoresearch.sh` sets via `export PYTHONPATH=...`.
+Direct operator invocations outside the wrapper require setting
+PYTHONPATH manually (e.g., `PYTHONPATH=$PWD uv run python scripts/dashboard.py`).

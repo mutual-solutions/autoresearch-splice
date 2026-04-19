@@ -40,8 +40,7 @@ import numpy as np
 import soundfile as sf
 
 _ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_ROOT / "scripts"))
-from splice_boundary import find_splice_point  # type: ignore
+from scripts.splice_boundary import find_splice_point
 
 # ---------------------------------------------------------------------------
 # Shape configuration (per split)

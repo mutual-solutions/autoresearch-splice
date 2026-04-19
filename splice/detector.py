@@ -10,7 +10,7 @@ Feature components (see features.py) still include classical DSP signals
 prediction error, pairwise block-structure proximity), computed from the
 per-chunk context — but they feed the classifier, they do not gate the
 output on their own. A multi-class bundle at
-`.omc/classifier/fp_classifier.joblib` is required; `detect_splices`
+`splice/classifier/fp_classifier.joblib` is required; `detect_splices`
 raises if the bundle is missing.
 """
 
@@ -18,19 +18,12 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
-
 import numpy as np
 from scipy import signal as sp_signal
 from scipy.ndimage import uniform_filter1d
 from scipy.stats import genpareto
 
-# US-515 phase 1: unified structured logger. `.omc` has a leading dot,
-# so `python -m omc.coordination.logger` is impossible — callers must
-# sys.path.insert and import directly.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                ".omc", "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 
 # Sliding analysis-window geometry.
 # All detectors run inside a fixed-size chunk so GPD thresholds, n_tests
@@ -58,7 +51,7 @@ GBM_MIN_SEP_S = 3.5
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
-    ".omc", "classifier", "fp_classifier.joblib",
+    "classifier", "fp_classifier.joblib",
 )
 
 _GBM_BUNDLE: dict | None = None

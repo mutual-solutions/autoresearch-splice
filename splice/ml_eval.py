@@ -10,21 +10,14 @@ from __future__ import annotations
 
 import os
 import subprocess
-import sys
 
 import soundfile as sf
 
 _proj = os.path.dirname(os.path.abspath(__file__))
-_classifier_dir = os.path.join(_proj, ".omc", "classifier")
-if _classifier_dir not in sys.path:
-    sys.path.insert(0, _classifier_dir)
 
-from detector import _load_gbm_bundle, get_detection_meta
-from shap_report import write_reports
-
-# US-515 phase 1: unified structured logger.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".omc", "coordination"))
-from logger import get_logger  # noqa: E402
+from splice.detector import _load_gbm_bundle, get_detection_meta
+from splice.classifier.shap_report import write_reports
+from autoresearch.logger import get_logger
 
 
 def _git_sha_short() -> str:
@@ -52,9 +45,9 @@ def export_shap_reports(dsp_results, data_dir) -> dict:
     bundle = _load_gbm_bundle()
     if bundle is None:
         get_logger("ml.eval").emit("ERROR", "diag.ml.eval.bundle_missing",
-              hint="retrain via .omc/classifier/train_classifier.py")
+              hint="retrain via splice/classifier/train_classifier.py")
         raise RuntimeError("Multi-class GBM bundle missing or invalid; "
-                           "retrain via .omc/classifier/train_classifier.py")
+                           "retrain via splice/classifier/train_classifier.py")
 
     model = bundle["model"]
     feature_names = bundle.get("feature_names")

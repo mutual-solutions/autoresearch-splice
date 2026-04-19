@@ -1,18 +1,22 @@
 """Unified structured JSONL logger for autoresearch-splice (US-515 phase 1).
 
 One writer per surface: every Python caller uses this module. The wrapper
-(run_autoresearch.sh) remains on legacy echo >> LOG_FILE until phase 2.
+(run_autoresearch.sh) emits via `_log` helper which shells out to
+`autoresearch/log_cli.py` (US-515 phase 2 complete).
 
 IMPORT CONVENTION
 -----------------
-The .omc directory has a leading dot, which prevents Python from importing
-it as package `omc.coordination` under `-m`. Callers MUST use direct path
-injection:
+The `autoresearch` package resolves via `PYTHONPATH=$PROJECT_DIR` (set
+by `run_autoresearch.sh`'s `export PYTHONPATH` line, inherited by all
+subprocesses). Direct callers use:
 
     from autoresearch.logger import get_logger
 
     log = get_logger("detector.gbm")
     log.emit("INFO", "diag.gbm.dedupe", before=120, after=80)
+
+Operator scripts invoked outside the wrapper must set PYTHONPATH
+manually: `PYTHONPATH=$PWD uv run python scripts/dashboard.py`.
 
 DISABLED MODE
 -------------

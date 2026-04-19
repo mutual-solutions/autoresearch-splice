@@ -16,7 +16,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import sys
 import time
 from pathlib import Path
 
@@ -31,16 +30,11 @@ from sklearn.preprocessing import StandardScaler
 
 _HERE = Path(__file__).resolve()
 _ROOT = _HERE.parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
-from dataset_registry import DATASETS
-from detector import _build_chunk_context
-from features import FEATURE_NAMES, extract_features
-
-# US-515 phase 1: unified structured logger.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "coordination"))
-from logger import get_logger  # noqa: E402
+from splice.dataset_registry import DATASETS
+from splice.detector import _build_chunk_context
+from splice.features import FEATURE_NAMES, extract_features
+from autoresearch.logger import get_logger
 
 LABEL_NOT_SPLICE = 0
 LABEL_HARD_CUT = 1

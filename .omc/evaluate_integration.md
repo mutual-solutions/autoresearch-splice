@@ -1,6 +1,6 @@
 # evaluate.py integration with dataset_registry
 
-`evaluate.py` is protected — only you apply these edits.
+`splice/evaluate.py` is protected — only you apply these edits.
 
 ## Goal
 
@@ -13,8 +13,8 @@ further edits anywhere else.
 
 ## Files to edit
 
-1. `evaluate.py` (this repo) — one block replaced, a few lines added.
-2. `.omc/coordination/baseline_metrics.json` — new primary baseline.
+1. `splice/evaluate.py` (this repo) — one block replaced, a few lines added.
+2. `autoresearch/baseline_metrics.json` — new primary baseline.
 
 ## Before
 
@@ -211,7 +211,7 @@ english (DSP):    ~0.05
 geometric (floor 0.01): ≈ 0.204
 ```
 
-Replacement `.omc/coordination/baseline_metrics.json`:
+Replacement `autoresearch/baseline_metrics.json`:
 
 ```json
 {
@@ -235,7 +235,7 @@ Replacement `.omc/coordination/baseline_metrics.json`:
 ## Verify after applying
 
 ```
-uv run evaluate.py --with-classifier
+uv run python splice/evaluate.py --with-classifier
 ```
 
 Expected:
@@ -246,11 +246,11 @@ Expected:
 
 Then:
 ```
-uv run python .omc/coordination/verify_agent.py --agent-name after-patch \
+uv run python autoresearch/verify_agent.py --agent-name after-patch \
     --reported-combined <actual>
 ```
 should return HIGH (delta < 0.15 from the updated baseline).
 
 ## Rollback
 
-`git revert` the evaluate.py + baseline_metrics.json commit.
+`git revert` the splice/evaluate.py + autoresearch/baseline_metrics.json commit.

@@ -19,19 +19,13 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
 
 import numpy as np
 
-# US-515 phase 1: unified structured logger.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 
 _HERE = Path(__file__).resolve()
-_ROOT = _HERE.parents[2]
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
 
 
 _DSP_PREFIX = "dsp_"

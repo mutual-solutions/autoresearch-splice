@@ -38,7 +38,6 @@ from __future__ import annotations
 import hashlib
 import os
 import pickle
-import sys
 import warnings
 from pathlib import Path
 from typing import Optional
@@ -47,7 +46,7 @@ import librosa
 import numpy as np
 from scipy import signal as sp_signal
 
-from detector import (
+from splice.detector import (
     _build_chunk_context,
     _FitError,
     phase_z_at,
@@ -56,9 +55,7 @@ from detector import (
     pairwise_proximity_at,
 )
 
-# US-515 phase 1: unified structured logger.
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".omc", "coordination"))
-from logger import get_logger  # noqa: E402
+from autoresearch.logger import get_logger
 
 
 # US-504: on-disk feature cache. Gated by OMC_FEATURE_CACHE_DIR +
