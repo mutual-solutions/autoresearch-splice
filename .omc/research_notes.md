@@ -2734,3 +2734,97 @@ per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=
     how many emits land in [chunk_dur - 8, chunk_dur] where
     persistence_far gates can't apply.
 
+## 2026-04-20T02:32:40+09:00 — 68004ca (verify-fail, combined=0.493815)
+subject: add tonality-gated chroma_local_dist_tonal feature (75->76)
+per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=0.360000
+
+# 2026-04-20 — hypothesis: tonality-GATED chroma local cosine-distance FEATURE (FEATURE_NAMES 75→76)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new
+    feature `chroma_local_dist_tonal`. Compute `librosa.feature.chroma_stft
+    (norm=None)` once per chunk (~50ms / 60s chunk), cache as `feat_chroma`
+    with hop 512. Per-position: slice mean 12-dim chroma over pre=[t−2, t]
+    and post=[t, t+2]; compute pre-window tonality ratio
+    `max(pre_chroma)/mean(pre_chroma)`. If ratio ≥ 3.0 (tonal content)
+    return cosine distance between pre and post; else return 0.0 (sentinel).
+    FEATURE_NAMES 75→76 so the wrapper auto-retrains via US-505 sha gate.
+
+(b) WHY this over recent failures. (i) CLAUDE.md explicitly directs a
+    structural change after 5+ consecutive same-axis failures — the DSP-
+    gate axis has burned 9 attempts since 29c06cf without lifting combined
+    past 0.494, and four of the most recent (55b21e6 HPR-gated SUM, 9fe41d1
+    chroma persistence_far post-filter, 29c06cf itself, plus this keep)
+    produced the IDENTICAL 0.493815 / singing=0.360 / korean=0.457 /
+    english=0.732 triple — the detector-side signal has flatlined. (ii)
+    634cdd2 is a directly-relevant data point: UNGATED chroma_cosine_dist
+    as a feature lifted SINGING 0.360→0.394 (the target) but REGRESSED
+    english 0.732→0.690 and korean 0.457→0.428, because librosa's default
+    `norm='inf'` (column-max) destroys tonality structure and GBM globally
+    over-weighted a feature that carries signal on tonal content but pure
+    noise on speech. The signal for singing is REAL — the problem was
+    collateral damage on speech domains, not feature validity. (iii)
+    Tonality-gating addresses the failure mode directly: speech windows
+    (flat chroma, max/mean ~1.0-1.5) get a ZERO sentinel, so GBM cannot
+    base any split on chroma for speech — the feature is functionally
+    invisible on english/korean. Singing chord transitions (max/mean
+    5-12, same-key cycle-back distance 0.02-0.15) and real cross-song
+    splices (max/mean 5-12, cross-key distance 0.3-0.7) both produce
+    nonzero values whose distribution GBM can learn. norm=None preserves
+    magnitude so the tonality ratio is computable. (iv) Orthogonal to
+    every prior axis: not DSP (physical z-scores), not spectral delta
+    (magnitude shape), not MFCC (cepstral timbre), not f0/voicing, not
+    ENF/codec/mel-PCA, NOT ungated chroma_cosine_dist (634cdd2 — different
+    normalization AND no gating), NOT chroma persistence_far post-filter
+    (9fe41d1 — deterministic post-filter on 4-8s window, different time
+    scale, different mechanism). Blast radius: +1 feature to FEATURE_NAMES,
+    +1 cache key, +1 per-position block; classifier sha auto-invalidates
+    so wrapper retrains (~3 min). Per-t cost: 12-dim mean + cosine, sub-ms.
+    Per-chunk cost: one chroma_stft call ~30-80ms, absorbed within
+    243/300s budget.
+
+(c) IF THIS FAILS. (1) If GBM assigns ~0 SHAP to the feature (gating was
+    TOO aggressive and zeroed-out too many borderline tonal windows),
+    LOWER the tonality threshold to 2.0, letting korean voiced-vowel
+    windows contribute. (2) If speech domains still regress (the feature
+    still leaks signal into english/korean via some tonal windows — short
+    sung prompts, emphatic vowels), raise the tonality threshold to 4.0
+    AND require file-level voicing_prob > 0.5 as a secondary gate. (3)
+    Final escalation: replace the single gated feature with a PAIR —
+    `chroma_local_dist_tonal` (as proposed) PLUS `chroma_far_dist_tonal`
+    (pre=[t−2, t] vs far=[t+4, t+8]) — the latter captures "new tonal
+    content PERSISTS post-cut" which discriminates real source-change
+    from chord cycle-back.
+
+(d) Information gaps. (i) Per-position CLEAN_FP_POSITIONS (domain, file,
+    t_sec, chroma_pre, chroma_post, tonality_ratio, cos_dist) on the 2
+    singing / 4 korean FPs STILL not in CURRENT STATE — tonality threshold
+    3.0 is calibrated from theory (white-noise 1.1, pure sine 8.4) not
+    observed failure values. (ii) Training-chunk chroma distribution per
+    class (not_splice / hard_cut / crossfade) not surfaced — cannot
+    preview whether training rows exhibit the theoretical gated
+    separability. (iii) The recurrence of EXACT 0.493815 across 55b21e6,
+    9fe41d1, and 29c06cf raises a pipeline question: are eval discards
+    sometimes byte-reusing a cached detector output? A CLASSIFIER_SHA or
+    DETECTOR_EMIT_COUNT line in RESULTS_TSV would disambiguate "gate
+    didn't fire" from "no change was applied".
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block auto-emitted
+    by `splice/evaluate.py` — persistent blocker across 12+ detector
+    hypotheses. Per-FP (domain, file, t_sec, label_id, p_splice, TOP-5
+    feature values with SHAP > 100 on that domain) would flip every
+    subsequent hypothesis from theory-driven to data-driven. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that trains once
+    and reports per-domain OOF-F1 delta vs current classifier — turns
+    "is this feature worth a retrain" from a bet into a numeric. (3)
+    `DETECTOR_EMIT_TRACE` JSONL alongside results.tsv with (domain, file,
+    t_sec, p_splice, pre_dsp_max, pre_dsp_sum, survives_gates) — would
+    let post-mortems distinguish "filter dropped no emits" from "filter
+    dropped emits but all were true splices".
+
+
+---
+## [auto-diagnosis]
+diagnose: no-traceback
+tsv: RESULTS_TSV: combined=<REDACTED> combined_mean=<REDACTED> combined_min=<REDACTED> clean_fp=6 n_datasets=3 combined_english=<REDACTED> clean_fp_english=0 combined_korean=<REDACTED> clean_fp_korean=4 combined_singing=<REDACTED> clean_fp_singing=2
+note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
+
