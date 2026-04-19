@@ -2916,3 +2916,99 @@ per-domain: combined_english=0.835443 combined_korean=0.498462 combined_singing=
     or is the wrapper byte-reusing a stale joblib?).
 [auto] (no SHAP data for either 29c06cf or 49bd0b1)
 
+## 2026-04-20T03:04:41+09:00 — 32cac36 (keep, combined=0.532261)
+subject: add voiced_chroma_cosine_dist feature (FEATURE_NAMES 76->77) — voiced-frame-only chroma (pitch-class profile) cosine distance between pre[t-2,t] and post[t,t+2]. Reuses cached feat_vp plus a new per-chunk feat_chroma (one librosa.feature.chroma_stft call, hop/fft same as MFCC). Per-t cost is two slices + voiced-mask mean + cosine, sub-ms. Sentinel 0.0 when either window has zero voiced frames, matching 49bd0b1 pattern. Targets singing 0.310 weakest-domain regression caused by the just-kept voiced_mfcc_cosine_dist (49bd0b1 lifted english 0.732->0.835 and korean 0.457->0.498 via SPEAKER/INSTRUMENT-timbre continuity signal but dropped singing 0.360->0.310 because same-singer chord transitions keep voiced MFCC stable and the feature lowers p_splice on real crossfade TPs too). Mechanism: chroma is the canonical MIR pitch-class profile — within a song's key chord transitions share 3-5 of 12 pitch classes so voiced-chroma cosine distance is small (0.05-0.20), cross-song splices change key entirely giving 0.30-0.70. 634cdd2 proved ungated chroma_cosine_dist lifts singing 0.360->0.394 — the signal is real — but raw chroma regressed english/korean because GBM globally over-weighted a feature that is per-vowel prosodic noise on speech. Voicing-mask self-gating mirrors 49bd0b1: on speech voiced=vowels whose chroma swings with prosody regardless of splice -> high-variance noise -> GBM assigns low per-domain SHAP via tree splits, feature functionally invisible. On singing voiced=sustained sung notes whose pitch class IS the key signature -> GBM learns a clean discriminator. Orthogonal to every prior axis: NOT 634cdd2 (no mask), NOT 68004ca tonality-gated chroma (external max/mean ratio, verify-fail), NOT 9fe41d1 chroma persistence_far (post-filter, 4-8s window), NOT 49bd0b1 voiced_mfcc (cepstral not pitch-class — smoke confirms on 440Hz->C-chord: chroma dist=0.865 vs mfcc dist=0.014, orthogonal signals). Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505. Smoke: import + assert len(FEATURE_NAMES)==77 + last name 'voiced_chroma_cosine_dist' + synthetic chord-shift yields dist=0.865.
+per-domain: combined_english=0.839506 combined_korean=0.526154 combined_singing=0.341379
+
+# 2026-04-20 — hypothesis: voiced-frame-only CHROMA cosine distance feature (FEATURE_NAMES 76→77)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE feature
+    `voiced_chroma_cosine_dist` parallel to the just-kept
+    `voiced_mfcc_cosine_dist` but on the pitch-class axis instead of
+    cepstral. Precompute `librosa.feature.chroma_stft(y=audio, sr,
+    hop_length=512, n_fft=2048)` once per chunk (~30–60 ms). Per
+    position: slice voiced-flag (`feat_vp`) and chroma frames on
+    pre=[t−2, t] and post=[t, t+2]; keep only frames where `vp==1.0`;
+    return cosine distance of voiced-only mean chroma vectors. Sentinel
+    0.0 when either window has zero voiced frames. FEATURE_NAMES
+    76→77 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over the last keep. 49bd0b1 (current keep, 0.506)
+    lifted english 0.732→0.835 and korean 0.457→0.498 but REGRESSED
+    singing 0.360→0.310 — now the weakest domain by a wide margin.
+    Voiced-mask over MFCC picked up SPEAKER/INSTRUMENT timbre
+    continuity which is exactly what speech FPs needed (different
+    speakers across a splice shift MFCC; same speaker across a pause
+    doesn't); on singing, same-singer chord transitions keep voiced
+    MFCC stable so the feature lowers p_splice on real crossfades
+    too. Singing needs a signal tied to MUSICAL CONTENT (key/mode)
+    not vocal identity. Chroma is the canonical MIR pitch-class
+    profile: within a song's key most chords share 3–5 of 12 pitch
+    classes so voiced-chroma cosine distance across a chord
+    transition is small (0.05–0.20); cross-song splices change key
+    (different scale/mode) giving 0.30–0.70. 634cdd2 already proved
+    raw chroma_cosine_dist lifts singing 0.360→0.394 — the signal
+    is real — but ungated chroma regressed english/korean because
+    speech windows carry pitch-class noise that GBM globally
+    over-weighted. Self-gating via the voicing mask mirrors the
+    49bd0b1 success pattern: on speech voiced=vowels whose
+    per-vowel chroma content swings with prosody regardless of
+    splice → high-variance noise → GBM assigns low per-domain SHAP
+    via tree splits, feature functionally invisible on
+    english/korean. On singing voiced=sustained sung notes whose
+    pitch class IS the key signature → GBM learns a clean
+    discriminator. Orthogonal to 634cdd2 (no mask, all frames) and
+    68004ca (per-position max/mean tonality gate, verify-fail) and
+    9fe41d1 (post-filter not feature, 4–8s far window not ±2s
+    local) and 49bd0b1 (voiced-frame mask on MFCC, cepstral not
+    pitch-class). Blast radius: +1 feature + 1 cache key + 1 block
+    in features.py; per-t cost ~1 ms (mean + cosine on 12-dim
+    vectors); per-chunk cost ~30–60 ms chroma_stft within the
+    243/300 s eval budget. Risk-bounded: zero-voiced sentinel = 0.0
+    matches the 49bd0b1 pattern so no NaN leak.
+
+(c) IF THIS FAILS. (1) If GBM assigns ~0 SHAP (voiced mask too
+    permissive on speech, so the feature does become an english
+    regressor and GBM compromises by ignoring it), replace the
+    voicing mask with an HPSS-HARMONIC mask — keep only frames
+    where harmonic_energy / (harmonic+percussive) > 0.7, which on
+    speech yields very few frames → stronger self-gate. (2) If it
+    lifts singing but regresses speech, add a second feature
+    `voiced_chroma_dist_far` (pre=[t−2, t] vs far=[t+4, t+8])
+    so GBM sees a joint (near, far) signature — chord cycle-backs
+    have high near distance but low far distance (key returns);
+    real cross-song has both high. (3) Final escalation: use
+    KL-divergence between voiced chroma distributions
+    (L1-normalized 12-dim PMFs) instead of cosine — KL weights
+    single dominant pitch classes more strongly which better
+    captures modal scale changes.
+
+(d) Information gaps. (i) Per-position CLEAN_FP_POSITIONS still
+    not in CURRENT STATE — 14+ consecutive hypotheses calibrated
+    feature/mask/threshold choices from theory not observed
+    values. I can't verify whether the 2 singing FPs on 49bd0b1
+    have vp_pre/vp_post > 0 (if they land on instrumental-only
+    passages the voiced mask is empty and the feature is a no-op
+    for them). (ii) Rolling SHAP rollup reported as "no keeps yet
+    — rollup empty" for the current keep, so I can't see which
+    features 49bd0b1 actually relied on per domain — the singing
+    regression cause is theoretical. (iii) Per-domain OOF weighted
+    F1 with-vs-without candidate features is not previewable
+    pre-commit so I'm betting a 3-min retrain on chroma vs HPSS-
+    harmonic-mask vs KL-on-voiced-chroma without empirical
+    ranking.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block —
+    persistent blocker for 14+ hypotheses; per-FP (domain, file,
+    t_sec, label_id, p_splice, vp_pre_count, vp_post_count,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, top-5 |SHAP| features with
+    values) would flip mask design from theory to data. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that
+    trains once and reports per-domain OOF-F1 delta vs current
+    — turns "is this feature worth a 3 min retrain" into a
+    numeric. (3) Per-keep SHAP rollup populated immediately on
+    keep commit (the "no keeps yet — rollup empty" marker means
+    I have no per-domain SHAP for 49bd0b1, the freshest keep
+    and the one whose regression I'm trying to understand).
+[auto] (no SHAP data for either 49bd0b1 or 32cac36)
+
