@@ -4,7 +4,7 @@
 Renamed from verify_agent.py in US-517. Provides 4 subcommands:
   --verify    Re-run metric + diff audit + anomaly + preflight check chain.
   --diagnose  Diagnose last eval/retrain crash.
-  --maintain  Triage agent-requested enhancements and classify crashes (stub in commit 1; full impl in commit 2).
+  --maintain  Triage agent-requested enhancements and classify crashes.
   --retest    Replay discarded hypotheses from a given SHA.
 
 Usage:
@@ -39,6 +39,7 @@ PROTECTED_FILES = [
 # parsing `combined: X.Y` prints from stdout. `RESULTS_TSV:` remains as a
 # bash-wrapper carve-out until phase 2.
 from autoresearch.log_reader import iter_events  # noqa: E402
+from autoresearch.logger import get_logger  # noqa: E402
 
 
 def _latest_combined_since(since_ts: str,
@@ -1561,13 +1562,635 @@ def run_verify(agent_name: str, reported_combined: float) -> int:
     return 0 if confidence in ("HIGH", "MEDIUM") else 1
 
 
+# ---------------------------------------------------------------------------
+# US-517 Commit 2: --maintain subcommand
+# ---------------------------------------------------------------------------
+# Triage agent-requested enhancements, classify crashes, draft ralplan specs.
+# No LLM invocation; stdlib only.
+# ---------------------------------------------------------------------------
+
+import difflib as _difflib  # noqa: E402 (intentional: maintain-only import)
+import string as _string    # noqa: E402
+
+
+_MAINTAIN_DISABLED_SENTINEL = REPO_ROOT / ".omc" / "maintainer-disabled"
+_BACKLOG_PATH = REPO_ROOT / ".omc" / "enhancement-backlog.md"
+_RESEARCH_NOTES_PATH = REPO_ROOT / ".omc" / "research_notes.md"
+_SPECS_DIR = REPO_ROOT / ".omc" / "specs"
+_CRASH_COUNTER_PATH = REPO_ROOT / ".omc" / "supervisor-crash-counter.txt"
+_MAINTAIN_LOG = get_logger("supervisor.maintain")
+
+
+# ---------------------------------------------------------------------------
+# Backlog parse / serialize
+# ---------------------------------------------------------------------------
+
+def _parse_backlog(md_path: Path) -> tuple[str, list[dict]]:
+    """Parse enhancement-backlog.md into (header_prose, entries).
+
+    Header prose is everything before the first H2. Each H2 becomes a dict
+    with 'id' (the H2 title) plus all '- **key:** value' fields. Unknown
+    fields are preserved verbatim in '_extra_lines' list for round-trip fidelity.
+    """
+    text = md_path.read_text(encoding="utf-8")
+    lines = text.splitlines(keepends=True)
+
+    # Split into chunks by H2 boundaries.
+    # First chunk = header prose; subsequent chunks = one entry each.
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    for ln in lines:
+        if ln.startswith("## ") and current:
+            chunks.append(current)
+            current = [ln]
+        else:
+            current.append(ln)
+    if current:
+        chunks.append(current)
+
+    if not chunks:
+        return "", []
+
+    # First chunk is header prose (may or may not end with blank line)
+    header_prose = "".join(chunks[0])
+    entries: list[dict] = []
+
+    _KNOWN_FIELDS = {
+        "status", "first_seen", "last_seen", "request_count",
+        "category", "risk", "excerpt", "notes",
+    }
+
+    for chunk in chunks[1:]:
+        entry: dict = {"_extra_lines": []}
+        # First line of chunk is the H2 title
+        h2_line = chunk[0]
+        entry["id"] = h2_line.lstrip("# ").strip()
+        entry["_trailing_blank"] = False
+
+        _saw_field = False
+        entry["_pre_field_blanks"] = []
+        for ln in chunk[1:]:
+            # Try to parse '- **key:** value' (format: bold includes the colon)
+            m = re.match(r"^- \*\*([^*:]+):\*\*\s*(.*)", ln.rstrip("\n"))
+            if m:
+                _saw_field = True
+                key = m.group(1).strip()
+                val = m.group(2).strip()
+                if key in _KNOWN_FIELDS:
+                    entry[key] = val
+                else:
+                    entry["_extra_lines"].append(ln)
+            elif not _saw_field and ln.strip() == "":
+                # Blank lines before any field — preserve before fields
+                entry["_pre_field_blanks"].append(ln)
+            elif ln.strip() == "---":
+                entry["_extra_lines"].append(ln)
+            elif ln.strip() == "":
+                entry["_extra_lines"].append(ln)
+            else:
+                entry["_extra_lines"].append(ln)
+
+        entries.append(entry)
+
+    return header_prose, entries
+
+
+def _serialize_backlog(header_prose: str, entries: list[dict], md_path: Path) -> None:
+    """Write header + entries back in H2 format, preserving extra lines."""
+    _KNOWN_FIELDS = {
+        "status", "first_seen", "last_seen", "request_count",
+        "category", "risk", "excerpt", "notes",
+    }
+    _FIELD_ORDER = [
+        "status", "first_seen", "last_seen", "request_count",
+        "category", "risk", "excerpt", "notes",
+    ]
+
+    out: list[str] = [header_prose]
+
+    for entry in entries:
+        entry_id = entry.get("id", "unknown")
+        out.append(f"## {entry_id}\n")
+        # Pre-field blanks (blank lines between H2 and first field in original)
+        for ln in entry.get("_pre_field_blanks", []):
+            out.append(ln if ln.endswith("\n") else ln + "\n")
+        for field in _FIELD_ORDER:
+            if field in entry:
+                out.append(f"- **{field}:** {entry[field]}\n")
+        for ln in entry.get("_extra_lines", []):
+            out.append(ln if ln.endswith("\n") else ln + "\n")
+
+    content = "".join(out)
+    md_path.write_text(content, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Text normalization and fuzzy matching
+# ---------------------------------------------------------------------------
+
+def _normalize_text(s: str) -> str:
+    """Case-fold, collapse whitespace, strip punctuation-only tokens."""
+    s = s.lower()
+    tokens = s.split()
+    punct = set(_string.punctuation)
+    tokens = [t for t in tokens if not all(c in punct for c in t)]
+    return " ".join(tokens)
+
+
+def _fuzzy_match(needle: str, haystack_entries: list[dict],
+                 threshold: float = 0.5) -> dict | None:
+    """Return the best matching entry from haystack_entries or None.
+
+    Matches needle against each entry's 'excerpt' field (case-folded).
+    Returns first entry with SequenceMatcher ratio >= threshold, or None.
+    """
+    needle_norm = _normalize_text(needle)
+    best_ratio = 0.0
+    best_entry = None
+    for entry in haystack_entries:
+        excerpt = entry.get("excerpt", "") or entry.get("id", "")
+        ratio = _difflib.SequenceMatcher(
+            None, needle_norm, _normalize_text(excerpt)
+        ).ratio()
+        if ratio >= threshold and ratio > best_ratio:
+            best_ratio = ratio
+            best_entry = entry
+    return best_entry
+
+
+# ---------------------------------------------------------------------------
+# Extract enhancement bullets from research_notes.md
+# ---------------------------------------------------------------------------
+
+def _sha_commit_time(sha: str) -> int | None:
+    """Return commit timestamp for sha, or None if not found."""
+    try:
+        r = subprocess.run(
+            ["git", "show", "-s", "--format=%ct", sha],
+            capture_output=True, text=True, timeout=10, cwd=REPO_ROOT,
+        )
+        if r.returncode != 0:
+            return None
+        return int(r.stdout.strip())
+    except Exception:
+        return None
+
+
+def _extract_enhancement_bullets(notes_path: Path, since_sha: str) -> list[tuple[str, str]]:
+    """Scan research_notes.md for '(e) Wrapper enhancements' sections.
+
+    Returns list of (sha, bullet_text) for entries whose SHA is strictly
+    newer than since_sha (by commit timestamp). Uses the '## <ts> — <sha>'
+    header pattern.
+
+    If since_sha is empty/None, all bullets are returned.
+    """
+    since_time: int | None = None
+    if since_sha:
+        since_time = _sha_commit_time(since_sha)
+
+    if not notes_path.exists():
+        return []
+
+    text = notes_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    bullets: list[tuple[str, str]] = []
+    current_sha: str = ""
+    current_sha_time: int | None = None
+    in_wrapper_section = False
+    wrapper_text_lines: list[str] = []
+
+    def _flush_wrapper(sha: str) -> None:
+        if not wrapper_text_lines:
+            return
+        # Join and split into bullet items by sentence/clause boundaries
+        raw = " ".join(wrapper_text_lines)
+        # Split on numbered patterns like "(i)", "(ii)", "(1)", "(2)" or just treat as one bullet
+        sub_items = re.split(r"\s+(?=\(\w+\)\s)", raw)
+        for item in sub_items:
+            item = item.strip()
+            if item:
+                bullets.append((sha, item))
+        wrapper_text_lines.clear()
+
+    for ln in lines:
+        # Detect iteration header: '## <ts> — <sha> ...'
+        m = re.match(r"^## \S+ — ([0-9a-f]{7,40})\b", ln)
+        if m:
+            # Flush any pending wrapper text from previous entry
+            _flush_wrapper(current_sha)
+            in_wrapper_section = False
+            current_sha = m.group(1)
+            current_sha_time = _sha_commit_time(current_sha)
+            continue
+
+        # Detect '(e) Wrapper enhancements' section
+        if re.match(r"^\(e\)\s+Wrapper enhancements", ln.strip()):
+            # Only include if this entry's SHA is newer than since_sha
+            if since_time is not None and current_sha_time is not None:
+                if current_sha_time <= since_time:
+                    in_wrapper_section = False
+                    continue
+            in_wrapper_section = True
+            # Strip the '(e) Wrapper enhancements' prefix, keep the rest
+            rest = re.sub(r"^\(e\)\s+Wrapper enhancements[.:]*\s*", "", ln.strip())
+            if rest:
+                wrapper_text_lines.append(rest)
+            continue
+
+        if in_wrapper_section:
+            stripped = ln.strip()
+            # Next section marker stops collection
+            if stripped.startswith("(") and re.match(r"^\([a-z]\)\s", stripped) and not stripped.startswith("(e)"):
+                _flush_wrapper(current_sha)
+                in_wrapper_section = False
+                continue
+            # Next H2 header would also stop (handled above)
+            if stripped:
+                wrapper_text_lines.append(stripped)
+
+    _flush_wrapper(current_sha)
+    return bullets
+
+
+# ---------------------------------------------------------------------------
+# Spec drafting
+# ---------------------------------------------------------------------------
+
+def _draft_spec(entry: dict, specs_dir: Path) -> Path | None:
+    """Write a minimal spec template for entry to specs_dir/deep-interview-<id>.md.
+
+    Returns the path if created, or None if skipped (already exists).
+    """
+    entry_id = entry.get("id", "unknown")
+    out_path = specs_dir / f"deep-interview-{entry_id}.md"
+    if out_path.exists():
+        return None
+
+    specs_dir.mkdir(parents=True, exist_ok=True)
+    excerpt = entry.get("excerpt", "")
+    notes = entry.get("notes", "")
+    risk = entry.get("risk", "")
+    category = entry.get("category", "")
+    request_count = entry.get("request_count", "?")
+
+    content = f"""# deep-interview: {entry_id}
+
+_Auto-drafted by supervisor_agent.py --maintain on {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%MZ')}_
+_Source: enhancement-backlog.md entry `{entry_id}` (request_count={request_count}, risk={risk}, category={category})_
+
+---
+
+## Goal
+
+<!-- Paste the excerpt below and refine into a concrete goal statement -->
+
+{excerpt}
+
+## Constraints
+
+<!-- From backlog notes -->
+
+{notes}
+
+## Non-Goals
+
+<!-- Fill in -->
+
+## Acceptance Criteria
+
+<!-- Fill in -->
+
+## Open Questions
+
+<!-- Fill in -->
+"""
+    out_path.write_text(content, encoding="utf-8")
+    return out_path
+
+
+# ---------------------------------------------------------------------------
+# Crash counter state
+# ---------------------------------------------------------------------------
+
+def _load_state() -> int:
+    """Load crash counter from .omc/supervisor-crash-counter.txt. Returns 0 on missing/corrupt."""
+    try:
+        text = _CRASH_COUNTER_PATH.read_text(encoding="utf-8").strip()
+        return int(text)
+    except Exception:
+        return 0
+
+
+def _save_state(count: int) -> None:
+    """Save crash counter to .omc/supervisor-crash-counter.txt."""
+    _CRASH_COUNTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _CRASH_COUNTER_PATH.write_text(str(count) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Crash classifier
+# ---------------------------------------------------------------------------
+
+_RETRAIN_PATTERNS = [
+    "splice/classifier/train_classifier.py",
+    "sklearn/",
+]
+_RUNTIME_PATTERNS = [
+    "autoresearch/",
+    "splice/detector.py",
+    "splice/features.py",
+    "splice/ml_eval.py",
+    "splice/classifier/shap_report.py",
+]
+
+
+def _last_jsonl_event_matches(log_text: str, event_name: str) -> bool:
+    """Return True if the last valid JSON line in log_text has event==event_name."""
+    last_match = None
+    for ln in log_text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+            if isinstance(rec, dict) and "event" in rec:
+                last_match = rec
+        except json.JSONDecodeError:
+            continue
+    return last_match is not None and last_match.get("event") == event_name
+
+
+def _top_frame(tb_text: str) -> str:
+    """Return the last 'File ...' frame path from a traceback string."""
+    frames = []
+    for ln in tb_text.splitlines():
+        m = re.search(r'File "([^"]+)", line (\d+)', ln)
+        if m:
+            frames.append(m.group(1))
+    # The last file listed is the innermost (top of call stack in Python terms)
+    return frames[-1] if frames else ""
+
+
+def _classify_crash(log_text: str, eval_exit_code: int) -> str:
+    """Classify a crash into one of 4 categories.
+
+    Categories:
+      retrain_crash      - retrain infrastructure failure
+      pipeline_bug       - runtime module error or parse_fail
+      hypothesis_content - catastrophic discard, pipeline ran clean
+      unclassifiable     - traceback present but frame matches nothing known
+    """
+    tb = _extract_last_traceback(log_text)
+
+    if tb is None:
+        if eval_exit_code == 0:
+            return "hypothesis_content"  # catastrophic discard, no crash
+        else:
+            return "pipeline_bug"  # parse_fail: exited non-zero, no Python traceback
+
+    # Traceback present — classify by faulting frame
+    frame = _top_frame(tb)
+
+    # Check retrain first (classifier/sklearn internals)
+    if any(p in frame for p in _RETRAIN_PATTERNS):
+        return "retrain_crash"
+
+    # Check last JSONL event for retrain failure
+    if _last_jsonl_event_matches(log_text, "classifier.retrain.failed"):
+        return "retrain_crash"
+
+    # Check runtime modules
+    if any(p in frame for p in _RUNTIME_PATTERNS):
+        return "pipeline_bug"
+
+    # Traceback present but top frame matches nothing known
+    return "unclassifiable"
+
+
+# ---------------------------------------------------------------------------
+# run_maintain entry point
+# ---------------------------------------------------------------------------
+
 def run_maintain(trigger: str) -> int:
     """Triage enhancement requests and classify crashes.
 
-    v2 stub — full implementation arrives in commit 2.
+    trigger: 'crash' | 'periodic' | 'manual'
+    Exit codes: 0=continue, 1=halt, >=2=unexpected (warn-and-continue in wrapper).
     """
-    print("maintain: stub (commit 2 implements the subcommand)")
+    # --- Common preamble ---
+    disabled = _MAINTAIN_DISABLED_SENTINEL
+    if disabled.exists():
+        print("maintain: disabled (.omc/maintainer-disabled sentinel present)", flush=True)
+        _MAINTAIN_LOG.emit("INFO", "maintain.skipped", reason="disabled_sentinel")
+        return 0
+
+    if _RETEST_SENTINEL.exists():
+        print("maintain: skipped (.omc/retest-in-progress present)", flush=True)
+        _MAINTAIN_LOG.emit("INFO", "maintain.skipped", reason="retest_in_progress")
+        return 0
+
+    # Load backlog
+    if not _BACKLOG_PATH.exists():
+        print("maintain: backlog not found, no-op", flush=True)
+        return 0
+
+    try:
+        header_prose, entries = _parse_backlog(_BACKLOG_PATH)
+    except Exception as e:
+        print(f"maintain: backlog parse error: {e}", file=sys.stderr)
+        _MAINTAIN_LOG.emit("ERROR", "maintain.backlog.parse_error", error=str(e))
+        return 2
+
+    crash_rc = 0
+
+    # --- Crash path ---
+    if trigger in ("crash", "manual"):
+        log_path = REPO_ROOT / ".omc" / "last_eval.log"
+        if log_path.exists():
+            try:
+                log_text = log_path.read_text(encoding="utf-8", errors="replace")
+            except Exception as e:
+                log_text = ""
+                _MAINTAIN_LOG.emit("WARN", "maintain.crash.log_read_error", error=str(e))
+
+            # Determine eval exit code from log: check for non-zero exit signals
+            # Since we don't have direct access to the shell exit code here,
+            # we infer from traceback presence + the log content.
+            # The wrapper sets trigger=crash only after a failing eval/retrain;
+            # treat as exit_code=1 if traceback found, else exit_code=0 for
+            # catastrophic-discard (diagnose.catastrophic path).
+            tb = _extract_last_traceback(log_text)
+            # Infer eval exit code: if RESULTS_TSV line is present and combined
+            # is <=0.05, pipeline ran clean (catastrophic discard = exit 0).
+            eval_exit_code = 1 if tb is not None else 0
+            # Check for parse_fail pattern (exit 1, no traceback)
+            # If log exists but is tiny/empty and no traceback, treat as exit 1.
+            if tb is None and not log_text.strip():
+                eval_exit_code = 1
+
+            category = _classify_crash(log_text, eval_exit_code)
+            _MAINTAIN_LOG.emit("INFO", "maintain.crash.classified", category=category,
+                               trigger=trigger)
+            print(f"maintain: crash classified as {category}", flush=True)
+
+            if category in ("retrain_crash", "pipeline_bug"):
+                counter = _load_state() + 1
+                _save_state(counter)
+                _MAINTAIN_LOG.emit("INFO", "maintain.crash.counter",
+                                   category=category, counter=counter, threshold=3)
+                print(f"maintain: crash counter={counter}", flush=True)
+                if counter >= 3:
+                    _MAINTAIN_LOG.emit("WARN", "maintain.halt",
+                                       reason="consecutive_crash_threshold",
+                                       counter=counter, category=category)
+                    print(f"maintain: HALT — {counter} consecutive crashes (category={category})",
+                          flush=True)
+                    crash_rc = 1
+            elif category == "hypothesis_content":
+                _save_state(0)
+            elif category == "unclassifiable":
+                _MAINTAIN_LOG.emit("WARN", "maintain.crash.unclassifiable",
+                                   trigger=trigger)
+                print("maintain: WARN — unclassifiable crash, counter not incremented", flush=True)
+        else:
+            if trigger == "crash":
+                print("maintain: last_eval.log not found, no crash to classify", flush=True)
+
+    # If crash path says halt, return immediately (skip periodic triage)
+    if crash_rc == 1:
+        return 1
+
+    # --- Periodic/manual path: triage enhancement bullets ---
+    if trigger in ("periodic", "manual"):
+        _triage_enhancements(header_prose, entries)
+
     return 0
+
+
+def _triage_enhancements(header_prose: str, entries: list[dict]) -> None:
+    """Scan research_notes for new enhancement bullets; update backlog; draft specs."""
+    # Determine since_sha from last_seen of the most recently updated entry
+    # Use the most recent last_seen SHA across all entries as the scan baseline.
+    last_seens = [e.get("last_seen", "") for e in entries if e.get("last_seen")]
+    # Pick the one with the most recent commit time
+    since_sha = ""
+    if last_seens:
+        best_time = -1
+        for sha in last_seens:
+            t = _sha_commit_time(sha)
+            if t is not None and t > best_time:
+                best_time = t
+                since_sha = sha
+
+    try:
+        bullets = _extract_enhancement_bullets(_RESEARCH_NOTES_PATH, since_sha)
+    except Exception as e:
+        _MAINTAIN_LOG.emit("WARN", "maintain.bullets.extract_error", error=str(e))
+        bullets = []
+
+    changed = False
+
+    for sha, bullet in bullets:
+        match = _fuzzy_match(bullet, entries)
+        if match is not None:
+            # Bump request_count and last_seen
+            try:
+                old_count_str = match.get("request_count", "0")
+                # request_count may have trailing text like "2+" or "3+ (some note)"
+                old_count = int(re.match(r"\d+", old_count_str).group()) if re.match(r"\d+", old_count_str) else 0
+            except Exception:
+                old_count = 0
+            match["request_count"] = str(old_count + 1)
+            match["last_seen"] = sha
+            _MAINTAIN_LOG.emit("INFO", "maintain.backlog.bump",
+                               entry_id=match.get("id"), sha=sha,
+                               new_count=old_count + 1)
+            print(f"maintain: bumped request_count for '{match.get('id')}' "
+                  f"(now {old_count + 1})", flush=True)
+            changed = True
+        else:
+            # Append new entry
+            new_id = _bullet_to_id(bullet)
+            new_entry: dict = {
+                "id": new_id,
+                "status": "pending",
+                "first_seen": sha,
+                "last_seen": sha,
+                "request_count": "1",
+                "category": "observability",
+                "risk": "medium",
+                "excerpt": bullet[:300],
+                "notes": "Auto-triaged by supervisor_agent.py --maintain. Needs human review.",
+                "_extra_lines": [],
+            }
+            entries.append(new_entry)
+            _MAINTAIN_LOG.emit("INFO", "maintain.backlog.new_entry",
+                               entry_id=new_id, sha=sha)
+            print(f"maintain: new backlog entry '{new_id}' from sha={sha}", flush=True)
+            changed = True
+
+    # Spec drafting: status=pending, risk=low, request_count >= 3
+    for entry in entries:
+        if entry.get("status") != "pending":
+            continue
+        risk = entry.get("risk", "")
+        if not risk.startswith("low"):
+            continue
+        try:
+            count_str = entry.get("request_count", "0")
+            count = int(re.match(r"\d+", count_str).group()) if re.match(r"\d+", count_str) else 0
+        except Exception:
+            count = 0
+        if count < 3:
+            continue
+        spec_path = _draft_spec(entry, _SPECS_DIR)
+        if spec_path is not None:
+            entry["status"] = "spec_drafted"
+            _MAINTAIN_LOG.emit("INFO", "maintain.spec.drafted",
+                               entry_id=entry.get("id"), path=str(spec_path))
+            print(f"maintain: spec drafted for '{entry.get('id')}' -> {spec_path.name}",
+                  flush=True)
+            changed = True
+
+    # Auto-defer: status=spec_drafted, spec_drafted_fires >= 3 (tracked in extra field)
+    for entry in entries:
+        if entry.get("status") != "spec_drafted":
+            continue
+        try:
+            fires = int(entry.get("spec_drafted_fires", "0") or "0")
+        except Exception:
+            fires = 0
+        fires += 1
+        entry["spec_drafted_fires"] = str(fires)
+        if fires >= 3:
+            entry["status"] = "deferred"
+            _MAINTAIN_LOG.emit("INFO", "maintain.backlog.deferred",
+                               entry_id=entry.get("id"), fires=fires)
+            print(f"maintain: deferred '{entry.get('id')}' after {fires} fires", flush=True)
+        changed = True  # always update fires counter if spec_drafted
+
+    if changed:
+        try:
+            _serialize_backlog(header_prose, entries, _BACKLOG_PATH)
+            _MAINTAIN_LOG.emit("INFO", "maintain.backlog.written",
+                               path=str(_BACKLOG_PATH))
+            print("maintain: backlog updated", flush=True)
+        except Exception as e:
+            _MAINTAIN_LOG.emit("ERROR", "maintain.backlog.write_error", error=str(e))
+            print(f"maintain: ERROR writing backlog: {e}", file=sys.stderr)
+    else:
+        print("maintain: no changes (backlog up-to-date)", flush=True)
+
+
+def _bullet_to_id(bullet: str) -> str:
+    """Convert a bullet string to a kebab-case id (max 40 chars)."""
+    words = re.sub(r"[^\w\s]", "", bullet.lower()).split()
+    slug = "-".join(words[:6])
+    return slug[:40] or "enhancement"
+
+
 
 
 def main():
@@ -1598,7 +2221,7 @@ def main():
         action="store_true",
         help=(
             "Triage agent-requested enhancements and classify crashes. "
-            "Requires --trigger. (v2 — stub in this commit; full impl in commit 2.)"
+            "Requires --trigger."
         ),
     )
     mode.add_argument(

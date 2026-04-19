@@ -1,0 +1,5 @@
+Running something...
+Traceback (most recent call last):
+  File "/usr/local/lib/python3/some_third_party_lib/unknown.py", line 42, in process
+    result = do_thing()
+RuntimeError: Something unexpected happened in a third-party library

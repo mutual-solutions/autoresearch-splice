@@ -1,0 +1,8 @@
+Running train_classifier.py...
+Fitting pipeline...
+Traceback (most recent call last):
+  File "/repo/splice/classifier/train_classifier.py", line 120, in main
+    pipe.fit(X_train, y_train)
+  File "/usr/lib/python3/sklearn/pipeline.py", line 405, in fit
+    self._fit(X, y, **fit_params)
+ValueError: Input contains NaN, infinity or a value too large for dtype('float64').

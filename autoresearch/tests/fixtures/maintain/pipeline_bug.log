@@ -1,0 +1,8 @@
+Running evaluate.py...
+Processing files...
+Traceback (most recent call last):
+  File "/repo/autoresearch/supervisor_agent.py", line 500, in run_loop
+    result = evaluate()
+  File "/repo/splice/detector.py", line 88, in detect_splices
+    scores = model.predict_proba(features)
+AttributeError: 'HistGradientBoostingClassifier' object has no attribute 'predict_proba'

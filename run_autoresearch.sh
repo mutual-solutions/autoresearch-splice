@@ -457,6 +457,50 @@ SENTINEL_EOF
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# US-517: supervisor_agent.py --maintain helpers
+# ---------------------------------------------------------------------------
+
+_maybe_crash_maintain() {
+    # Invoked after each --diagnose site. Checks the disable sentinel,
+    # runs --maintain --trigger=crash, and halts the loop on exit code 1.
+    if [ -f "$PROJECT_DIR/.omc/maintainer-disabled" ]; then
+        return 0
+    fi
+    set +e
+    PYTHONPATH="$PROJECT_DIR" uv run python autoresearch/supervisor_agent.py --maintain --trigger=crash \
+        >>"$CHILD_STDERR_LOG" 2>&1
+    _maintain_rc=$?
+    set -e
+    if [ "$_maintain_rc" -eq 1 ]; then
+        touch "$STOP_FILE"
+        _log WARN wrapper maintain.halt trigger=crash
+    elif [ "$_maintain_rc" -ge 2 ]; then
+        _log ERROR wrapper maintain.crash rc="$_maintain_rc"
+    fi
+}
+
+_maybe_periodic_maintain() {
+    # Invoked after each iteration summary. Fires on multiples of 10 iterations.
+    if [ -f "$PROJECT_DIR/.omc/maintainer-disabled" ]; then
+        return 0
+    fi
+    _maintain_iter_count=$(( $(wc -l < "$RESULTS" 2>/dev/null || echo 1) - 1 ))
+    if [ "$_maintain_iter_count" -gt 0 ] && [ $((_maintain_iter_count % 10)) -eq 0 ]; then
+        set +e
+        PYTHONPATH="$PROJECT_DIR" uv run python autoresearch/supervisor_agent.py --maintain --trigger=periodic \
+            >>"$CHILD_STDERR_LOG" 2>&1
+        _maintain_rc=$?
+        set -e
+        if [ "$_maintain_rc" -eq 1 ]; then
+            touch "$STOP_FILE"
+            _log WARN wrapper maintain.halt trigger=periodic
+        elif [ "$_maintain_rc" -ge 2 ]; then
+            _log ERROR wrapper maintain.crash rc="$_maintain_rc"
+        fi
+    fi
+}
+
 run_loop() {
     cd "$PROJECT_DIR"
     rm -f "$STOP_FILE"
@@ -944,6 +988,7 @@ except Exception:
                     followup="verify-fail"
                 uv run python autoresearch/supervisor_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 || true
+                _maybe_crash_maintain
                 log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
                 _guarded_reset "$head_before"
                 _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -1014,6 +1059,7 @@ except Exception:
                 tail="$(tail -1 "$PROJECT_DIR/.omc/last_eval.log" 2>/dev/null)"
             uv run python autoresearch/supervisor_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
+            _maybe_crash_maintain
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -1030,6 +1076,7 @@ except Exception:
             _log ERROR wrapper eval.parse_fail reason="no_combined_in_results_tsv"
             uv run python autoresearch/supervisor_agent.py --diagnose \
                 >>"$CHILD_STDERR_LOG" 2>&1 || true
+            _maybe_crash_maintain
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
             _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
@@ -1055,7 +1102,8 @@ except Exception:
                     floor=0.01 action=diagnose
                 uv run python autoresearch/supervisor_agent.py --diagnose \
                     >>"$CHILD_STDERR_LOG" 2>&1 \
-                    || _log ERROR pipeline failure script=supervisor_agent.py arg=diagnose rc="$?"
+                    || _log ERROR pipeline failure "script=supervisor_agent.py --diagnose" rc="$?"
+                _maybe_crash_maintain
             fi
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
             _guarded_reset "$head_before"
@@ -1063,6 +1111,11 @@ except Exception:
             _phase_skip verify
             _phase_end total
             _iter_summary "$hypothesis_commit" "discard"
+            # US-517: reset crash counter on non-catastrophic discard (combined > 0.05)
+            if [ "$_catastrophic" != "1" ]; then
+                echo 0 > "$PROJECT_DIR/.omc/supervisor-crash-counter.txt"
+            fi
+            _maybe_periodic_maintain
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
@@ -1107,8 +1160,12 @@ except Exception:
         # in the loop call path.
         _do_keep_path "$hypothesis_commit" "$reported" "$current_best" "$hypothesis_subject"
 
+        # US-517: reset crash counter on successful keep
+        echo 0 > "$PROJECT_DIR/.omc/supervisor-crash-counter.txt"
+
         _phase_end total
         _iter_summary "$hypothesis_commit" "keep"
+        _maybe_periodic_maintain
 
         # Brief pause between iterations
         sleep 2

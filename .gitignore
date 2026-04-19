@@ -126,3 +126,7 @@ reports/
 # experiment output, not repo source.
 /sweep_*.png
 /sweep_*.json
+
+# US-517 supervisor_agent.py --maintain runtime state (crash counter + disable sentinel)
+.omc/supervisor-crash-counter.txt
+.omc/maintainer-disabled

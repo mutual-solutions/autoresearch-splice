@@ -254,3 +254,40 @@ Imports resolve via `PYTHONPATH=$PWD uv run python ...`, which the
 wrapper `run_autoresearch.sh` sets via `export PYTHONPATH=...`.
 Direct operator invocations outside the wrapper require setting
 PYTHONPATH manually (e.g., `PYTHONPATH=$PWD uv run python scripts/dashboard.py`).
+
+## Supervisor agent maintenance (US-517)
+
+`autoresearch/supervisor_agent.py --maintain` triages agent-requested enhancements and classifies crashes. No LLM; no code generation. Stdlib only.
+
+### Triggers
+
+- `--trigger=crash` — runs after every `--diagnose` call (4 crash sites in the wrapper). Classifies the crash, updates the crash counter, halts the loop if `>= 3` consecutive infrastructure crashes.
+- `--trigger=periodic` — runs every 10 iterations (by `results.tsv` row count). Scans `research_notes.md` for new `(e) Wrapper enhancements` bullets, deduplicates against `.omc/enhancement-backlog.md`, drafts ralplan specs for eligible entries.
+- `--trigger=manual` — operator invocation; runs both crash classification and periodic triage.
+
+### Exit-code contract
+
+- `0` — continue normally
+- `1` — halt the loop (touch `.omc/autoresearch-stop`)
+- `>=2` — unexpected error; wrapper logs WARN and continues
+
+### Disable sentinel
+
+Create `.omc/maintainer-disabled` to disable all `--maintain` invocations without restarting the loop. Remove to re-enable. The sentinel is checked once per invocation; an in-flight `--maintain` call runs to completion.
+
+### Counter file
+
+`.omc/supervisor-crash-counter.txt` — single-line integer. Incremented on `retrain_crash` or `pipeline_bug` crashes; reset to `0` on any successful iteration (keep, non-catastrophic discard, or skip). Gitignored.
+
+### 4-category crash classifier
+
+| Category | Condition | Counter policy |
+|---|---|---|
+| `retrain_crash` | sklearn/train_classifier.py frame OR `classifier.retrain.failed` event | Increment; halt at >= 3 |
+| `pipeline_bug` | runtime module frame (autoresearch/, splice/detector.py, etc.) OR no traceback + exit!=0 | Increment; halt at >= 3 |
+| `hypothesis_content` | no traceback + exit 0 (catastrophic discard) | Reset counter to 0 |
+| `unclassifiable` | traceback present but unrecognized frame | Do NOT increment; emit WARN |
+
+### Spec drafting
+
+Entries with `status: pending`, `risk: low`, and `request_count >= 3` get a spec file at `.omc/specs/deep-interview-<id>.md`. Existing files are never overwritten. After 3 fires without human action, `status` transitions to `deferred`.
