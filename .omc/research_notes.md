@@ -3595,3 +3595,96 @@ per-domain: combined_english=0.690476 combined_korean=0.428169 combined_singing=
     into a numeric decision. (3) Per-domain pairwise_proximity histogram
     on the surviving emits to confirm biteable bands.
 
+## 2026-04-20T02:18:21+09:00 — 634cdd2 (verify-fail, combined=0.488272)
+subject: add chroma_cosine_dist feature (FEATURE_NAMES 75->76)
+per-domain: combined_english=0.690476 combined_korean=0.428169 combined_singing=0.393750
+
+# 2026-04-20 — hypothesis: add chroma pre/post cosine DISTANCE feature
+
+(a) HYPOTHESIS. Structural change to `splice/features.py` — add ONE new
+    feature `chroma_cosine_dist` (FEATURE_NAMES 75→76). At each analysis
+    position t_sec, compute the mean 12-dim `librosa.feature.chroma_stft`
+    vector on pre-window [t−2, t] and post-window [t, t+2], then store
+    the cosine DISTANCE (1 − cos_sim). Precompute the full-chunk chroma
+    matrix inside `_ensure_feat_cache` (one librosa call per chunk,
+    ~30–80 ms) and slice via the existing `_slice_frames` helper to
+    keep per-t cost negligible. Wrapper auto-retrains via the
+    feature-sha gate (US-505).
+
+(b) WHY this direction over recent failures. The last 7 iterations —
+    eb8984e, 55b21e6, 6b28235, 3e4e996, 3b365fe, plus the 273b8f5-
+    865d92f-29c06cf DSP-gate keeps — have ALL operated on variations of
+    the DSP SUM/MAX/CPE/pairwise floor. Singing is now the weakest
+    domain at 0.360 (it was 0.388 pre-29c06cf) and the DSP-gate axis
+    has stopped finding new precision without dropping real-splice
+    recall. CLAUDE.md explicitly directs a structural change after 5+
+    consecutive same-axis failures. Chroma is genuinely untried:
+    history shows remote-half MFCC (timbre), spec_rolloff_far_delta
+    (companion time-scale), file_hpr (tonality), per-bin phase
+    residual, but ZERO chroma-based features. Chroma is physically
+    motivated for the weakest-domain failure mode: singing chord
+    transitions preserve KEY (C-major→A-minor still shares [C,E,G,A]
+    pitch classes → small cosine distance ≤0.2), whereas cross-song
+    splices change key entirely (different scale/mode → 0.3–0.7).
+    GBM's current top-SHAP features
+    (spec_rolloff_delta/spec_centroid_delta/spec_bandwidth_delta)
+    measure spectral SHAPE shift, not pitch-class continuity, so
+    chord transitions with a 2000-Hz rolloff jump all look like
+    splices. Chroma is the scalar that says "the tonal content DIDN'T
+    shift to a new key" even when the spectral shape jumped — exactly
+    the chord-transition-FP discriminator. Orthogonal to every prior
+    axis: not DSP (physical-signal z-scores), not spectral-delta
+    (magnitude spectrum statistics), not MFCC (cepstral timbre), not
+    f0 (single-pitch), not ENF/codec/mel-PCA. Blast radius: +1
+    feature to FEATURE_NAMES, +1 block, +1 cache key in
+    _ensure_feat_cache. Classifier sha auto-invalidates so wrapper
+    retrains (~3 min). Per-t cost: slice 12×n_frames mean + 12-dim
+    cosine, sub-ms. Per-chunk cost: ~30–80 ms for chroma_stft on
+    60 s.
+
+(c) IF THIS FAILS. Three paths. (1) If GBM assigns ~0 SHAP to the new
+    feature (didn't help), replace with a PCP-based feature that
+    weights the chroma vector by voiced-frame energy so silence/
+    instrumental gaps don't dilute the key signature. (2) If it helps
+    singing but hurts speech (chroma on speech is noise), HPR-gate
+    the feature: zero it out when file_hpr<0.5. (3) Final escalation:
+    add `chroma_persistence_far` — cosine distance between t-window
+    chroma and [t+4, t+8] chroma, capturing "cross-source tonal
+    content persists far after the cut" which discriminates a real
+    source-change (far chroma stays different) from a chord cycle-
+    back (far chroma returns to original).
+
+(d) Information gaps. (i) Per-position feature values on the 2 singing
+    / 4 korean clean FPs are STILL not in CURRENT STATE — the same
+    blocker flagged in 10+ consecutive reflections. I am picking
+    chroma vs. other candidate features from physical theory not
+    observed failure values. (ii) Per-domain OOF weighted-F1 with vs
+    without the candidate feature would let me preview whether chroma
+    even has discriminative lift over the 75 existing features; no
+    such per-feature OOF-lift oracle exists pre-commit. (iii)
+    Training-data chunk chroma distributions per class (not_splice vs
+    hard_cut vs crossfade) aren't surfaced — I can't predict whether
+    training rows exhibit the theoretical signal separation.
+
+(e) Wrapper enhancements. (1) `scripts/feature_oof_preview.py --add
+    chroma_cosine_dist` that retrains once and reports per-domain OOF
+    F1 delta vs current classifier, turning "is chroma worth adding"
+    from a bet into a pre-commit numeric. (2) `CLEAN_FP_POSITIONS`
+    JSON block in CURRENT STATE — SUPER-persistent blocker; per
+    position (domain, file, t_sec, label_id, p_splice, dsp_phase_z,
+    dsp_t2_z, dsp_cpe_z, top-5 most-influential features by absolute
+    SHAP). Every feature-add hypothesis is guessing which scalar
+    discriminates the failure set. (3)
+    `scripts/feature_class_separability.py --feature FEATURE_NAME`
+    that computes Welch's t statistic between not_splice and
+    (hard_cut+crossfade) training rows for a candidate feature, so I
+    can rank candidate features by training-time separability before
+    committing to a retrain cycle.
+
+
+---
+## [auto-diagnosis]
+diagnose: no-traceback
+tsv: RESULTS_TSV: combined=<REDACTED> combined_mean=<REDACTED> combined_min=<REDACTED> clean_fp=6 n_datasets=3 combined_english=<REDACTED> clean_fp_english=0 combined_korean=<REDACTED> clean_fp_korean=4 combined_singing=<REDACTED> clean_fp_singing=2
+note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
+
