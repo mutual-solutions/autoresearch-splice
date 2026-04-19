@@ -1697,17 +1697,27 @@ def _normalize_text(s: str) -> str:
     return " ".join(tokens)
 
 
+_TERMINAL_STATUSES = frozenset({"implemented", "rejected"})
+
+
 def _fuzzy_match(needle: str, haystack_entries: list[dict],
                  threshold: float = 0.5) -> dict | None:
     """Return the best matching entry from haystack_entries or None.
 
     Matches needle against each entry's 'excerpt' field (case-folded).
     Returns first entry with SequenceMatcher ratio >= threshold, or None.
+
+    Entries with terminal statuses (``implemented``, ``rejected``) are
+    SKIPPED: a new bullet must not resurrect a closed item by bumping
+    its request_count. If the same request recurs after implementation,
+    it becomes a new ``pending`` entry that the operator can then triage.
     """
     needle_norm = _normalize_text(needle)
     best_ratio = 0.0
     best_entry = None
     for entry in haystack_entries:
+        if entry.get("status", "").strip().lower() in _TERMINAL_STATUSES:
+            continue
         excerpt = entry.get("excerpt", "") or entry.get("id", "")
         ratio = _difflib.SequenceMatcher(
             None, needle_norm, _normalize_text(excerpt)
@@ -1822,9 +1832,19 @@ def _draft_spec(entry: dict, specs_dir: Path) -> Path | None:
     """Write a minimal spec template for entry to specs_dir/deep-interview-<id>.md.
 
     Returns the path if created, or None if skipped (already exists).
+    Sanitizes entry id against path-traversal: a hand-edited backlog
+    H2 like `## ../../detector` would otherwise resolve outside specs_dir.
     """
-    entry_id = entry.get("id", "unknown")
-    out_path = specs_dir / f"deep-interview-{entry_id}.md"
+    raw_id = entry.get("id", "unknown")
+    # Allow only word chars and hyphens in the filesystem slug.
+    safe_id = re.sub(r"[^\w-]", "", raw_id)[:60] or "unknown"
+    out_path = specs_dir / f"deep-interview-{safe_id}.md"
+    # Belt-and-suspenders: confirm the resolved path stays inside specs_dir.
+    try:
+        out_path.resolve().relative_to(specs_dir.resolve())
+    except ValueError:
+        return None
+    entry_id = safe_id  # use sanitized form in the spec body too
     if out_path.exists():
         return None
 
@@ -2239,6 +2259,10 @@ def main():
         metavar="FROM_SHA",
         help="Replay discarded hypotheses from FROM_SHA.",
     )
+    # Debug/test harnesses — part of the mode group so `required=True` is
+    # satisfied when invoked standalone (ships suppressed in --help).
+    mode.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
+    mode.add_argument("--retest-self-test", action="store_true", help=argparse.SUPPRESS)
 
     # --verify subflags
     parser.add_argument("--agent-name", help="Name of the agent being verified (--verify).")
@@ -2273,10 +2297,6 @@ def main():
         help="Force re-evaluation (--retest).",
     )
     parser.add_argument("--retest-origin", help=argparse.SUPPRESS)
-
-    # Debug flags (not in the mutually exclusive group — dev-only, not called by wrapper)
-    parser.add_argument("--self-test", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("--retest-self-test", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
 
