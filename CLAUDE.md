@@ -243,9 +243,10 @@ Phase-2 migration landed with this PR. Scope:
   evaluate, classifier/). Not reusable; swap this dir to target a
   different detection problem.
 - `scripts/` — operator tools (dashboard, phase_stats, log_monitor,
-  eval_crypto, test_crypto, tunable_frontier, diagnose_repeat_rate,
-  notebook_digest, shap_shift, shap_rollup, validate_logs). Thin CLIs
-  that import from `autoresearch` / `splice`.
+  eval_crypto, test_crypto, tunable_frontier, notebook_digest,
+  shap_shift, shap_rollup, splice_boundary, regenerate_datasets,
+  validate_logs). Thin CLIs that import from `autoresearch` /
+  `splice`.
 - `.omc/` — pure runtime state (logs, plans, specs, research_notes,
   retest artifacts, feature_cache, sentinels). Zero `*.py`.
 

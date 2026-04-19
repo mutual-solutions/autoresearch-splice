@@ -111,3 +111,18 @@ reports/
 .omc/retest-worktree/
 .omc/retest-in-progress
 .omc/retest-report.md
+
+# Manual-run log spill at repo root (autoresearch loop writes to .omc/logs/).
+# Operators frequently `python script.py 2>err.log >out.log` or `./run_autoresearch.sh ... > run.log`;
+# without these patterns the root reaccumulates with diag/run/warnings logs between cleanups.
+/*.log
+/*.stderr
+/*.stdout
+.omc/classifier/*.log
+.omc/classifier/*.stderr
+.omc/classifier/*.stdout
+
+# Ablation-sweep artifacts (e.g., sweep_duration.{json,png}) — operator
+# experiment output, not repo source.
+/sweep_*.png
+/sweep_*.json

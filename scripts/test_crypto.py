@@ -178,7 +178,7 @@ def _decrypt(key: bytes, blob: bytes) -> bytes:
 def cmd_setup(args) -> None:
     if not PLAINTEXT_DIR.exists():
         _die(f"{PLAINTEXT_DIR} not found. Regenerate with "
-             "`uv run python data_synth/regenerate_datasets.py --domain all --split test`")
+             "`uv run python scripts/regenerate_datasets.py --domain all --split test`")
     _check_helper()
     print("Generating fresh 32-byte AES-256 key…")
     key = secrets.token_bytes(KEY_LEN)
