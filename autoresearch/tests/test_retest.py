@@ -476,7 +476,8 @@ def test_keep_path_verb_byte_identical_commit_message(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git("init", "-q", cwd=repo)
-    (repo / "detector.py").write_text("# detector\n")
+    (repo / "splice").mkdir()
+    (repo / "splice" / "detector.py").write_text("# detector\n")
     (repo / ".omc").mkdir()
     (repo / ".omc" / "classifier").mkdir()
     (repo / "autoresearch").mkdir()
@@ -504,8 +505,8 @@ def test_keep_path_verb_byte_identical_commit_message(tmp_path):
          env={"GIT_COMMITTER_DATE": "2026-01-01T00:00:00"})
 
     # Create a "hypothesis" commit whose SHA will be the $1 arg.
-    (repo / "detector.py").write_text("# detector v2\n")
-    _git("add", "detector.py", cwd=repo)
+    (repo / "splice" / "detector.py").write_text("# detector v2\n")
+    _git("add", "splice/detector.py", cwd=repo)
     _git("commit", "-q", "-m", "hypothesis: test axis tweak", cwd=repo,
          env={"GIT_COMMITTER_DATE": "2026-02-01T00:00:00"})
     hypo_sha_short = _git("rev-parse", "--short", "HEAD", cwd=repo).stdout.strip()
@@ -562,11 +563,12 @@ def test_check_git_diff_audit_warn_on_missing_env(tmp_path, monkeypatch):
 
     # Protected-file edit must FAIL regardless of env. Track the file
     # first so `git diff` sees the modification surface.
-    (repo / "evaluate.py").write_text("# placeholder\n")
-    _git("add", "evaluate.py", cwd=repo)
-    _git("commit", "-q", "-m", "add placeholder evaluate.py", cwd=repo)
+    (repo / "splice").mkdir(exist_ok=True)
+    (repo / "splice" / "evaluate.py").write_text("# placeholder\n")
+    _git("add", "splice/evaluate.py", cwd=repo)
+    _git("commit", "-q", "-m", "add placeholder splice/evaluate.py", cwd=repo)
     # Now modify it — this produces an unstaged working-tree diff.
-    (repo / "evaluate.py").write_text("# protected and tampered\n")
+    (repo / "splice" / "evaluate.py").write_text("# protected and tampered\n")
     monkeypatch.delenv("OMC_HEAD_BEFORE", raising=False)
     status3, detail3 = mod.check_git_diff_audit()
     assert status3 == "FAIL", (

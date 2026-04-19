@@ -33,11 +33,11 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 _MIGRATED_FILES = [
-    REPO / "detector.py",
-    REPO / "features.py",
-    REPO / "ml_eval.py",
-    REPO / ".omc" / "classifier" / "shap_report.py",
-    REPO / ".omc" / "classifier" / "train_classifier.py",
+    REPO / "splice" / "detector.py",
+    REPO / "splice" / "features.py",
+    REPO / "splice" / "ml_eval.py",
+    REPO / "splice" / "classifier" / "shap_report.py",
+    REPO / "splice" / "classifier" / "train_classifier.py",
 ]
 
 _REQUIRED_KEYS = ("schema_version", "ts", "level", "subsystem", "event")

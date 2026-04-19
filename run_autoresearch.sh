@@ -72,10 +72,10 @@ _iter_summary() {
 
 # Paths that MUST survive every hypothesis rollback. Wrapper and
 # infrastructure — NOT the claude-editable hypothesis surface
-# (detector.py / features.py / classifier joblib+meta). Without
+# (splice/detector.py / splice/features.py / classifier joblib+meta). Without
 # guarding, any in-flight edit to these files is wiped by the next
 # `git reset --hard` on a discard. Root cause of losses earlier in
-# this session (the portable-timeout fix, features.py cache code).
+# this session (the portable-timeout fix, splice/features.py cache code).
 _GUARD_PATHS=(
     run_autoresearch.sh
     scripts/
@@ -283,7 +283,7 @@ _do_keep_path() {
     VERSION=$(($(git tag -l 'detector-v*' 2>/dev/null | wc -l) + 1))
     git tag "detector-v$VERSION"
     local SNAP="$PROJECT_DIR/.omc/classifier/detector_v${VERSION}.py"
-    cp "$PROJECT_DIR/detector.py" "$SNAP"
+    cp "$PROJECT_DIR/splice/detector.py" "$SNAP"
 
     # Update baseline_metrics.json from the RESULTS_TSV line on disk.
     python3 - "$PROJECT_DIR" <<'PYEOF'
@@ -404,11 +404,11 @@ _do_ensure_classifier_fresh() {
     # present, callers (the loop) own commit policy; this function only
     # stages the artifacts so the caller can amend or commit separately.
     local features_sha_now features_sha_trained
-    features_sha_now=$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")
+    features_sha_now=$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")
     features_sha_trained=$(python3 -c "
 import json, sys
 try:
-    d = json.load(open('.omc/classifier/fp_classifier.meta.json'))
+    d = json.load(open('splice/classifier/fp_classifier.meta.json'))
     print(d.get('features_py_sha') or '')
 except Exception:
     print('')
@@ -421,11 +421,11 @@ except Exception:
         was="$features_sha_trained" now="$features_sha_now"
     local retrain_cmd=()
     if command -v timeout >/dev/null 2>&1; then
-        retrain_cmd=(timeout 300 uv run python .omc/classifier/train_classifier.py)
+        retrain_cmd=(timeout 300 uv run python splice/classifier/train_classifier.py)
     elif command -v gtimeout >/dev/null 2>&1; then
-        retrain_cmd=(gtimeout 300 uv run python .omc/classifier/train_classifier.py)
+        retrain_cmd=(gtimeout 300 uv run python splice/classifier/train_classifier.py)
     else
-        retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
+        retrain_cmd=(uv run python splice/classifier/train_classifier.py)
     fi
     set +e
     "${retrain_cmd[@]}" >>"$CHILD_STDERR_LOG" 2>&1
@@ -435,8 +435,8 @@ except Exception:
         _log ERROR wrapper retrain.failed rc="$rc" caller=ensure_classifier_fresh
         return 1
     fi
-    git add .omc/classifier/fp_classifier.joblib \
-            .omc/classifier/fp_classifier.meta.json >>"$CHILD_STDERR_LOG" 2>&1 || true
+    git add splice/classifier/fp_classifier.joblib \
+            splice/classifier/fp_classifier.meta.json >>"$CHILD_STDERR_LOG" 2>&1 || true
     return 0
 }
 
@@ -521,7 +521,7 @@ run_loop() {
     # gets its own subdir; when the sha changes, the old one becomes
     # dead weight (~1.5 GB per dir on this dataset). Keep only the dir
     # matching the current features.py sha.
-    _CUR_FEAT_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")"
+    _CUR_FEAT_SHA="$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")"
     if [ -d "$PROJECT_DIR/.omc/feature_cache" ] && [ -n "$_CUR_FEAT_SHA" ]; then
         for d in "$PROJECT_DIR/.omc/feature_cache"/*/; do
             [ -d "$d" ] || continue
@@ -680,7 +680,7 @@ for dom in sorted(per):
         iteration_output=$(env -u OMC_EVAL_DATA_ROOT -u OMC_FEATURE_CACHE_DIR -u OMC_FEATURES_PY_SHA claude -p "You are forming ONE hypothesis for the audio splice detection project.
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
-evaluate.py iterates dataset_registry.DATASETS (singing / korean / english)
+splice/evaluate.py iterates splice.dataset_registry.DATASETS (singing / korean / english)
 and for each dataset computes:
     splice_f1   = harmonic_mean(precision, recall) over spliced files
     clean_score = 1 - clean_fp / n_clean_files          (clamped to [0,1])
@@ -707,17 +707,17 @@ ${iter_summary:+Progress: $iter_summary}
 
 ==== ARCHITECTURE & TUNABLE SURFACE =======================================
 detect_splices runs a GBM-first dense scan.
-  PRIMARY (instant) — detector.py:
+  PRIMARY (instant) — splice/detector.py:
       GBM_THRESHOLD         P(splice)>thr is an emit (higher = fewer FP)
       GBM_MIN_SEP_S         dedupe distance for adjacent emits
       ANALYSIS_STRIDE_S     dense-scan stride (smaller = denser, slower)
-  RETRAIN (~3 min) — .omc/classifier/train_classifier.py:
+  RETRAIN (~3 min) — splice/classifier/train_classifier.py:
       GradientBoostingClassifier hyperparams (n_estimators, max_depth,
       learning_rate, subsample).
-  Feature engineering: features.py (extend FEATURE_NAMES). Requires retrain.
+  Feature engineering: splice/features.py (extend FEATURE_NAMES). Requires retrain.
   DO NOT tune ml_config.py — legacy path, zero effect on combined.
   DO NOT tune _detect_phase/_detect_crossfade/_detect_cpe/_detect_pairwise
-  internal thresholds — DSP fallback path, not exercised by evaluate.py.
+  internal thresholds — DSP fallback path, not exercised by splice/evaluate.py.
 
 ==== HISTORY ==============================================================
 RECENT FAILED HYPOTHESES (last 30; per-domain combined in brackets):
@@ -735,19 +735,19 @@ Read-only artifacts for deeper context:
 ==== ACCESS RULES =========================================================
 - The plaintext eval corpus (data/eval/) is NOT on disk and is NOT
   accessible to you. Do not attempt to read it or infer its location.
-  The wrapper will run evaluate.py against an encrypted-then-decrypted
+  The wrapper will run splice/evaluate.py against an encrypted-then-decrypted
   copy after you commit.
-- Do NOT run evaluate.py — the wrapper does this and parses the result.
+- Do NOT run splice/evaluate.py — the wrapper does this and parses the result.
 - Do NOT write to results.tsv or autoresearch/baseline_metrics.json
   — the wrapper owns both.
-- Do NOT edit evaluate.py, autoresearch/manifest.json,
+- Do NOT edit splice/evaluate.py, autoresearch/manifest.json,
   autoresearch/preflight.py — protected.
 
 ==== ONE ITERATION ========================================================
 0. Read the RESEARCH NOTES above — your prior reflections about what you
    tried, why, and what to try next. If 5+ recent entries all failed on
    the same tunable axis, seriously consider a structural change
-   (features.py / train_classifier.py) instead of another tweak.
+   (splice/features.py / splice/classifier/train_classifier.py) instead of another tweak.
 1. Write 5-8 lines to .omc/last_reflection.md (the wrapper will capture
    this into the permanent research notebook regardless of keep/discard):
      (a) what hypothesis you're about to try
@@ -769,11 +769,11 @@ Read-only artifacts for deeper context:
 3. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
    tunables only when primary feels exhausted.
    CRITICAL: Do NOT repeat a hypothesis from RECENT FAILED HYPOTHESES.
-4. Edit detector.py / features.py / train_classifier.py with the smallest
-   viable change. The wrapper auto-retrains when features.py changes —
+4. Edit splice/detector.py / splice/features.py / splice/classifier/train_classifier.py with the smallest
+   viable change. The wrapper auto-retrains when splice/features.py changes —
    you do NOT need to manually run train_classifier.py (US-505).
 5. git add <touched files> ; git commit -m \"hypothesis: <one-line description>\"
-6. Print RESULT:ready and exit. The wrapper will run evaluate.py, compare
+6. Print RESULT:ready and exit. The wrapper will run splice/evaluate.py, compare
    to current_best, and decide keep vs discard.
    If you made NO change (unusual — only when every plausible hypothesis
    is ruled out by recent failures), print RESULT:skip and exit without
@@ -911,11 +911,11 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         # silent-skew bug class where claude edits features.py but
         # forgets to retrain; evaluate.py would then use a classifier
         # whose feature dims or semantics mismatch the detector.
-        _features_sha_now=$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo "")
+        _features_sha_now=$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")
         _features_sha_trained=$(python3 -c "
 import json, sys
 try:
-    d = json.load(open('.omc/classifier/fp_classifier.meta.json'))
+    d = json.load(open('splice/classifier/fp_classifier.meta.json'))
     print(d.get('features_py_sha') or '')
 except Exception:
     print('')
@@ -927,11 +927,11 @@ except Exception:
             # Portable 300s timeout: GNU `timeout` or brew's `gtimeout`
             # when present, else unguarded. macOS ships neither by default.
             if command -v timeout >/dev/null 2>&1; then
-                _retrain_cmd=(timeout 300 uv run python .omc/classifier/train_classifier.py)
+                _retrain_cmd=(timeout 300 uv run python splice/classifier/train_classifier.py)
             elif command -v gtimeout >/dev/null 2>&1; then
-                _retrain_cmd=(gtimeout 300 uv run python .omc/classifier/train_classifier.py)
+                _retrain_cmd=(gtimeout 300 uv run python splice/classifier/train_classifier.py)
             else
-                _retrain_cmd=(uv run python .omc/classifier/train_classifier.py)
+                _retrain_cmd=(uv run python splice/classifier/train_classifier.py)
             fi
             _phase_start retrain
             set +e
@@ -963,8 +963,8 @@ except Exception:
             # amended into a hypothesis and then lost on discard (reflog
             # 2026-04-18). When this guard fires, commit the joblib+meta
             # as a separate commit instead.
-            git add .omc/classifier/fp_classifier.joblib \
-                    .omc/classifier/fp_classifier.meta.json \
+            git add splice/classifier/fp_classifier.joblib \
+                    splice/classifier/fp_classifier.meta.json \
                     >>"$CHILD_STDERR_LOG" 2>&1 || true
             _head_subj=$(git log -1 --format=%s 2>/dev/null)
             case "$_head_subj" in
@@ -994,7 +994,7 @@ except Exception:
         # US-504: feature cache env vars. Invalidated automatically when
         # features.py sha changes (new sha → new cache subdir).
         export OMC_FEATURE_CACHE_DIR="$PROJECT_DIR/.omc/feature_cache"
-        export OMC_FEATURES_PY_SHA="$(git hash-object "$PROJECT_DIR/features.py" 2>/dev/null || echo unknown)"
+        export OMC_FEATURES_PY_SHA="$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo unknown)"
         set +e
         _phase_start eval
         # .omc/last_eval.log is evaluate.py's transient stdout capture
@@ -1003,7 +1003,7 @@ except Exception:
         # file — it's a per-iteration scratch, not a log — and mirrors
         # the stream into the child-stderr sidecar for the unified audit
         # trail. Carve-out tracked in CLAUDE.md (phase 3a).
-        uv run python evaluate.py --shap 2>&1 | tee "$PROJECT_DIR/.omc/last_eval.log" \
+        uv run python splice/evaluate.py --shap 2>&1 | tee "$PROJECT_DIR/.omc/last_eval.log" \
             >>"$CHILD_STDERR_LOG"
         eval_exit="${PIPESTATUS[0]}"
         set -e
@@ -1178,7 +1178,7 @@ except FileNotFoundError:
 print(last[:19])
 PY
 )
-            last_commit=$(git log -1 --format=%ci -- detector.py evaluate.py ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
+            last_commit=$(git log -1 --format=%ci -- splice/detector.py splice/evaluate.py splice/ml_eval.py run_autoresearch.sh 2>/dev/null | head -c19)
             if [ -n "$last_loop_end" ] && [ -n "$last_commit" ] && [[ "$last_commit" > "$last_loop_end" ]]; then
                 echo "⚠️  Code changed after loop stopped — run '$0 start' to pick up changes"
             fi
@@ -1195,7 +1195,7 @@ PY
         fi
         if [ -f "$PROJECT_DIR/.omc/classifier/versions.json" ]; then
             latest=$(python3 -c "import json; print(json.load(open('$PROJECT_DIR/.omc/classifier/versions.json'))['latest'])" 2>/dev/null || echo "?")
-            echo "Version: detector-v$latest"
+            echo "Version: splice/detector-v$latest"
         fi
         if [ -f "$STATUS_LOG" ]; then
             last_log=$(tail -1 "$STATUS_LOG")
@@ -1219,12 +1219,12 @@ PY
         SNAP="$PROJECT_DIR/.omc/classifier/detector_v${N}.py"
         CLAS="$PROJECT_DIR/.omc/classifier/classifier_v${N}.joblib"
         if [ ! -f "$SNAP" ]; then echo "Detector v$N not found"; exit 1; fi
-        cp "$SNAP" "$PROJECT_DIR/detector.py"
+        cp "$SNAP" "$PROJECT_DIR/splice/detector.py"
         if [ -f "$CLAS" ]; then
-            cp "$CLAS" "$PROJECT_DIR/.omc/classifier/fp_classifier.joblib"
-            echo "Restored detector v$N + classifier v$N"
+            cp "$CLAS" "$PROJECT_DIR/splice/classifier/fp_classifier.joblib"
+            echo "Restored splice/detector v$N + classifier v$N"
         else
-            echo "Restored detector v$N (no classifier for this version)"
+            echo "Restored splice/detector v$N (no classifier for this version)"
         fi
         ;;
     _loop)

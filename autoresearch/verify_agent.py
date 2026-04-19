@@ -18,8 +18,8 @@ SCRIPT_DIR = Path(__file__).parent
 REPO_ROOT = SCRIPT_DIR.parent              # FIX: autoresearch/ is one level deep
 BASELINE_PATH = SCRIPT_DIR / "baseline_metrics.json"
 PROTECTED_FILES = [
-    "evaluate.py",
-    "program.md",
+    "splice/evaluate.py",
+    "splice/program.md",
     "data/eval/*",
     "data/test/*",
     "autoresearch/manifest.json",
@@ -65,17 +65,17 @@ def check_metric_rerun(reported: float) -> tuple[str, str, str]:
     since_ts = datetime.now(timezone.utc).isoformat()
     try:
         result = subprocess.run(
-            ["uv", "run", "python", "evaluate.py", "--shap"],
+            ["uv", "run", "python", "splice/evaluate.py", "--shap"],
             capture_output=True, text=True, timeout=300,
         )
     except subprocess.TimeoutExpired:
-        return "FAIL", "evaluate.py timed out after 300s", ""
+        return "FAIL", "splice/evaluate.py timed out after 300s", ""
     except Exception as e:
         return "FAIL", f"subprocess error: {e}", ""
 
     output = result.stdout + result.stderr
     if result.returncode != 0:
-        return "FAIL", f"evaluate.py exited {result.returncode}", output
+        return "FAIL", f"splice/evaluate.py exited {result.returncode}", output
 
     actual = _latest_combined_since(since_ts)
     if actual is None:
@@ -861,8 +861,8 @@ def _replay_one(cand: RetestCandidate, worktree_base: str) -> None:
         return
 
     # Classifier staleness gate via the wrapper verb (runs inside main repo
-    # so `.omc/classifier/fp_classifier.*` gets updated in-place — which is
-    # what evaluate.py inside the worktree will read via the classifier
+    # so `splice/classifier/fp_classifier.*` gets updated in-place — which is
+    # what splice/evaluate.py inside the worktree will read via the classifier
     # path). The verb does not amend or commit onto the worktree.
     retrain = subprocess.run(
         ["bash", str(_WRAPPER_SH), "_ensure_classifier_fresh"],
@@ -881,7 +881,7 @@ def _replay_one(cand: RetestCandidate, worktree_base: str) -> None:
     # Propagate features.py sha for the cache key like the loop does.
     try:
         feat_sha = subprocess.run(
-            ["git", "-C", wt, "hash-object", "features.py"],
+            ["git", "-C", wt, "hash-object", "splice/features.py"],
             capture_output=True, text=True, timeout=10,
         ).stdout.strip() or "unknown"
     except Exception:
@@ -892,13 +892,13 @@ def _replay_one(cand: RetestCandidate, worktree_base: str) -> None:
 
     try:
         eval_res = subprocess.run(
-            ["uv", "run", "python", "evaluate.py", "--shap"],
+            ["uv", "run", "python", "splice/evaluate.py", "--shap"],
             capture_output=True, text=True, timeout=600,
             cwd=wt, env=env,
         )
     except subprocess.TimeoutExpired:
         cand.outcome = "eval-crash"
-        cand.note = "evaluate.py timed out after 600s"
+        cand.note = "splice/evaluate.py timed out after 600s"
         _reset_worktree(worktree_base)
         return
     except Exception as e:
@@ -912,7 +912,7 @@ def _replay_one(cand: RetestCandidate, worktree_base: str) -> None:
     if eval_res.returncode != 0:
         cand.outcome = "eval-crash"
         tail = "\n".join(output.splitlines()[-6:])
-        cand.note = (f"evaluate.py exited {eval_res.returncode}\n" + tail)[:400]
+        cand.note = (f"splice/evaluate.py exited {eval_res.returncode}\n" + tail)[:400]
         _reset_worktree(worktree_base)
         return
 
