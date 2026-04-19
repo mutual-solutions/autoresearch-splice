@@ -3170,3 +3170,91 @@ per-domain: combined_english=0.731707 combined_korean=0.457143 combined_singing=
     turning "4.5 vs 5.0" from a guess into a numeric decision.
 [auto] (no SHAP data for either 865d92f or 29c06cf)
 
+## 2026-04-20T01:42:23+09:00 — eb8984e (discard, combined=0.479988)
+subject: class-conditioned SUM threshold (hard_cut=5.0, crossfade=4.5) — add DSP_SUM_MIN_CROSSFADE=4.5 and move label_id argmax BEFORE the DSP gate so SUM threshold routes by predicted class. Pure detector.py change, no retrain, no feature change. Targets 29c06cf's singing 0.384->0.360 regression (now weakest domain at 0.360) caused by uniform SUM tightening 4.5->5.0 — korean (0.428->0.457) and english (0.707->0.732) gained from the tightening via precision on spliced files, but singing lost crossfade TPs whose DSP profile is T^2=2.5-3.5 (strong) with phase/CPE ~0.5-1.5 (singing sustained tones don't phase-break / complex prediction handles harmonic continuations), summing 3.5-5.2 — exactly the band 5.0 culls. Hard cuts produce phase+T^2+CPE simultaneously so sum 6-12 regardless of class-route, meaning keeping hard_cut at 5.0 preserves the korean/english precision wins. Explicit option (1) from 29c06cf(c): 'CLASS-CONDITION the SUM threshold: hard_cut->5.0, crossfade->4.5. Preserves crossfade recall while tightening on hard_cut where multi-channel confirmation is physically robust.' Orthogonal to d256901 (class-specific CHANNEL routing: phase>=2.0 for hard_cut / T^2>=2.0 for crossfade on top of MAX>=2.0 — failed 0.449 because it required a single specific channel to be strong); class-routed SUM still requires MULTI-CHANNEL cumulative support, just with class-appropriate magnitude. Orthogonal within the SUM-axis (only uniform thresholds tried: 4.5 kept 0.488, 5.0 kept 0.494). Risk-bounded: stacks on MAX>=2.0 gate AND GBM_THRESHOLD=0.982 so only admits additional emits where class is crossfade AND max DSP>=2.0. Worst case: korean/english crossfade-labeled FPs (speech phoneme shifts may label as crossfade at p~0.982-0.99 with sum ~4.6-4.9) reappear, dropping korean/english back toward 865d92f levels 0.428/0.707 — still above baseline because singing recovers. Blast radius: detector.py only, 1 constant + 3-line loop reorder, features.py sha stable (no retrain). Smoke: constants load cleanly, DSP_SUM_MIN=5.0 / DSP_SUM_MIN_CROSSFADE=4.5 / DSP_CONFIRMATION_MIN=2.0.
+per-domain: combined_english=0.707317 combined_korean=0.434286 combined_singing=0.360000
+
+# 2026-04-20 — hypothesis: class-conditioned SUM threshold (hard_cut=5.0, crossfade=4.5)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change, no retrain, no feature
+    change. Add `DSP_SUM_MIN_CROSSFADE = 4.5` constant and move the
+    `label_id` argmax BEFORE the DSP gate so the SUM threshold routes
+    by predicted class: hard_cut (label=1) keeps SUM>=5.0, crossfade
+    (label=2) relaxes to SUM>=4.5. MAX gate (DSP_CONFIRMATION_MIN=2.0)
+    unchanged; crossfade-labeled emits with sum in [4.5, 5.0) that
+    29c06cf's global tightening culled are now admitted.
+
+(b) WHY this over the recent trajectory. The 29c06cf keep lifted
+    combined 0.488→0.494 by tightening SUM 4.5→5.0, but the per-domain
+    delta exposes a class-mix asymmetry: singing 0.384→0.360 (TP loss),
+    korean 0.428→0.457 (net gain), english 0.707→0.732 (net gain).
+    Singing is now the weakest domain (0.360) and its regression is
+    the explicit signature of crossfade TPs being dropped — singing
+    crossfades are slow spectral transitions whose DSP profile is
+    T²=2.5-3.5 (strong) with phase=0.5-1.0 (smooth sustained tones
+    don't phase-break) and CPE=0.5-1.5 (complex prediction handles
+    harmonic continuations reasonably), summing to ~3.5-5.2. The
+    SUM>=4.5 gate at 865d92f admitted the upper half of that band;
+    SUM>=5.0 at 29c06cf culls it. Hard cuts are physically different:
+    cross-source phase CANNOT smooth so phase_z=2-5, T²=2-4 from the
+    discontinuous spectral jump, CPE=1.5-3 from prediction failure at
+    the cut — comfortably sum 6-12 regardless of threshold. So
+    hard_cut needs no relaxation (keeping SUM>=5.0 preserves the
+    korean/english precision wins from the tightening), while
+    crossfade benefits from the looser gate. This is the explicit
+    option (1) cited in 29c06cf(c). Orthogonal to d256901 which
+    required a SPECIFIC CHANNEL per class (phase_z for hard_cut, T²
+    for crossfade, both >=2.0 ON TOP of MAX>=2.0) and failed
+    catastrophically at 0.449 — that was too strict because it
+    required a single-channel strong-signal match to class label.
+    Class-routed SUM is fundamentally different: it still requires
+    multi-channel cumulative support, just with class-appropriate
+    magnitude. Orthogonal within the SUM-axis (only uniform
+    thresholds tried so far: 4.5 kept, 5.0 kept). Risk-bounded by
+    stacking with MAX gate and GBM_THRESHOLD=0.982: only admits more
+    emits when the class is crossfade AND max DSP>=2.0 AND p>0.982.
+    Pure 1-constant add + 3-line loop reorder, features.py sha stable,
+    no retrain, zero new computation per emit.
+
+(c) IF THIS FAILS. (1) If singing recovers but korean/english
+    crossfade FPs reappear (speech phoneme shifts are T²-dominant
+    and may also label as crossfade at p~0.982-0.99 with sum
+    ~4.6-4.9), tighten crossfade SUM to 4.75 or add an HPR-gate:
+    relax SUM to 4.5 ONLY when file_hpr>0.85 (singing), else keep
+    5.0 for both classes. (2) If singing doesn't recover, the lost
+    TPs weren't predominantly crossfade-labeled — pivot to a
+    domain-based HPR-gated SUM (singing=4.5, rest=5.0) directly.
+    (3) Final escalation: replace binary class-routing with a
+    CONTINUOUS class-mix threshold
+    `sum_min = 4.5 + 0.5 * proba[i, col_for[1]] / p_splice[i]`
+    (sliding from 4.5 when pure-crossfade to 5.0 when pure-hard_cut).
+
+(d) Information gaps. (i) The CLASS-LABEL breakdown of the singing
+    TPs lost at 29c06cf is not in CURRENT STATE. I'm inferring
+    crossfade dominance from the physical signature argument
+    (singing sustains are slow transitions) but without the
+    per-emit (t_sec, label_id, sum) trace I can't verify the lost
+    TPs were >50% crossfade-labeled. (ii) The 2 singing + 4 korean
+    clean FP positions (file, t_sec, label_id, p_hard, p_cross,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, sum) STILL not in prompt —
+    the same gap every DSP-filter hypothesis has been flagging for
+    5+ iterations. (iii) The real-splice SUM distribution per
+    domain per class isn't surfaced — my crossfade SUM~3.5-5.2
+    range is theoretical.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE with per-position (domain, file, t_sec, label_id,
+    p_hard, p_cross, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    sum, max) from the last keep's eval — by far the biggest and
+    most persistent blocker. Every DSP-filter hypothesis calibrates
+    thresholds from theory instead of observed failure-set values.
+    (2) LOST_TP_POSITIONS similar JSON block for TPs dropped
+    between the last TWO keeps — lets a post-mortem pinpoint
+    which class/domain the tightening hurt, rather than inferring
+    from combined deltas. (3) `scripts/dsp_sum_class_probe.py
+    --hard-min 5.0 --crossfade-min 4.5` that replays the last
+    keep's emit trace through class-routed thresholds and reports
+    per-domain (TPs_lost, FPs_dropped) — turns "class-routed SUM
+    4.5/5.0 vs HPR-gated SUM 4.5/5.0" from a guess into a numeric
+    decision before commit.
+
