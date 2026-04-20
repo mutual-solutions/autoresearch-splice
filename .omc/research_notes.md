@@ -4362,3 +4362,103 @@ per-domain: combined_english=0.775000 combined_korean=0.405634 combined_singing=
     OOF-F1 delta. "Is this feature ADD/REMOVE worth a 3-min retrain"
     becomes a numeric preview instead of a bet.
 
+## 2026-04-20T14:22:02+09:00 — 53d3ea0 (discard, combined=0.527473)
+subject: tighten DSP_SUM_MIN 5.0 -> 5.5 — one untried step remaining in a monotonically-improving primary-tunable axis. Pure detector.py one-line constant edit, stacked on existing MAX>=2.0 + GBM_THRESHOLD=0.982. No retrain, no feature change, features.py sha stable so classifier byte-identical. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau with clean_fp=3 survivors past the current SUM>=5.0 gate. The SUM axis has prior monotone keeps: 865d92f (SUM=4.5 kept 0.488) -> 29c06cf (SUM=5.0 kept 0.494, +0.006), and 29c06cf's own keep note explicitly cited 5.5 as the next escalation that was never tried because feature-axis exploration took over immediately after. Per-tunable frontier confirms only 4.5 and 5.0 tried in the SUM axis. Mechanism: real cross-source splices disrupt mic/room (phase_z) + spectral-distribution (T2_z) + complex-prediction (CPE_z) SIMULTANEOUSLY by physical construction, so sum(dsp_phase_z, dsp_t2_z, dsp_cpe_z) is typically 6-12 with big margin above 5.5. Chord-transition / speech-phoneme FPs are dominated by ONE strong channel (T^2=3) plus partial support from others (phase~0.7 + CPE~1.0 + or small variations), producing sum in [5.0, 5.8] — exactly the band 5.5 bites. The 3 singing clean FPs surviving 7972a98's gates by construction pass sum>=5.0 AND max>=2.0; if any sit in [5.0, 5.5] they drop under the new gate while real singing splices (which touch multiple DSP channels via cross-source disruption) are preserved. Classifier improvements over the last 40 iterations (75->80 features, HistGBM swap, voiced-mask + asymmetry families for MFCC/chroma/spec_contrast) have tightened p_splice on real TPs to near-1.0 so TPs comfortably pass DSP regardless of this gate's tightening. Orthogonal to every recent axis: NOT a feature add (features.py sha stable, no retrain); NOT a classifier hyperparam (train_classifier.py unchanged, 99081f5 HistGBM capacity bump discarded); NOT DSP_CONFIRMATION_MIN MAX gate; NOT GBM_THRESHOLD softmax gate (7255ec6 0.980 failed); NOT GBM_MIN_SEP_S dedupe geometry; NOT ANALYSIS_STRIDE_S scan density; NOT class-routed DSP (eb8984e failed); NOT HPR-routed DSP (failed); NOT channel-specific CPE floor (0.449 failed); NOT a feature removal (ea1636c catastrophic 0.455). The ONE unused step in a tunable axis whose prior steps were monotonically positive. Blast radius: 1-line constant edit plus comment refresh. Zero new code paths; per-emit cost unchanged (same sum+compare). Risk-bounded: stacked gate can only DROP emits, cannot create TPs; drops require cumulative-DSP below 5.5. Worst-case failure mode: smooth-crossfade TPs with phase/CPE firing weakly (sum 5.0-5.8) get dropped and recall falls — then fallback is DSP_CONFIRMATION_MIN 2.0->2.2 on the MAX axis (different channel-mass distribution, never tried). Smoke-verified: import DSP_SUM_MIN returns 5.5, all other tunables unchanged (DSP_CONFIRMATION_MIN=2.0, GBM_THRESHOLD=0.982, GBM_MIN_SEP_S=3.5).
+per-domain: combined_english=0.850000 combined_korean=0.531250 combined_singing=0.325000
+
+# 2026-04-20 — hypothesis: tighten DSP_SUM_MIN 5.0 → 5.5
+
+(a) HYPOTHESIS. Pure `splice/detector.py` primary tunable — tighten the
+    SUM-based DSP-confirmation floor from 5.0 → 5.5. One-line edit on
+    line ~70, stacked on top of the existing MAX floor 2.0 and GBM
+    softmax threshold 0.982. No retrain, no feature change, no new
+    constants. Drops GBM emits where `sum(dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z) < 5.5` even when MAX passes and all 80 classifier
+    features say "splice."
+
+(b) WHY this over recent failures. Last 10 iterations are all feature/
+    classifier structural swings that plateaued or regressed (ea1636c
+    feature removal catastrophic 0.455, 6384137+49fa2ca rhythm features
+    both regressed korean, aa4f141/fd500b3 percussive-mask variants
+    regressed singing, 99081f5 HistGBM capacity bump regressed,
+    de0be6f/f4148cc symmetry/chroma asymmetry plateaued). CLAUDE.md
+    mandates structural change after 5+ same-axis failures — the
+    feature-add axis is the most-failed axis. The DSP SUM tunable is
+    genuinely NOT saturated: the keep progression 865d92f (SUM=4.5 kept
+    combined=0.488) → 29c06cf (SUM=5.0 kept 0.494, +0.006) was
+    monotonically improving; 5.5 was the explicit cited escalation in
+    the 29c06cf keep note but never got tried (feature-axis explosion
+    took over immediately after). Per-tunable frontier explicitly shows
+    only 4.5, 5.0 tried in the SUM axis.
+
+    Mechanism: 7972a98 current-keep has singing clean_fp=3 surviving
+    all gates. By construction they pass sum≥5.0 and max≥2.0. Real
+    cross-source splices disrupt mic/room (phase) + spectral-distribution
+    (T²) + complex-prediction (CPE) simultaneously so sum typically
+    6-12 (big margin above 5.5). Chord-transition / speech-phoneme FPs
+    are dominated by ONE strong channel + partial support from others,
+    sum in [5.0, 5.8] — exactly the band 5.5 bites. The classifier
+    improvements over the last 40 iterations (75 → 80 features, HistGBM
+    swap, voiced-mask + asymmetry families) have tightened p_splice on
+    real TPs to near-1.0, so TPs also pass DSP comfortably at sum≥5.5
+    by mechanism.
+
+    Orthogonal to every recent axis: NOT a feature add (features.py sha
+    stable so classifier byte-identical, no retrain); NOT a classifier
+    hyperparam (train_classifier.py unchanged); NOT DSP_CONFIRMATION_MIN
+    (the MAX gate); NOT GBM_THRESHOLD (softmax gate); NOT GBM_MIN_SEP_S
+    (dedupe geometry); NOT ANALYSIS_STRIDE_S (scan density); NOT
+    class-routed DSP (eb8984e failed); NOT HPR-routed DSP (failed); NOT
+    channel-specific CPE floor (0.449 failed). ONE unused step remains
+    in a tunable axis whose prior steps were monotone improvements.
+    Blast radius: 1-line constant edit (DSP_SUM_MIN=5.0 → 5.5) +
+    comment refresh. Zero new code paths. Per-emit cost unchanged
+    (same sum+compare). Eval budget unchanged (243/300s). Risk-bounded:
+    stacked gate so can only DROP emits; drops require cumulative-DSP
+    below 5.5; cannot create new TPs. Worst case: singing TPs in
+    [5.0, 5.5] sum band get dropped and recall falls; but real splices
+    have sum 6-12 by physical mechanism.
+
+(c) IF THIS FAILS. (1) If singing FPs survive 5.5 (sum ≥ 5.5), go
+    DSP_CONFIRMATION_MIN 2.0 → 2.2 on the MAX axis — untried, bites
+    moderate-single-channel firings that dominate the SUM with 4.5-5.5
+    floor. (2) If singing TPs drop at 5.5 (real crossfade TPs have sum
+    5.0-5.8 because phase and CPE fire weakly on smooth-transition
+    crossfades — the eval corpus mix of tier1/tier2 hard_cut/crossfade
+    may skew this), revert and try DSP_CONFIRMATION_MIN 2.0 → 2.2
+    instead. (3) Final escalation: feature-axis return —
+    voiced_percussive_chroma_asymmetry (untried; percussive-mask chroma
+    would isolate pitched-accompaniment key-shift, complementary to the
+    MFCC asymmetry family).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 24+
+    iterations — I cannot verify the 3 singing FPs' actual sum values
+    (would directly predict whether 5.5 bites or misses). Every
+    DSP-tunable hypothesis has been calibrated from theory. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 — I cannot
+    see how the new voiced/unvoiced asymmetries rank against DSP
+    z-scores in the current classifier, so cannot predict whether
+    tightening SUM might flush legitimate emits whose p_splice is
+    driven by feature-side evidence (asymmetry family) rather than
+    DSP-side evidence. (iii) Per-domain sum(dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z) distributions on real TPs vs FPs in the current eval
+    are not surfaced; mechanism-calibrated only.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 24+ iterations; per-FP (domain,
+    file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    dsp_sum, voiced_mfcc_dist, unvoiced_mfcc_dist,
+    voiced_unvoiced_mfcc_asymmetry, top-5 |SHAP|). A single block
+    transforms every DSP-tunable and feature hypothesis from
+    theory-calibrated bet into data-driven decision. (2)
+    `scripts/primary_tunable_preview.py --tunable DSP_SUM_MIN --value
+    5.5` — loads current classifier, runs detect on a cached 3-file
+    eval subset, reports delta to current combined. Zero retrain cost.
+    Turns "is this primary-tunable step worth a full 243s eval" into a
+    10-second numeric preview. (3) CURRENT DETECTOR CONSTANTS block in
+    prompt — explicit list of (GBM_THRESHOLD, GBM_MIN_SEP_S,
+    ANALYSIS_STRIDE_S, DSP_CONFIRMATION_MIN, DSP_SUM_MIN) values at
+    HEAD, so I don't have to read detector.py every iteration to know
+    current tunable state (and the per-tunable frontier's "current ?"
+    rows resolve).
+
