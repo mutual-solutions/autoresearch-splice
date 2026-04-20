@@ -3413,3 +3413,168 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     the persistent "current ?" rows in the per-tunable frontier AND
     surfaces the classifier state without me grep-ing every iteration.
 
+## 2026-04-20T15:51:24+09:00 — 0c3bf76 (discard, combined=0.538510)
+subject: add voiced_unvoiced_spec_flatness_asymmetry feature (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.853659 combined_korean=0.573913 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_flatness_asymmetry (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new
+    feature, a voicing-masked SIGNED ABS-DELTA asymmetry on the
+    spec_flatness (Wiener-entropy) axis. For t_sec compute the voiced-
+    masked mean spec_flatness on pre=[t−2,t] and post=[t,t+2] and the
+    unvoiced-masked mean on the same windows; return
+    `unvoiced_abs_delta − voiced_abs_delta` where each abs_delta is
+    `|post_mean − pre_mean|`. Reuses cached feat_flatness (already
+    present; spec_flatness_delta at index 21 consumes it) + feat_vp —
+    ZERO new librosa calls, ZERO new caches. Per-t cost 4 slices + 4
+    masked scalar means + 2 abs-diffs + 1 subtraction, sub-ms. Sentinel
+    0.0 when any voiced/unvoiced mask is empty. Since spec_flatness is
+    1D per frame, cosine-distance formulation (used for contrast/MFCC/
+    chroma asymmetries) doesn't apply — abs-delta-of-means is the
+    natural scalar analogue and preserves the mastering-fingerprint
+    mechanism. FEATURE_NAMES 80 → 81 triggers wrapper auto-retrain via
+    US-505 sha gate.
+
+(b) WHY this over recent failures. Last 10 iterations exhausted the
+    remaining classifier axes: learning_rate (17d4aec failed),
+    min_samples_leaf (db59c36 failed), capacity revert (960113c matched
+    baseline EXACTLY 0.589282 — proves classifier is inert at this
+    feature space: max_depth=3/max_leaf=8 and max_depth=4/max_leaf=16
+    produce byte-identical emits). Every primary tunable is also
+    saturated (GBM_THRESHOLD / MIN_SEP / stride / DSP gates all tested).
+    With the classifier axis provably saturated AND primary tunables
+    saturated, the only remaining lever is STRUCTURAL feature work.
+
+    Pick this axis because the voiced/unvoiced ASYMMETRY family has
+    the best hit rate in the loop: voiced_unvoiced_mfcc_asymmetry
+    (1eda8e3 kept +0.054 — biggest win), voiced_unvoiced_spec_contrast
+    _asymmetry (7972a98 kept +0.005 tiny but consistent), chroma-
+    asymmetry failed (singer sings new key → voiced_chroma shifts as
+    much as unvoiced → asymmetry cancels). Spec flatness is a
+    genuinely different "mastering fingerprint" descriptor: Wiener
+    entropy (geometric_mean / arithmetic_mean of magnitudes per
+    frame) is dominated by NOISE FLOOR and TONAL CONCENTRATION, while
+    spec_contrast is dominated by PEAK-TO-VALLEY amplitude ratio per
+    band. Different compressors affect these differently — a limiter
+    that hits peaks lowers contrast but barely touches flatness; a
+    compressor that raises the noise floor (bus compression, tape
+    saturation) lifts flatness without changing contrast shape.
+
+    Mechanism targeting the 3 singing FPs. Within one song the entire
+    mastering chain is fixed: the vocal bus has one compressor
+    profile, the drum bus another, both frozen for the whole track.
+    So voiced-frame flatness (vocal noisiness — breath modulation +
+    vocal noise floor) is stable across chord transitions (|delta| ≈
+    0.002-0.008), and unvoiced-frame flatness (accompaniment
+    noisiness — drum kit noise, room bleed, mastering compressor
+    output) is ALSO stable (|delta| ≈ 0.003-0.010). Both stable →
+    asymmetry ≈ 0. Real same-singer-cross-song splice: singer's vocal
+    production is continuous (same larynx / same mic preamp if
+    recording sessions overlap), so voiced |delta| stays low
+    (~0.005). But the accompaniment track and its mastering chain
+    SHIFT (different drum kit / different compression / different
+    noise floor), so unvoiced |delta| jumps to 0.02-0.06. Result:
+    asymmetry ≈ +0.02-0.05 POSITIVE. Different-singer-cross-song:
+    both voiced AND unvoiced flatness shift → both |delta| large →
+    asymmetry small (MFCC asymmetry catches this case, so redundancy
+    is already covered).
+
+    Why THIS over any feature add. The 7972a98 spec_contrast
+    asymmetry was the last kept feature (+0.005) — the axis clearly
+    has signal, and flatness is the companion spectral descriptor
+    never added. Spec_contrast and spec_flatness are mathematically
+    independent (contrast is peak-valley per band, flatness is
+    geometric/arithmetic-mean ratio over the whole spectrum). GBM
+    max_depth=3/4 can split on each independently; providing both
+    lets tree splits learn joint conditions like "contrast_asymmetry
+    > 0.15 AND flatness_asymmetry > 0.02" — a stronger mastering-
+    change signature than either alone. Speech self-gating via
+    paired differencing: voiced and unvoiced speech flatness both
+    shift with phoneme context (vowel = tonal low-flatness,
+    fricative = noise high-flatness), shifts are uncorrelated with
+    splice position, so |delta| values are zero-mean noise that GBM
+    learns to ignore via low per-domain SHAP — same safety mechanism
+    that neutralized voiced_unvoiced_mfcc_asymmetry on speech.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 voiced_unvoiced_mfcc
+    (cepstral envelope, 13-dim cosine); NOT 7972a98
+    voiced_unvoiced_spec_contrast (peak-valley per band, 7-dim
+    cosine); NOT f4148cc voiced_unvoiced_chroma (pitch-class);
+    NOT 49bd0b1 voiced_mfcc (single-mask, no differential); NOT
+    32cac36 voiced_chroma (single-mask); NOT 308aa5a tonnetz
+    (linear projection of chroma); NOT fd500b3 percussive_mfcc
+    (different mask); NOT 49fa2ca/6384137 onset autocorrelation
+    (rhythm/tempo); NOT the raw spec_flatness_delta at index 21
+    (all-frame, no mask, no voiced/unvoiced split). First voicing-
+    masked feature on the spec_flatness (Wiener-entropy) axis, and
+    first SCALAR-valued asymmetry (abs-delta-of-means instead of
+    cosine-distance-of-vectors). Blast radius: features.py only —
+    1 new block function + 1 FEATURE_NAMES append + 2 assert
+    bumps + 1 call in extract_features + 1 print update in
+    __main__ self-test. ZERO new caches, ZERO new librosa calls.
+    Per-t cost sub-ms; aggregate per-chunk cost <1s. Risk-bounded:
+    sentinel 0.0 on empty-mask edge cases; signal is physically
+    grounded on singing where mastering signatures shift across
+    cross-song splices.
+
+(c) IF THIS FAILS. (1) If the abs-delta-of-means formulation loses
+    signal (intra-song chord cycle has |voiced_delta| ≈ 0.005 but
+    cross-song has |voiced_delta| ≈ 0.008 too — small signal
+    drowned by cross-chunk flatness variance), replace with SIGNED
+    delta-of-means `(unvoiced_post − unvoiced_pre) − (voiced_post −
+    voiced_pre)` to preserve DIRECTION of shift (up vs down) —
+    the GBM can then split on sign. (2) If flatness is dominated
+    by file-level noise-floor not transition-local, replace with
+    ratio formulation `voiced_unvoiced_spec_flatness_ratio_asymmetry`
+    = ratio of post/pre within each mask — self-normalizes file-
+    level level. (3) Final escalation: an F0-stability asymmetry
+    `voiced_unvoiced_f0_jitter_asymmetry` combining pitch-stability
+    with accompaniment-level continuity — pivot to loudness/pitch
+    domain rather than spectral-tonal.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 31+
+    iterations — I cannot verify whether the 3 singing FPs actually
+    sit at boundaries with stable voiced flatness (the specific
+    pattern this feature targets), or at spectral-content-matched
+    positions where flatness is uninformative. Every feature-add
+    hypothesis since iteration ~70 has been theory-calibrated on
+    physical mechanism without eval-corpus verification. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite
+    7972a98 being the current keep — the rollup pipeline appears
+    broken, so I cannot see which features currently drive
+    per-domain p_splice. (iii) 99081f5 classifier-capacity ghost
+    (max_depth=4/max_leaf=16) is IN-tree at HEAD per grep; 960113c
+    revert to 3/8 was discarded because it matched baseline
+    exactly → wrapper's symmetry-semantics bug RESTORED the ghost.
+    My feature-add delta is attributed against a classifier that
+    differs from 7972a98-keep-time 3/8 state. (iv) Four recent
+    iterations (17d4aec, db59c36, 0cb551f, 6384137) all produced
+    IDENTICAL combined=0.490700 with IDENTICAL per-domain —
+    statistically near-impossible unless (a) all four changes
+    converge on the same emit set (suspicious given very different
+    change types), OR (b) wrapper cache invalidation / retrain-skip
+    bug. Cannot investigate from here.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent blocker for 31+ iterations; per-FP
+    (domain, file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, voiced_mean_spec_flatness_pre,
+    voiced_mean_spec_flatness_post, unvoiced_mean_spec_flatness_pre,
+    unvoiced_mean_spec_flatness_post, top-5 |SHAP|). Every
+    spec_flatness / voiced-mask hypothesis becomes data-driven
+    instead of theory-calibrated. (2) DISCARD-REVERT SYMMETRY
+    SEMANTICS bug fix (persistent ask) — wrapper's discard path
+    should DETECT revert commits (commit message starts with
+    "REVERT" AND references a prior-discarded SHA) and treat
+    "matched baseline exactly" as SUCCESS-KEEP rather than
+    no-improvement-discard. Would have kept 960113c's 3/8 revert
+    and eliminated the 99081f5 ghost. ~15 lines git-commit-message
+    parsing. (3) IDENTICAL-COMBINED ALERT — if N consecutive
+    iterations produce IDENTICAL combined within ±1e-5 AND
+    IDENTICAL per-domain, emit a WARN event
+    `wrapper.suspicious.identical_output_streak`. Last 4
+    iterations (17d4aec, db59c36, 0cb551f, 6384137) all hit
+    combined=0.490700 exactly; this alert would flag potential
+    cache-invalidation bugs to the operator.
+
