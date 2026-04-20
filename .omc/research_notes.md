@@ -4297,3 +4297,127 @@ per-domain: combined_english=0.825000 combined_korean=0.537313 combined_singing=
     prior-discarded SHA, treat exact-match as KEEP. ~15 lines git
     commit-message parse.
 
+## 2026-04-20T17:30:06+09:00 — ff88b22 (discard, combined=0.500909)
+subject: add voiced_unvoiced_mfcc_asymmetry_wide feature (FEATURE_NAMES 80->81) — WIDE-ADJACENT-window companion to 1eda8e3 NEAR ±2s (kept +0.054 biggest win) and d49284c FAR ±2s-pre/+4-+8-post (failed because gap broke speech self-gating). Pre=[t-4,t] adjacent post=[t,t+4], same paired-difference template, ZERO new librosa calls. Edge guard t-4<0 OR t+4>duration_s returns sentinel 0.0. Last iteration d49284c LIFTED singing 0.345->0.354 (only recent feature to do so) but speech regressed sharply (korean 0.667->0.537, english 0.889->0.825) because the 6s GAP between pre and post sub-windows on speech caused them to sample different sentences/topics — voiced+unvoiced MFCC shifts no longer co-vary with same phoneme context, breaking paired-difference self-gating. WIDE eliminates the gap while expanding the window 2x over NEAR. Mechanism on 3 surviving singing FPs (within-song chord cycle): NEAR ±2s asymmetry at chord boundary ~0 because both voiced+unvoiced shift together with chord. WIDE ±4s averages OVER multiple chord transitions in pre AND in post — chord-cycle signal averages OUT (mean of multiple chord shifts cancels) -> asymmetry stays near 0 on chord-cycle FP. Real cross-song splice: pre is 4s of song A's mastering, post is 4s of song B's mastering. Unvoiced sub-window (drum/mastering) distance large; voiced sub-window (vocal tract) smaller -> asymmetry strongly positive. Sign separation chord-cycle (~0) vs cross-song (positive) preserved AND CLEANER than NEAR because NEAR's chord-cycle noise gets averaged away. Speech self-gating preserved by adjacency: ADJACENT ±4s windows on speech sample similar broad phoneme distribution (4s ≈ 6-10 syllables, broad enough to span typical phoneme distribution); both voiced and unvoiced sub-windows on each side contain similar mix of vowels and consonants; differences dominated by speaker/recording continuity not phoneme drift -> diff near zero -> low GBM SHAP on english/korean. Same self-gating that worked at NEAR works at WIDE because no gap = same context similarity. Voiced/unvoiced asymmetry family is provably the most productive axis: 1eda8e3 +0.054 (biggest single win) and 7972a98 +0.005 (small but consistent). Time-scale variation on this proven template is the natural next axis after content/mask exhaustion. Last 10+ iterations exhausted: classifier hyperparam axis verifiably broken (5 train_classifier.py-only iterations all produced IDENTICAL combined=0.490700 -> US-505 doesn't auto-retrain on hyperparam edits); every primary tunable saturated both directions; mask experiments (percussive/harmonic) all monotonically failed; 1D-scalar abs-delta (0c3bf76 spec_flatness) failed; all far-window single-mask companions (ff65865 voiced_chroma_far) failed. Only path alive is features.py-sha-change (1a8b1fe/0c3bf76/4773d1e/d3ddc9d/d49284c all produced distinct combined values vs the 0.490700 streak). Orthogonal: NOT 1eda8e3 (NEAR window — same template at 2x time scale); NOT d49284c (FAR window has a gap — WIDE is adjacent); NOT 7972a98 (spec_contrast not cepstral); NOT f4148cc (chroma asymmetry); NOT 0c3bf76 (1D scalar abs-delta); NOT ff65865 (single-mask far). FIRST WIDE-ADJACENT-window asymmetry feature in any content axis. Pure features.py change — 1 new block (~50 lines, template-cloned from 1eda8e3 with edge guard) + 1 FEATURE_NAMES append + 2 assert bumps + 1 call. ZERO new librosa calls, ZERO new caches. Per-t cost: 4 slices + 4 masked means + 2 cosines on 13-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_mfcc_asymmetry_wide', edge guard fires correctly (t-4<0 OR t+4>duration_s -> 0.0), synthetic cross-source asymmetry=2.0 large positive, synthetic within-source asymmetry=0.0 sentinel, end-to-end extract_features returns 81 finite features on synthetic audio, idempotent on repeated calls.
+per-domain: combined_english=0.765432 combined_korean=0.555882 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_mfcc_asymmetry_wide (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — WIDER-ADJACENT-window
+    companion to 1eda8e3's voiced_unvoiced_mfcc_asymmetry. Same
+    paired-difference template, but pre=[t-4, t] and post=[t, t+4]
+    (adjacent ±4s windows instead of ±2s). Reuses cached feat_mfcc +
+    feat_vp — ZERO new librosa calls, ZERO new caches. Edge guard
+    t-4 < 0 OR t+4 > duration_s returns sentinel 0.0. Sentinel 0.0
+    also on empty masks / zero-norm. FEATURE_NAMES 80 → 81 forces
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Last iteration d49284c (FAR window
+    pre=[t-2,t] post=[t+4,t+8]) actually LIFTED singing 0.345→0.354
+    (the only recent feature to do so) but speech regressed sharply
+    (korean 0.667→0.537, english 0.889→0.825). Diagnosis: the GAP
+    between pre and post on speech caused pre and post sub-windows to
+    sample different sentences/topics — voiced and unvoiced mfcc
+    shifts no longer co-vary with same phoneme context, so the
+    paired-difference self-gating broke. WIDE ±4s eliminates the gap
+    while still expanding the window 2x over NEAR — captures 2 chord
+    cycles in singing (averaging out within-song chord-cycle
+    asymmetry while preserving cross-song mastering shift) AND
+    preserves speech self-gating because adjacent ±4s windows still
+    sample similar broad phoneme distribution.
+
+    Mechanism on the 3 surviving singing FPs (within-song chord
+    cycle). NEAR ±2s asymmetry (1eda8e3) at chord boundary = ~0
+    because both voiced+unvoiced shift together. WIDE ±4s averages
+    OVER multiple chord transitions in pre and OVER multiple in post
+    — chord-cycle signal averages OUT (mean of multiple chord shifts
+    cancels) → asymmetry stays near 0 on chord-cycle FP. Real
+    cross-song splice: pre is 4s of song A's mastering, post is 4s
+    of song B's mastering. Unvoiced sub-window (drum/mastering)
+    distance is large; voiced sub-window (vocal tract) smaller →
+    asymmetry strongly positive. Sign separation of chord-cycle (~0)
+    vs cross-song (positive) preserved AND CLEANER than NEAR because
+    NEAR's chord-cycle noise gets averaged away.
+
+    Speech self-gating preserved by adjacency. ADJACENT ±4s windows
+    on speech sample similar broad phoneme distribution (4s of
+    speech ≈ 6-10 syllables, broad enough to span typical phoneme
+    distribution). Both voiced and unvoiced sub-windows on each side
+    contain similar mix of vowels and consonants. Differences between
+    pre and post sub-windows are dominated by speaker/recording
+    continuity not phoneme content drift → voiced and unvoiced both
+    near-zero on within-source speech → asymmetry near zero → low
+    GBM SHAP on english/korean. Same self-gating that worked at NEAR
+    works at WIDE because no gap = same context similarity.
+
+    Why WIDE over ad-hoc fallback options: (i) [t+3, t+6] gap from
+    d49284c(c)(2) keeps the gap — same speech-regression failure
+    mode. (ii) Yet another mask is exhausted (5+ percussive/harmonic
+    failures). (iii) WIDE is genuinely untried time-scale on the
+    PROVEN axis. The voiced/unvoiced asymmetry family has the
+    biggest win in loop history (1eda8e3 +0.054 keep) plus a small
+    keep (7972a98 +0.005); time-scale variation on this template is
+    the natural next axis after content/mask exhaustion.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (NEAR window — same
+    template at 2x time scale); NOT d49284c (FAR window has a gap —
+    WIDE is adjacent); NOT 7972a98 (spec_contrast not cepstral); NOT
+    f4148cc (chroma asymmetry); NOT 0c3bf76 (1D scalar abs-delta);
+    NOT ff65865 voiced_chroma_far (single-mask, no asymmetry);
+    NOT any percussive / harmonic mask variant (different mask).
+    FIRST WIDE-window asymmetry feature in any content axis. Pure
+    features.py change — 1 new block (~50 lines, template-cloned
+    from 1eda8e3 with edge guard) + 1 FEATURE_NAMES append + 2
+    assert bumps + 1 call. ZERO new librosa calls, ZERO new caches.
+    Per-t cost: 4 slices + 4 masked means + 2 cosines on 13-dim
+    vectors + 1 subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) singing improvement preserved but speech
+    still regresses (broad phoneme context isn't enough to self-gate
+    at ±4s — speech is sentence-structured at 4s scale) → fallback
+    to MID ±3s window pre=[t-3,t] post=[t,t+3] (smaller deviation
+    from proven NEAR ±2s, less averaging power on chord cycle but
+    safer self-gating on speech). (2) singing flatter than d49284c
+    (averaging dilutes splice-side asymmetry too — cross-song splice
+    only spans 4s of new material, half of post window dominated by
+    same-source if cut is mid-window) → pivot to F0-stability
+    asymmetry voiced_f0_jitter_asymmetry (cited untried in
+    0c3bf76(c)(3); pitch jitter character is recording-dependent
+    and mastering-independent — orthogonal to cepstral). (3)
+    combined matches 0.490700 EXACTLY → confirms wrapper
+    retrain-skip bug now extends past hyperparam-only sites; escalate
+    to operator.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 37+
+    iterations — I cannot verify the 3 surviving singing FPs' actual
+    t_sec positions. If FPs cluster within 4s of file ends, edge
+    guard fires on most of them and feature is sentinel-inert. Every
+    WIDE/FAR window hypothesis remains theory-calibrated. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite
+    14 keeps in loop history — rollup writer broken. (iii) 99081f5
+    capacity ghost in-tree (max_depth=4, max_leaf_nodes=16) — feature
+    delta clean, absolute comparison mixes with ghost. (iv) chunk
+    duration distribution not exposed — for 30s eval chunks the
+    edge-guard fires on ~25% of analysis positions; for 120s chunks
+    only ~6%. Cannot verify whether singing FPs land in the
+    edge-guard zone.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent 37+-iteration blocker. Per-FP
+    (domain, file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, dsp_max, dsp_sum, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|).
+    chunk_duration_s explicitly tells me whether WIDE/FAR-window
+    edge guards fire on each FP. (2) US-505 COVERAGE FIX — extend
+    retrain sha gate to include train_classifier.py changes, not just
+    features.py. Diagnostic evidence: 5+ consecutive
+    train_classifier.py-only iterations all produced IDENTICAL
+    combined=0.490700 while feature-count bumps produced distinct
+    values. ~5-line shell extension of existing US-505 sha-gate.
+    (3) DISCARD-REVERT SYMMETRY SEMANTICS bug fix — wrapper treats
+    "matches baseline exactly" as no-improvement, restoring the
+    99081f5 capacity ghost via 960113c discard. If commit subject
+    starts "REVERT" + names a prior-discarded SHA, treat exact-match
+    as KEEP. ~15 lines git commit-message parse.
+
