@@ -4717,3 +4717,100 @@ per-domain: combined_english=0.843373 combined_korean=0.510448 combined_singing=
     ~15 lines git commit-message parse. Three unchanged
     highest-priority requests across 40+ iterations.
 
+## 2026-04-20T18:57:34+09:00 — 78513fb (discard, combined=0.546214)
+subject: add voiced_unvoiced_mfcc_asymmetry_far_narrow (FEATURE_NAMES 80->81) -- NARROW-GAP-FAR companion to 1eda8e3 NEAR MFCC asymmetry (kept +0.054 biggest win) and d49284c FAR-gap (singing +0.009 lift but speech regressed via wide phoneme drift). pre[t-2,t] post[t+3,t+6] (3s gap, 3s span). Reuses cached feat_mfcc + feat_vp + feat_audio/sr for duration, ZERO new librosa calls, ZERO new caches. Edge guard t-2<0 OR t+6>duration_s returns sentinel 0.0. Explicit cited fallback from d49284c(c)(2): 'shrink the far offset to [t+3, t+6] (less dense but still beats NEARs chord-cycle blind spot)'. Genuinely untried on MFCC content axis. Interpolates structurally between d49284c (4s gap 4s span -- broke speech) and proven NEAR (0s gap 2s span -- kept), and between b7dc8bf MID adjacent 0s gap (failed singing, no gap signal) and d49284c. Mechanism on 3 surviving singing FPs: post sub-window 3-6s past splice = ~1-1.5 chord cycles past (pop chord period 2-3s) -- voiced averaging partially washes within-song chord state, unvoiced stays small (mastering frozen) -> asymmetry near zero, non-discriminating. Cross-song splice: post samples song B 3-6s in (mastering fully consolidated), unvoiced_dist HIGH, voiced_dist moderate -> asymmetry POSITIVE. Speech self-gating preserved by narrower geometry: 3s post span samples 4-6 syllables (vs d49284cs 6-8), 3s gap (vs d49284cs 4s), total pre-to-post-mean separation 5.5s (vs d49284cs 6s), less phoneme-mix drift -> voiced+unvoiced MFCC co-vary more closely with phoneme context -> diff closer to zero-mean noise -> GBM low per-domain SHAP on english/korean. Halfway between NEAR (clean self-gating) and d49284c FAR (broken self-gating). d290101 proved 3s-gap 3s-span geometry is speech-safe on spec_contrast (english 0.889->0.897 improved, korean matched 0.667); transplanting this geometry to MFCC content axis where the mechanism actually discriminates chord-cycle from cross-song. Classifier hyperparam axis verifiably broken (5 train_classifier.py-only iterations produced IDENTICAL combined=0.490700 -> US-505 does not auto-retrain on hyperparam edits); only features.py-sha bumps force retrain. Every primary tunable saturated both directions; percussive/harmonic mask family monotonically failed; 1D scalar abs-delta (0c3bf76) failed; all other voiced/unvoiced asymmetry time-scales exhausted (NEAR kept 1eda8e3/7972a98, MID b7dc8bf failed, WIDE ff88b22 failed, FAR d49284c singing-only, FAR-spec_contrast variants failed on singing). NARROW-GAP-FAR on MFCC is the cited remaining middle-ground. Orthogonal: NOT 1eda8e3 (NEAR 0s gap -- same template different time scale); NOT d49284c (FAR 4s gap 4s span -- this is 3s gap 3s span); NOT ff88b22 (WIDE no gap); NOT b7dc8bf (MID no gap); NOT d290101 (spec_contrast content axis); NOT 177d641 (spec_contrast 1s gap); NOT f4148cc (chroma NEAR); NOT 0c3bf76 (1D scalar flatness abs-delta); NOT ff65865 (single-mask far chroma); NOT any percussive/harmonic/tonnetz/symmetric variant. FIRST 3s-gap + 3s-span geometry on the MFCC axis. Pure features.py change -- 1 new block (~60 lines template-cloned from _block_voiced_unvoiced_mfcc_asymmetry with edge guard + 3s gap) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. ZERO new librosa calls, ZERO new caches. Per-t cost: 4 slices + 4 masked means + 2 cosines on 13-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_mfcc_asymmetry_far_narrow', edge guard t=1 (t-2<0) returns 0.0, edge guard t=15 with 20s chunk (t+6>20) returns 0.0, in-range t=10 yields +0.091 (finite, non-trivial on synthetic voiced/unvoiced splice), idempotent on repeated calls, all 81 features finite on synthetic audio.
+per-domain: combined_english=0.814815 combined_korean=0.666667 combined_singing=0.300000
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_mfcc_asymmetry_far_narrow (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — NARROW-GAP-FAR companion
+    to 1eda8e3's NEAR MFCC asymmetry (kept +0.054 biggest win). Same paired-
+    difference template, post=[t+3, t+6] (3s gap, 3s span) instead of NEAR
+    [t, t+2]. Pre stays [t-2, t]. Reuses cached feat_mfcc + feat_vp +
+    feat_audio/sr for duration — ZERO new librosa calls, ZERO new caches.
+    Edge guard t-2<0 OR t+6>duration_s returns sentinel 0.0. Sentinel also
+    on empty masks / zero-norm. FEATURE_NAMES 80→81 forces wrapper auto-
+    retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. d49284c (MFCC FAR, post[t+4,t+8], 4s
+    gap + 4s span) was THE ONLY recent feature to lift singing
+    (0.345→0.354); speech regressed (english 0.889→0.825, korean
+    0.667→0.537) because the 4s span inside post window sampled broad
+    phoneme content differently from pre. ff88b22 MFCC WIDE ±4s adjacent
+    (no gap) failed singing 0.295 confirming a GAP is needed to wash the
+    chord-cycle within-song signal. b7dc8bf MFCC MID ±3s adjacent failed
+    singing 0.302. d290101 spec_contrast FAR 3s gap 3s span preserved/
+    improved speech (english 0.889→0.897!) but failed singing; 177d641
+    spec_contrast 1s gap 3s span also failed singing — spec_contrast FAR
+    variants can't match MFCC's chord-cycle discrimination. This hypothesis
+    is the EXPLICIT cited fallback from d49284c(c)(2): "shrink the far
+    offset to [t+3, t+6] (less dense but still beats NEAR's chord-cycle
+    blind spot)". Genuinely untried on MFCC.
+
+    Mechanism on 3 surviving singing FPs. 3s gap means post sub-window is
+    3-6s past splice = 1-2 chord cycles past (pop chord period 2-3s).
+    Voiced averaging over ~1.5 chords partially washes within-song chord
+    state (less than d49284c's 2-3 chord averaging, more than b7dc8bf's
+    no-gap). Chord-cycle FP: voiced stays near within-song mean, unvoiced
+    stays small (mastering frozen) → asymmetry near zero, non-
+    discriminating (silent). Cross-song splice: pre samples song A, post
+    samples song B 3-6s in (mastering / accompaniment fully consolidated)
+    — unvoiced_dist HIGH, voiced_dist moderate → asymmetry POSITIVE.
+    Speech self-gating: 3s post span samples ~4-6 syllables (vs d49284c's
+    4s = 6-8 syllables), less phoneme-mix drift between pre and post,
+    voiced+unvoiced co-vary with phoneme context at smaller amplitude →
+    diff closer to zero-mean noise → GBM low per-domain SHAP on english/
+    korean. Halfway between NEAR (clean self-gating) and d49284c FAR
+    (broken self-gating).
+
+    Classifier hyperparam axis verifiably broken (5 train_classifier.py-
+    only iterations IDENTICAL 0.490700). Only features.py-sha bumps force
+    retrain. Mask family (percussive/harmonic) exhausted. Voiced/unvoiced
+    asymmetry is proven productive (1eda8e3 +0.054, 7972a98 +0.005);
+    time-scale variation is the remaining axis and NARROW-GAP-FAR is the
+    untried middle point.
+
+    Orthogonal: NOT 1eda8e3 (NEAR 0s gap — same template, different time
+    scale); NOT d49284c (FAR 4s gap 4s span — this is 3s gap 3s span);
+    NOT ff88b22 (WIDE no gap); NOT b7dc8bf (MID no gap); NOT d290101
+    (spec_contrast content, same geometry this time on MFCC); NOT 177d641
+    (spec_contrast 1s gap); NOT f4148cc (chroma NEAR); NOT 0c3bf76 (1D
+    scalar abs-delta). FIRST 3s-gap + 3s-span geometry on the MFCC axis.
+    Pure features.py — 1 new block + 1 FEATURE_NAMES append + 2 assert
+    bumps + 1 call. ZERO new librosa calls, ZERO new caches. Per-t cost:
+    4 slices + 4 masked means + 2 cosines on 13-dim vectors + 1
+    subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech regresses (3s gap still
+    breaks MFCC speech self-gating) → fallback NARROW-GAP MFCC at 2s gap
+    / 2s span pre[t-2,t] post[t+2,t+4] — narrower post mimicking NEAR.
+    (2) Singing regresses like spec_contrast FAR variants (3s gap lets
+    voiced MFCC diverge from within-song average enough to muddle signal
+    on MFCC too) → pivot to voiced_unvoiced_spec_contrast_asymmetry at
+    FAR 6s gap pre[t-2,t] post[t+6,t+9]. (3) combined matches 0.490700
+    EXACTLY → wrapper retrain-skip bug extends past hyperparam-only
+    sites; escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 41+
+    iterations — cannot verify if the 3 singing FPs sit at t positions
+    where t+6 exceeds chunk duration (edge guard silences feature).
+    Every far-window hypothesis remains theory-calibrated. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" despite 14 keeps. (iii)
+    chunk_duration distribution absent — cannot estimate edge-guard
+    firing rate. (iv) 99081f5 capacity ghost in-tree at HEAD — feature
+    delta clean, absolute comparison mixes with ghost.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 41+-iteration blocker. Per-FP (domain, file,
+    t_sec, p_splice, dsp_*, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|).
+    chunk_duration_s tells me directly whether far-window edge guards
+    fire per FP. (2) US-505 COVERAGE FIX — extend sha-gate to cover
+    train_classifier.py changes. 5+ consecutive train_classifier.py-only
+    iterations produced IDENTICAL 0.490700. (3) DISCARD-REVERT SYMMETRY
+    SEMANTICS bug — wrapper treats "matches baseline exactly" as
+    no-improvement, restoring 99081f5 ghost via 960113c discard. If
+    commit subject starts "REVERT" + names prior-discarded SHA, treat
+    exact-match as KEEP.
+
