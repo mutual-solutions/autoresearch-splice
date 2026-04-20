@@ -5307,3 +5307,119 @@ per-domain: combined_english=0.829268 combined_korean=0.410959 combined_singing=
     knobs the same way GBM_THRESHOLD / GBM_MIN_SEP_S /
     ANALYSIS_STRIDE_S have explicit "tried kept/failed" tracking.
 
+## 2026-04-21T06:59:37+09:00 — ca2aa2f (discard, combined=0.440030)
+subject: add percussive_mfcc_cosine_dist (FEATURE_NAMES 80->81) -- FIRST HPSS (harmonic-percussive source separation) preprocessing axis feature in the 80-set. Decompose audio once per chunk via librosa.effects.hpss, compute MFCC on the percussive component, cache as ctx['feat_percussive_mfcc']. Feature = cos_dist(mean(perc_mfcc[t-2,t]), mean(perc_mfcc[t,t+2])). STRUCTURAL pivot off 60+ exhausted features.py content-axis experiments (1st+2nd order paired-diff / variance / persistence / cross-scale / trajectory / corr-matrix / histogram / retrospective-match 7 variants / music-gate) AND exhausted classifier-training axis (e4a9c18 sample_weight catastrophic; d1be6c3 capacity stayed unchanged; 4e2941b pitch-shift expansion; 7b49d40 time-stretch discarded; 4b1575e l2_reg 1.0->2.0 stayed). Baseline still 0.589 / singing 0.345 / 3 chord-cycle FPs. All 80 existing features computed on ORIGINAL audio's STFT/MFCC/chroma/contrast. HPSS is the genuinely untried PREPROCESSING axis: median-filter separation in the TF plane isolates percussive (drums/transients/plosive residue) from harmonic (voice/pads/strings). Explicit cited fallback from 8593da7(c)(3): 'pivot to harmonic-percussive-separated percussive retrospective match via librosa.effects.hpss'. Mechanism on 3 singing chord-cycle FPs: within one song drum kit + mastering + limiter + master EQ frozen so percussive MFCC at any two within-song windows near-identical (cos_dist ~0.001 validated on real clean_001.wav at 6 positions: 0.0002-0.0008) -> feature SILENT -> FP not boosted. Chord transitions DO NOT change drums. Cross-song splice (singing TP): different drum kit + mix + mastering -> percussive MFCC shifts -> cos_dist LARGE -> fires. Same mechanism 1eda8e3 voiced_unvoiced_MFCC_asymmetry exploited (+0.054 biggest keep) but HPSS is structurally cleaner source-separation than voicing-mask because median-filter operates in full TF plane rather than tagging whole time frames. Speech self-gating: HPSS strips harmonic vocals so percussive on speech is very quiet plosive+noise signature; within one recording mic+preamp+codec+room frozen -> pre/post similar (measured 0.004-0.013 on english clean) -> small magnitude, GBM low per-domain SHAP. Cross-speaker splice TP: different mic + different plosive physics -> cos_dist moderate/large -> TP helpful. Why all-frame cosine (not voicing-masked, not asymmetric): unvoiced masking on HPSS percussive would double-separate the same axis and lose drums-during-vocals signal; asymmetric is explicit fallback(c)(1) variant; start simple. Orthogonal: NOT any of the 80 existing features (all on original-audio STFT); NOT 1eda8e3 voiced_unvoiced_mfcc_asymmetry (voicing-mask on original MFCC not HPSS percussive); NOT 49bd0b1 voiced_mfcc; NOT any retrospective-match (single-boundary here not past-history bank); NOT any DSP gate or detector post-filter. FIRST HPSS-based feature; FIRST source-separation preprocessing axis. GBM max_depth=5 cannot synthesize HPSS decomposition from threshold splits on full-mix MFCC deltas. Pure features.py change: ~18-line HPSS+percussive-MFCC computation in _ensure_feat_cache with try/except sentinel falling back to zeros on exception; 1 ctx cache key 'feat_percussive_mfcc'; 1 new block _block_percussive_mfcc (~30 lines); 1 FEATURE_NAMES append; 2 assert bumps (80->81); 1 call in extract_features; self-test assert bump. Per-chunk HPSS cost ~200ms amortized once; eval ~180 chunks ~36s one-time; per-t cost 2 slices + 2 means on 13-dim + 1 cosine, sub-ms (measured 0.43 ms/call). Eval well under 300s budget. Smoke-verified: len(FEATURE_NAMES)==81 last-name 'percussive_mfcc_cosine_dist'; real singing clean_001.wav 6 within-song positions perc_mfcc_cos=0.0002-0.0008 confirming mechanism (drums frozen within-song); real english clean_001 perc_mfcc_cos=0.004-0.013 (small magnitude on speech as expected from HPSS stripping harmonic vocals); synthetic A(440Hz+low drum)/B(880Hz+noise drum) splice at t=20 yields 0.0022 vs 0.0000 at t=10 within-A (infinite discrimination on synthetic); edge guard t=0.5 returns small-magnitude value via underflow-safe cosine; idempotent on repeated calls; all 81 features finite; 500 calls in 213ms (0.43ms/call). FEATURE_NAMES sha change forces auto-retrain via US-505b gate.
+per-domain: combined_english=0.771084 combined_korean=0.428169 combined_singing=0.258065
+
+# 2026-04-21 — hypothesis: add percussive_mfcc_cosine_dist (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — FIRST feature on an
+    HPSS (harmonic–percussive source separation) preprocessing axis.
+    Decompose audio once per chunk via `librosa.effects.hpss`, compute
+    MFCC on the percussive component, cache it. feature =
+    cos_dist(mean(perc_mfcc[t-2,t]), mean(perc_mfcc[t,t+2])).
+    FEATURE_NAMES 80→81 forces auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. Classifier-training axis just got
+    stress-tested: e4a9c18 per-dataset sample_weight catastrophic;
+    d1be6c3 capacity bump (max_depth 4→5 / max_iter 200→300 / max_leaf
+    16→32) baseline-unchanged but stayed in tree; 4e2941b pitch-shift
+    expansion stayed; 7b49d40 time-stretch discarded; 4b1575e l2_reg
+    1.0→2.0 stayed. Baseline still 0.589 / singing 0.345 / 3 chord-cycle
+    FPs. 60+ features.py experiments on every content axis (MFCC /
+    chroma / spec_contrast / flatness / RMS / ZCR / bandwidth / rolloff
+    / F0 / onset / voicing) across every geometry (±2s paired-diff,
+    ±4s cross-intra, past-history retrospective-match 7 variants,
+    self-calibration MEAN/MAX, music-gate, histogram, trajectory,
+    corr-matrix, variance-ratio) all used the ORIGINAL audio
+    spectrogram. The genuinely untried PREPROCESSING axis is HPSS:
+    decompose audio into harmonic (tonal/sustained) + percussive
+    (transient/drums) via median-filter separation in time-frequency
+    plane, then compute features on the PERCUSSIVE component only.
+    Explicit cited fallback from 8593da7(c)(3): "pivot to harmonic-
+    percussive-separated percussive retrospective match via
+    librosa.effects.hpss".
+
+    Mechanism on 3 singing chord-cycle FPs. Within one song the drum
+    kit + drum bus comp + limiter + master EQ are FROZEN, so percussive
+    MFCC at any two within-song windows is near-identical — cos_dist
+    ≈ 0.02-0.05 → feature silent → FP not boosted. Chord transitions
+    do NOT change drums.
+
+    Cross-song splice (singing TP). Different song = different drum
+    kit, different mix, different mastering → percussive MFCC shifts
+    substantially → cos_dist ≈ 0.20-0.40 → feature fires, TP boosted.
+    Same mechanism 1eda8e3 unvoiced_MFCC_asymmetry exploited (biggest
+    keep +0.054); HPSS is a structurally cleaner source-separation
+    than voicing-mask because median-filter operates in the full TF
+    plane rather than tagging whole time frames.
+
+    Speech self-gating. HPSS strips harmonic vocals → percussive on
+    speech is very quiet (plosive residue + broadband noise). Within
+    one recording, mic + preamp + codec + room frozen → percussive
+    signature pre/post ≈ identical → cos_dist tiny → GBM low
+    per-domain SHAP on english/korean → NO new FPs. Cross-speaker
+    splice TP: different mic + different plosive physics → cos_dist
+    moderate/large → TP helpful.
+
+    Why all-frame cosine (not voicing-masked, not asymmetric).
+    Unvoiced masking on HPSS percussive would double-separate the
+    same axis and lose signal on vocal-dense bars where drums-during-
+    vocals is still informative. Asymmetric voiced/unvoiced on HPSS
+    is more complex and the failure mode of voicing-mask on
+    percussive audio isn't well-understood. Start simple; asymmetric
+    variant is the explicit fallback below.
+
+    Orthogonal. NOT any of the 80 existing features — ALL compute on
+    original audio's STFT/MFCC/chroma/contrast/etc. NOT 1eda8e3
+    voiced_unvoiced_mfcc_asymmetry (voicing-mask on original MFCC,
+    not HPSS percussive component). NOT 49bd0b1 voiced_mfcc (voiced
+    frames on original MFCC). NOT any retrospective-match variant
+    (single-boundary here, not past-history bank). FIRST HPSS-based
+    feature in 80-set; FIRST source-separation preprocessing axis.
+    GBM max_depth=5 cannot synthesize HPSS decomposition from
+    threshold splits on full-mix MFCC deltas.
+
+    Blast radius. 1 new librosa.effects.hpss call in _ensure_feat_cache
+    (~300ms per chunk cached once). 1 new librosa.feature.mfcc call
+    on percussive component. 1 new block function (~35 lines). 1
+    FEATURE_NAMES append. 2 assert bumps (80→81). Eval extraction
+    cost: amortized HPSS over ~180 chunks = ~50s one-time; per-t
+    cost 2 slices + 2 means + 1 cosine on 13-dim, sub-ms.
+
+(c) IF THIS FAILS. (1) All-frame cos_dist fires on speech because
+    plosive density shifts pre/post in 2s windows → pivot to
+    `unvoiced_percussive_mfcc_cosine_dist` (voicing-mask on HPSS
+    percussive isolates drum frames on music, kills plosive noise
+    on speech). (2) Singing FPs still fire because percussive
+    signature within one song has subtle chord-dependent
+    harmonic leakage (HPSS margin insufficient) → raise HPSS margin
+    to 3.0 or 5.0 for sharper separation. (3) Feature fires but
+    zero SHAP (redundant with voiced_unvoiced_mfcc_asymmetry via
+    correlated splits on mastering chain) → switch to HPSS HARMONIC
+    MFCC instead (captures sustained instruments, voice + strings
+    + pads, orthogonal to drum signature).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 75+
+    iterations — cannot verify the 3 singing FPs sit at boundaries
+    where percussive signature is stable (mechanism) vs dynamic
+    arrangement shifts (verse→chorus drum-fill) where percussive
+    varies within-song. (ii) SHAP rollup STILL empty for 14 keeps.
+    (iii) HPSS margin / hop parameter tradeoffs not surfaced —
+    default `librosa.effects.hpss(audio)` uses margin=1.0 which is
+    moderate separation; tighter margin may help, no way to know
+    without CLEAN_FP_POSITIONS.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    percussive_mfcc_cosine_dist, top-5 |SHAP|). Would settle every
+    HPSS-vs-voicing-mask hypothesis data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; would let
+    me verify whether 1eda8e3 MFCC asymmetry is load-bearing to
+    decide whether a PERCUSSIVE cousin is redundant or additive.
+    (3) PREPROCESSING-AXIS FRONTIER SNAPSHOT in CURRENT STATE —
+    track which source-separation paths have been tried (HPSS /
+    voicing / full-mix) so pivots to new preprocessing axes are
+    visible alongside GBM_* / augmentation frontier.
+
