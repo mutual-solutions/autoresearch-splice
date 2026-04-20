@@ -4589,3 +4589,91 @@ per-domain: combined_english=0.715385 combined_korean=0.466667 combined_singing=
     (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN to
     the tunable frontier snapshot alongside GBM_*.
 
+## 2026-04-21T03:53:39+09:00 — a6cf49d (discard, combined=0.522140)
+subject: add voiced_chroma_post_retrospective_match (FEATURE_NAMES 80->81) -- VOICING-MASKED retrospective context match on the CHROMA (pitch-class / key-signature) axis. For post[t,t+2] voiced-mean chroma, compute min cos_dist against voiced-mean chroma at past windows [t-k-2,t-k] for k in {3,6,9,12}s. Cited fallback from 3d56d52(c)(3). b5b1a0d all-frame MFCC retrospective match lifted singing 0.345->0.354 (BEST in 60+ iterations) but regressed korean/english (unvoiced noise-floor heterogeneity); 3d56d52 voicing-masked MFCC variant regressed singing further 0.354->0.330 because drum-onset signal in MFCC cepstrum that drove retrospective match lives in UNVOICED frames. Chroma is structurally different: drums/broadband percussion barely register in chroma (noise-like transients spread roughly uniformly across 12 pitch classes) so voicing mask doesn't strip productive signal. Within one song's key every chord shares 3-5 of 12 pitch classes so voiced-mean chroma over any 2s window converges to key-signature center; past {3,6,9,12}s voiced-chroma windows all sit in same key -> min cos_dist TINY on chord-cycle FP -> silent, FP not boosted. Cross-song splice crosses keys: post voiced chroma song B key, past voiced chroma all song A key -> all distances LARGE -> min LARGE -> fires. Speech self-gating (proven 32cac36 voiced_chroma template): voiced chroma on speech is per-vowel prosodic pitch-class noise that averages to near-uniform over any window >=1s, all past windows have similar uniform chromas -> min small uniform on non-splice speech -> GBM low per-domain SHAP on english/korean. Reuses cached feat_chroma + feat_vp, ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration_s OR any voiced mask empty OR any norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. Orthogonal: NOT b5b1a0d (all-frame MFCC, different axis AND mask); NOT 3d56d52 (voiced MFCC, different axis); NOT 32cac36 voiced_chroma_cosine_dist (single boundary, no past bank, no MIN aggregator); NOT 8170784 voiced_chroma_cross_intra_contrast (intra sub-windows on SAME +-4s span, no past history); NOT f4148cc voiced_unvoiced_chroma_asymmetry (1st-order paired-diff); NOT 9064eec/c5040d7/26a3687 cross-intra; NOT 4e67946 persistence (future horizon); NOT 4314449 cross-scale; NOT 1b4fe7c corr-matrix; NOT any DSP-gate. FIRST voicing-masked min-over-past-context feature on CHROMA axis. Pure features.py change -- 1 new block (~65 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features + self-test assert bump. Per-t cost 5 slices + 5 voiced-masked means on 12-dim chroma + 4 cosines + 1 min, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_chroma_post_retrospective_match', synthetic A(C-major chord-cycle 3s period)/B(F#-major) splice at t=30 yields 0.612 LARGE vs within-A chord-cycle t=18 yields 0.000021 (~29000x discrimination), edge guards t=10 (t-14<0) and t=39 (t+2>40s) both return 0.0 sentinel correctly, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.765432 combined_korean=0.492754 combined_singing=0.377419
+
+# 2026-04-21 — hypothesis: add voiced_chroma_post_retrospective_match (FEATURE_NAMES 80 → 81)
+
+(a) Pure `splice/features.py` add — VOICING-MASKED retrospective context
+    match on the CHROMA (pitch-class / key-signature) axis. For
+    post[t, t+2] voiced-mean chroma, compute min cos_dist against
+    voiced-mean chroma at past windows [t-k-2, t-k] for
+    k ∈ {3, 6, 9, 12}s. Reuses cached feat_chroma + feat_vp — ZERO new
+    librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration
+    OR any voiced mask empty OR any norm underflow → sentinel 0.0.
+    FEATURE_NAMES 80→81 forces auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. b5b1a0d all-frame MFCC retrospective match
+    lifted singing 0.345→0.354 — THE BEST singing result in 60+
+    iterations — but regressed korean/english (unvoiced noise-floor
+    heterogeneity across past k). 3d56d52's voicing-masked MFCC variant
+    regressed singing further (0.354→0.330) because the drum-onset
+    signal in MFCC cepstrum that drove retrospective match on singing
+    lives in UNVOICED frames — voicing mask stripped it.
+
+    Chroma is structurally different: (i) drums/broadband percussion
+    barely register in chroma because noise-like transients spread
+    roughly uniformly across 12 pitch classes, so voicing mask on
+    chroma ISN'T stripping the productive chord-cycle signal. (ii)
+    Within one song's key every chord shares 3-5 of 12 pitch classes,
+    so voiced-mean chroma over any 2s window converges to the key-
+    signature center; past {3,6,9,12}s voiced-chroma windows all sit
+    in the same key → min cos_dist TINY on chord-cycle FP → silent.
+    (iii) Cross-song splice crosses keys — post voiced-mean chroma is
+    song B's key, past voiced-mean chromas are all song A's key → all
+    distances LARGE → min LARGE → fires.
+
+    Speech self-gating (proven 32cac36 voiced_chroma_cosine_dist keep
+    template). Voiced chroma on speech is per-vowel prosodic pitch-
+    class noise that averages to near-uniform over any window ≥1s,
+    so all past windows have similar uniform chromas → min small and
+    uniform on non-splice speech → GBM low per-domain SHAP on english/
+    korean.
+
+    Explicit cited fallback from 3d56d52(c)(3): "pivot to CHROMA voiced
+    retrospective match (direct chord-class identity, orthogonal to
+    cepstral)". GBM max_depth=4 cannot synthesize min-over-past-bank
+    from existing single-boundary voiced_chroma_cosine_dist.
+
+    Orthogonal. NOT b5b1a0d (all-frame MFCC — different axis AND mask);
+    NOT 3d56d52 (voiced MFCC — different axis); NOT 32cac36 / any
+    voiced_chroma geometry (single boundary, no past bank, no MIN
+    aggregator); NOT 8170784 voiced_chroma_cross_intra_contrast (intra
+    sub-windows on SAME ±4s span, no past history); NOT f4148cc
+    voiced_unvoiced_chroma_asymmetry (1st-order paired-diff); NOT
+    9064eec / c5040d7 / 26a3687 cross-intra; NOT 4e67946 persistence;
+    NOT 4314449 cross-scale; NOT 1b4fe7c corr-matrix; NOT any DSP-gate.
+    FIRST voicing-masked min-over-past-context feature on CHROMA axis.
+
+(c) IF THIS FAILS. (1) Singing unchanged — within-song key shifts
+    (bridge modulation, verse→chorus key change) break key-invariance
+    → fallback to spec_contrast retrospective match (mastering
+    fingerprint frozen within-song regardless of key). (2) Speech
+    regresses — within-recording vowel prosody chroma drifts enough
+    over 12s that min distance is non-trivial on non-splice speech →
+    narrow offset bank to {3, 5, 7, 9}s for shorter baseline. (3)
+    Feature fires but zero SHAP — redundant with 32cac36 voiced_chroma
+    via correlated GBM splits → pivot to unvoiced all-frame chroma
+    retrospective (drums-weighted pitch distribution instead of vocal
+    melody).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 67+
+    iterations — cannot verify the 3 singing FPs sit in stable-key
+    regions (matching mechanism) or in bridge/modulation regions
+    where key shifts within-song. (ii) SHAP rollup STILL empty for
+    14 keeps — cannot verify whether 32cac36 voiced_chroma is load-
+    bearing. (iii) b5b1a0d per-FP retrospective-match values unknown.
+    (iv) 0.4907 identical-streak root cause unknown.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks across
+    67+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    voiced_chroma_cosine_dist, post_retrospective_match_k{3,6,9,12},
+    top-5 |SHAP|). Would settle every retrospective/key-signature
+    hypothesis data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN to the
+    tunable frontier snapshot alongside GBM_*.
+
