@@ -3235,3 +3235,69 @@ per-domain: combined_english=0.804878 combined_korean=0.656250 combined_singing=
     per-value combined delta. Turns "is this stride worth a full
     243s eval" into a 30-second sweep across 5 values.
 
+## 2026-04-20T15:26:57+09:00 — 17d4aec (discard, combined=0.490700)
+subject: HistGBM learning_rate 0.07 -> 0.05 (untried classifier axis)
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: HistGBM learning_rate 0.07 → 0.05
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` hyperparam — lower
+    HistGBM `learning_rate` from 0.07 → 0.05, keeping max_iter=200 /
+    max_depth=4 / max_leaf_nodes=16 / l2=1.0 / min_samples_leaf=20. One-line
+    edit in `make_pipeline()`. features.py sha stable so wrapper's
+    auto-retrain fires on train_classifier.py edit (US-505).
+
+(b) WHY this over recent failures. learning_rate is the one HistGBM
+    hyperparameter NEVER tuned in the HistGBM era. Per 99081f5's own note,
+    all prior LR experiments (e.g. 9f66d66 0.1→0.05) were against the
+    *old* GradientBoostingClassifier pre-acba4aa swap — zero data about LR
+    behavior against HistGBM + 80-feature space. Explicitly cited untried
+    in 960113c(c)(1) "pivot to learning_rate reduction 0.07 → 0.05 (smoother
+    fit, tightens calibration at the high-probability tail; untried)" and
+    again in b120d38(c)(2). Last 10 iterations exhausted feature-add
+    (mask/rhythm variants), DSP tunings (SUM=5.5, MAX=2.2, PHASE=0.5),
+    stride widening (0.15), feature removal (ea1636c catastrophic), and
+    capacity revert (960113c matched baseline exactly → discarded). The
+    PER-TUNABLE frontier shows all other primary-tunable axes saturated
+    on both sides or with tried values in hazardous bands. Mechanism:
+    singing's 3 FPs sit at p_splice ∈ [0.982, 0.99] — barely above the
+    0.982 gate. Lower LR with same max_iter produces a smoother decision
+    surface (weaker per-step correction, more averaged trees) and pulls
+    BORDERLINE predictions toward the middle of the probability scale.
+    Real TPs sitting comfortably at p≈1.0 stay safely above the gate;
+    borderline FPs get pulled below. Risk-bounded: if underfit dominates
+    and real TPs also drop below gate, combined regresses; fallback is
+    LR=0.05 + max_iter=280 to preserve overall fit strength.
+
+(c) IF THIS FAILS. (1) Underfit on TPs → pair LR=0.05 with max_iter bump
+    200→280 to preserve effective fit depth. (2) LR change inert (tree
+    ensemble saturated regardless of LR at 200 iter) → pivot to
+    `min_samples_leaf` 20→40 (untried regularization axis) to smooth
+    leaf-level variance. (3) Final escalation: feature-axis return with
+    `voiced_percussive_chroma_asymmetry` (cited untried 3+ times; drums
+    have flat chroma so percussive-mask chroma isolates pitched
+    accompaniment at transient frames — bass/guitar riff cross-song
+    shift, complementary to the MFCC asymmetry family which is saturated).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent (29+ iterations);
+    I cannot confirm the 3 singing FPs actually live at p ∈ [0.982, 0.99]
+    rather than higher. If they're at p≈0.99 already, LR smoothing won't
+    reach them. (ii) SHAP rollup empty — cannot predict LR's effect on
+    per-domain p_splice distributions. (iii) 99081f5 ghost state is
+    currently IN-tree (max_depth=4, max_leaf_nodes=16 per grep) so my LR
+    change stacks on the capacity bump, not the 7972a98 keep-time
+    classifier. Attribution of LR delta is clean (only LR changes), but
+    absolute combined comparison mixes with the ghost.
+
+(e) Wrapper enhancements. (1) **DISCARD-REVERT SYNC auditor** — persistent
+    ask for 6+ iterations. Ghost state cycles (ea1636c feature ghost,
+    99081f5 hyperparam ghost, 960113c discarded revert re-instated the
+    ghost) continue to contaminate attribution. ~20-line shell guard
+    after the discard decision that diffs features.py +
+    train_classifier.py vs baseline-sha and aborts / restores on drift.
+    (2) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent
+    blocker for 29+ iterations. (3) CURRENT CLASSIFIER HYPERPARAMS
+    snapshot in prompt (learning_rate, max_depth, max_leaf_nodes,
+    max_iter, l2, min_samples_leaf at HEAD) so I don't have to grep
+    train_classifier.py every iteration to confirm ghost state.
+
