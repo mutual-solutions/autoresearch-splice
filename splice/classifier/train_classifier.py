@@ -58,7 +58,7 @@ N_FOLDS = 5
 # but otherwise preserved, widening the not_splice distribution in the
 # top-SHAP spec_*_delta feature space without touching korean/english
 # training data.
-SINGING_AUG_SHIFTS_SEMITONES = (+1, -1)
+SINGING_AUG_SHIFTS_SEMITONES = (+1, -1, +2, -2)
 
 MODEL_OUT = _HERE.parent / "fp_classifier.joblib"
 CV_OUT = _HERE.parent / "cv_results.json"
