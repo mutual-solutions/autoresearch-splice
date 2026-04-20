@@ -4047,3 +4047,106 @@ per-domain: combined_english=0.829268 combined_korean=0.567164 combined_singing=
     decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
     with joblib-mtime sanity check.
 
+## 2026-04-21T02:45:49+09:00 — 1e57702 (discard, combined=0.470638)
+subject: add nf_full_hist_cosine_dist (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.911392 combined_korean=0.495652 combined_singing=0.230769
+
+# 2026-04-21 — hypothesis: add nf_full_hist_cosine_dist (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — cosine distance between
+    FULL-WINDOW mean 32-bin log-spaced spectral histograms over
+    pre[t-2, t] vs post[t, t+2]. Reuses the cached feat_nf_hist
+    (32-bin log-frequency magnitude histogram per ~50 ms frame, already
+    normalised per-row by _ensure_feat_cache) and feat_nf_times. ZERO
+    new librosa calls, ZERO new FFTs, ZERO new caches. Edge guard:
+    either window empty or either mean-sum < 1e-10 → sentinel 0.0.
+    FEATURE_NAMES 80 → 81 forces wrapper auto-retrain via US-505 sha
+    gate.
+
+(b) WHY over recent failures. Last 15+ iterations chased a zoo of
+    means-based, variance, persistence, cross-scale, correlation, and
+    trajectory features — every one rebuilt its signal from MFCC /
+    chroma / spec_contrast / F0 / ZCR / bandwidth / rolloff / onset.
+    None of those axes touch the 32-bin FULL LOG-FREQUENCY HISTOGRAM
+    directly: the only consumer of feat_nf_hist is _block_noise_floor
+    and it aggregates ONLY the bottom-10% quietest frames (noise-floor
+    signature), never the full window. That full-window 32-dim signal
+    is a genuinely unexplored content axis — GBM max_depth≤4 cannot
+    synthesise a 32-dim cosine distance from the 5 scalar summaries
+    (spec_centroid / rolloff / flatness / bandwidth / contrast) nor
+    from mel-PCA (which collapses time → 20 PCA scalars, discarding
+    the per-frame shape).
+
+    Mechanism on 3 singing chord-cycle FPs. Within one song,
+    arrangement + mastering chain + mic + room shape the broadband
+    32-bin log-mag envelope consistently: drums+bass+keyboards+vocals
+    produce a stable log-mag profile across 2 s whose shape (bass
+    hump + midrange body + high shelf) barely moves with chord
+    transitions — chord pitches shift specific TONAL PEAKS but the
+    ensemble ENVELOPE (bin-level average across 32 log bins) is
+    stable, cos_dist ≈ 0.02-0.05 silent.
+
+    Real cross-song splice. Different drummer kit + different
+    mastering limiter + different vocal bus + possibly different
+    codec roll-off (tier-1 Opus vs MP3-128) all shift the 32-bin
+    envelope shape materially; cos_dist ≈ 0.15-0.50 fires.
+
+    Speech self-gating. Within a recording the mic + preamp + room +
+    speaker vocal tract fix the log-mag envelope; consecutive 2 s
+    windows sample identical recording chain → cos_dist small → GBM
+    low per-domain SHAP on english/korean. Cross-speaker splice
+    flips mic + room + voicing spectrum → cos_dist large → feature
+    helps speech TPs too, similar to the self-gating pattern that
+    made 1eda8e3 MFCC asymmetry the biggest keep.
+
+    Orthogonal. NOT any cepstral cosine (MFCC), NOT chroma, NOT
+    spec_contrast, NOT 1D scalar spectral moment (centroid / rolloff /
+    flatness / bandwidth), NOT F0, NOT ZCR, NOT RMS-dB, NOT onset,
+    NOT voicing-masked variant, NOT 2nd-order cross-intra, NOT
+    F-statistic variance, NOT persistence, NOT cross-scale, NOT
+    trajectory velocity, NOT correlation-matrix. NOT existing
+    nf_kl_divergence (bottom-10% frames only, KL on 32-bin,
+    asymmetric unbounded, maps noise-floor signature — this feature
+    uses ALL frames, cosine, bounded [0,2], maps arrangement
+    envelope). FIRST full-window 32-bin log-mag histogram cosine
+    feature in the 80-feature set; FIRST consumer of feat_nf_hist
+    beyond bottom-10% aggregation.
+
+(c) IF THIS FAILS. (1) Singing unchanged — within-song loud-strike
+    chord pitches do perturb the full-window 32-bin envelope more
+    than I'm assuming → fall back to cosine on ONLY the loudest
+    25% frames (arrangement-dominant, smooths tonal-peak jitter).
+    (2) Speech regresses — within-recording phoneme sequences shift
+    the envelope enough to fire on non-splice positions → restrict
+    to frames where nf_rms > chunk-median (active-speech mask).
+    (3) Feature fires but zero GBM SHAP — redundant with mel-PCA
+    collapse; pivot to Jensen-Shannon divergence on the same
+    full-window aggregate (different statistic on same signal,
+    bounded like cosine but probability-theoretic).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 63+
+    iterations — cannot verify the 3 singing FPs sit in sections
+    where the 32-bin envelope is truly stable within-song (mechanism
+    assumption); they may be in dynamic verse→chorus arrangement
+    transitions where envelope shifts naturally. (ii) SHAP rollup
+    STILL empty for 14 keeps — no empirical guidance on which
+    content axes GBM actually uses. (iii) No dense p_splice
+    histogram logged; d4d35b1 margin-filter catastrophe (0.287)
+    remains undiagnosed. (iv) 99081f5 4/16 capacity ghost status
+    unclear at HEAD.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks
+    across 63+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE — per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, nf_kl_divergence,
+    nf_centroid_delta, top-5 |SHAP|). Would decide every histogram/
+    envelope hypothesis data-driven instead of theory-only.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without
+    per-feature attribution every axis pick remains a guess.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
+    with joblib-mtime sanity check would isolate the 0.4907
+    identical-streak root cause.
+
