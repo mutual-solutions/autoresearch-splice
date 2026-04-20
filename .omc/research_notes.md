@@ -5126,3 +5126,65 @@ per-domain: combined_english=0.542373 combined_korean=0.413115 combined_singing=
     ±1.5s). Would enable data-driven tuning of any wide-window
     post-filter.
 
+## 2026-04-21T05:24:51+09:00 — e4a9c18 (discard, combined=0.496163)
+subject: add DATASET_SAMPLE_WEIGHT={singing:2.0, korean:1.0, english:1.0} to HistGBM fit (pure classifier-training change, no feature or detector edit) -- weights each singing training row 2.0x via Pipeline clf__sample_weight routing in both GroupKFold folds and final fit. STRUCTURAL pivot off 60+ iterations of features.py / detector.py tweak exhaustion (every content axis 1st+2nd order paired-diff / variance / persistence / trajectory / corr-matrix / histogram / retrospective-match 7 variants / music-gate, every DSP-gate MAX/SUM/SECOND-HIGHEST/PHASE, every detector post-filter peak-width/margin/cluster-count) onto the classifier-training axis. 1cded37 NEAR-PEAK cluster-count catastrophically broke english 0.889->0.542 proving detector post-filter axis is exhausted. Classifier-training axis has NOT been explored since 2025-Q4 pitch-shift augmentation lifted singing 0.272->baseline. sample_weight directly reshapes the GBM loss gradient -- genuinely orthogonal to features.py / detector.py. Singing splice_f1=0.406 (computed 0.345/0.85 clean_score) means BOTH precision and recall are low in spliced singing; upweight biases GBM's split capacity toward singing-discriminative thresholds GBM has learned to underuse (voiced_chroma_cosine_dist carries singing signal a6cf49d=0.377 highest-ever; voiced_unvoiced_mfcc_asymmetry=0.054 biggest keep). Speech at 0.667/0.889 has margin; 1.0x retains that signal. Factor 2.0 is moderate. Orthogonal: NOT any features.py addition (no feature change, FEATURE_NAMES stable 80); NOT any DSP gate or threshold; NOT any detector post-filter; NOT any GBM hyperparameter (max_depth/max_iter/learning_rate/subsample unchanged); NOT pitch-shift augmentation change (SINGING_AUG_SHIFTS_SEMITONES unchanged). FIRST per-dataset sample-weight tweak in classifier history; FIRST direct loss-gradient bias by domain. Pure train_classifier.py change -- 1 constant + 1 per-manifest sample_weight array + 2 fit calls with clf__sample_weight routing + 2 print lines for row counts. US-505b sha gate auto-retrains from scratch; wrapper runs train_classifier.py and then evaluate.py. Smoke-verified: AST parse OK 478 lines, DATASET_SAMPLE_WEIGHT constant present, clf__sample_weight= routing present in both fold and final fits, Pipeline clf__sample_weight routing works end-to-end on synthetic X/y/sw, FEATURE_NAMES still 80.
+per-domain: combined_english=0.795181 combined_korean=0.573913 combined_singing=0.267647
+
+# 2026-04-21 — hypothesis: upweight singing training samples (sample_weight=2.0)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    pass `sample_weight` to HistGradientBoostingClassifier.fit() that
+    weights each singing training row at 2.0x vs 1.0x for korean/english.
+    Forces GBM's loss gradient to prioritize singing-discriminative
+    splits at every boosting iteration. No features.py change, no
+    detector.py change, feature count stable at 80. US-505b sha gate
+    triggers auto-retrain.
+
+(b) WHY over recent failures. 60+ features.py additions (every content
+    axis on 1st-order paired-diff, 2nd-order cross-intra, F-stat
+    variance, persistence, cross-scale, trajectory, corr-matrix,
+    histogram, retrospective-match 7 variants, music-gate), every
+    DSP-gate axis (MAX, SUM, SECOND-HIGHEST, PHASE floor), every
+    detector post-filter (peak-width, margin, cluster-count) ALL
+    collapsed on 3 singing chord-cycle FPs. 1cded37 (NEAR-PEAK
+    cluster-count) catastrophically broke english 0.889->0.542 proving
+    detector post-filter axis is exhausted. Classifier-training axis
+    has NOT been explored since 2025-Q4 pitch-shift augmentation
+    (which lifted singing 0.272->baseline). sample_weight directly
+    changes the GBM loss gradient -- genuinely orthogonal to any
+    feature addition or detector tweak.
+
+    Singing splice_f1 = 0.406 (computed from combined 0.345 / clean_score
+    0.85), meaning BOTH precision and recall are low in spliced
+    singing files not just clean FPs. Upweighting singing makes GBM
+    spend more split capacity on singing-specific feature thresholds
+    (voiced-chroma, MFCC asymmetry, spec_contrast retrospective)
+    which the agent already confirmed carry singing signal (a6cf49d
+    singing=0.377 highest-ever, b5b1a0d singing=0.354). Speech is
+    already at 0.667/0.889 with margin; 1.0x weight retains that
+    signal. Factor 2.0 is moderate -- not aggressive enough to
+    dominate.
+
+(c) IF THIS FAILS. (1) Speech regresses catastrophically (singing
+    upweighting dragged GBM toward singing-noise patterns, breaking
+    speech thresholds) -> drop factor to 1.3x or 1.5x. (2) Singing
+    unchanged (GBM already saturated on singing signal) -> pivot to
+    max_depth=5 / max_iter=300 to add GBM capacity. (3) Both domains
+    move in correlated direction (GBM learns a globally different
+    decision surface) -> try class_weight-style per-LABEL weight
+    (hard_cut/crossfade upweight) instead of per-DATASET.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent --
+    cannot verify what features drive the 3 singing FPs. (ii) SHAP
+    rollup STILL empty for 14 keeps -- cannot verify per-feature
+    per-domain contribution. (iii) Per-domain training-set sizes
+    (singing/korean/english row counts) NOT in CURRENT STATE -- can't
+    predict effective weight redistribution; factor 2.0 is a guess
+    without knowing if singing is 30%, 50%, or 70% of rows.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block. (2)
+    SHAP ROLLUP REPAIR -- empty for 14 keeps. (3) PER-DOMAIN TRAINING
+    ROW COUNTS in CURRENT STATE (read from training_manifest.json);
+    would let sample_weight / class_weight hypotheses pick factors
+    data-driven instead of by theory.
+
