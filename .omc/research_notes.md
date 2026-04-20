@@ -3939,3 +3939,111 @@ per-domain: combined_english=0.810127 combined_korean=0.550000 combined_singing=
     (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
     decision with joblib-mtime sanity check.
 
+## 2026-04-21T02:29:12+09:00 — f0ccd94 (discard, combined=0.518762)
+subject: add voiced_unvoiced_onset_asymmetry (FEATURE_NAMES 80->81) -- voicing-masked paired-diff on the cached onset-strength envelope (rectified spectral flux). Applies proven productive template (1eda8e3 MFCC +0.054 biggest keep, 7972a98 spec_contrast +0.005 keep) to the one cached 1D per-frame signal not yet tried on this template. Last 10 iterations exhausted 2nd-order / variance / persistence / cross-scale / trajectory-velocity / corr-matrix structures on vector content axes -- every one collapsed on singing chord-cycle FPs (0.47-0.55). Pre[t-2,t] / post[t,t+2]: voiced_delta=mean(onset[voiced post])-mean(onset[voiced pre]); unvoiced_delta=mean(onset[unvoiced post])-mean(onset[unvoiced pre]); feature=unvoiced_delta-voiced_delta. Reuses cached feat_onset + feat_vp, ZERO new librosa calls. Sentinel 0.0 on any empty mask. Mechanism on 3 singing chord-cycle FPs: within-song drum groove steady -> unvoiced_delta~0; vocal melody shifts with chord -> voiced_delta small -> asymmetry~0 silent, FP not boosted. Cross-song splice: different drum kit+mastering attack -> unvoiced_delta MODERATE; vocal shift moderate -> asymmetry POSITIVE, TP boosted. Speech self-gating via paired differencing (1eda8e3 mechanism): within-recording onset intensity is phoneme-context-driven and voiced/unvoiced deltas track same context -> DIFFERENCE zero-mean -> GBM low per-domain SHAP on english/korean. e2ad8b0 onset_tempo_peak_lag_delta used ACF peak-lag (tempo estimate) on same signal -- different statistic, not mean-intensity voicing-split. Orthogonal: NOT 1eda8e3 (cepstral cosine); NOT 7972a98 + every spec_contrast variant (7-dim cosine); NOT f4148cc (chroma); NOT 0c3bf76 (flatness); NOT c006d52 (RMS-dB); NOT 0cdd87e (ZCR); NOT 7a170b0 (bandwidth); NOT e234649 (rolloff); NOT 27ddbf7/1d1144d (F0); NOT 8fc7169 (voicing transition rate -- count not intensity); NOT e2ad8b0 (ACF peak-lag tempo); NOT any 2nd-order / variance / persistence / cross-scale / trajectory / corr-matrix variant; NOT detector post-filter. FIRST onset-strength (rectified-spectral-flux) voicing-masked paired-diff in 80-feature set. Pure features.py change -- 1 new block (~40 lines cloned from block 14 template with 1D scalar mean replacing 13-dim cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost: 4 slices + 4 masked means + 2 subtractions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_onset_asymmetry', real singing_clean_001.wav 20 sample positions yield 16/20 non-zero with range [-0.4046, 0.4116] (non-trivial dynamic range), 100 extract_features calls all 81 features finite, idempotent, edge guard via empty-mask sentinel returns 0.0 correctly.
+per-domain: combined_english=0.829268 combined_korean=0.567164 combined_singing=0.296825
+
+# 2026-04-21 — hypothesis: add voiced_unvoiced_onset_asymmetry (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — voicing-masked paired-diff
+    of MEAN onset-strength (rectified spectral flux = librosa.onset_strength,
+    already cached as `feat_onset`). For pre[t-2,t] / post[t,t+2]:
+        voiced_delta   = mean(onset[voiced post])   − mean(onset[voiced pre])
+        unvoiced_delta = mean(onset[unvoiced post]) − mean(onset[unvoiced pre])
+        feature        = unvoiced_delta − voiced_delta
+    Reuses cached feat_onset + feat_vp — ZERO new librosa calls, ZERO new
+    caches. Sentinel 0.0 when any mask empty. FEATURE_NAMES 80→81 forces
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Last 10 iterations chased 2nd-order /
+    variance / persistence / cross-scale / trajectory-velocity /
+    correlation-matrix structures on vector content axes — every one
+    collapsed on singing chord-cycle FPs (0.47–0.55 range). The proven
+    productive template on this project remains the 1st-order voicing-
+    masked paired-diff (1eda8e3 MFCC +0.054 biggest keep, 7972a98
+    spec_contrast +0.005 keep). I have exhausted this template on every
+    cached 1D/vector content descriptor EXCEPT the onset-strength
+    (rectified spectral flux) envelope. feat_onset is a per-frame 1D
+    scalar at the same hop as feat_vp so it fits the scalar-asymmetry
+    shape of 0cdd87e ZCR / 7a170b0 bandwidth / e234649 rolloff / c006d52
+    RMS-dB, all of which were discarded but non-catastrophic. e2ad8b0
+    used ACF peak-lag of onset (tempo estimate) — a different statistic;
+    never tried mean-intensity voicing-split on this cached signal.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Onset-strength
+    measures rate-of-spectral-energy-increase per frame (note / drum /
+    consonant onsets). Within one song the DRUM GROOVE is steady (same
+    drummer, same kit, same mastering compressor attack) so unvoiced-
+    frame onset intensity stays approximately flat on both sides of the
+    FP → unvoiced_delta ≈ 0. The vocal melody shifts at chord transitions
+    so voiced-frame onset intensity varies slightly → voiced_delta small
+    → asymmetry ≈ 0 silent → FP NOT boosted.
+
+    Real cross-song splice. Different drum kit + different tempo +
+    different mastering attack → unvoiced onset intensity shifts
+    measurably between song A and song B → unvoiced_delta MODERATE.
+    Vocal delivery (phrase density, lyrical rate) differs → voiced_delta
+    also moderate, but typically less than the mastering/drum jump
+    because the singer's attack/release is more consistent across
+    recordings than the drum bus. → asymmetry POSITIVE (unvoiced > voiced),
+    fires as discriminator.
+
+    Speech self-gating (proven 1eda8e3 mechanism). Within-recording
+    speech has stable rate; per-frame onset intensity is phoneme-context
+    driven and voiced/unvoiced deltas both track the same context →
+    DIFFERENCE zero-mean → GBM low per-domain SHAP on english/korean →
+    feature functionally invisible on speech domains. Cross-speaker
+    splice TPs remain handled by 1eda8e3 MFCC asymmetry.
+
+    Orthogonal. NOT 1eda8e3 (13-dim cepstral cosine); NOT 7972a98 +
+    every spec_contrast geometry variant (7-dim cosine); NOT f4148cc
+    (chroma); NOT 0c3bf76 (flatness); NOT c006d52 (RMS-dB); NOT 0cdd87e
+    (ZCR time-domain); NOT 7a170b0 (bandwidth); NOT e234649 (rolloff);
+    NOT 27ddbf7/1d1144d (F0 distribution); NOT 8fc7169 (voicing
+    transition rate — count not intensity); NOT e2ad8b0 (ACF peak-lag
+    tempo — different statistic on same signal); NOT any 2nd-order /
+    variance / persistence / cross-scale / trajectory / corr-matrix
+    feature; NOT detector post-filter. FIRST onset-strength
+    (rectified-spectral-flux) voicing-masked paired-diff in the
+    80-feature set.
+
+    Blast radius. Pure features.py change — 1 new block (~35 lines,
+    cloned from block 14 template with 1D scalar mean replacing 13-dim
+    cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call
+    in extract_features. Per-t cost: 4 slices + 4 masked means + 2
+    subtractions, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (within-song drum onset
+    intensity is more variable than I'm assuming — dynamic arrangements
+    have sparse verses vs loud choruses) → fall back to narrower ±1s
+    spans so within-phrase stability dominates. (2) Speech regresses
+    (cross-sentence onset rate differs within same recording and feature
+    fires on non-splice speech transitions) → add voicing-prob
+    threshold `vp > 0.6` to tighten mask. (3) Combined lands at 0.4907
+    identical-streak → retrain gate broken for sha bump; escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 62+
+    iterations — cannot verify whether the 3 singing FPs sit in sections
+    with STABLE drum onset intensity (mechanism assumption) or in
+    dynamic verse→chorus onset-density-transition sections (where this
+    feature would fire and create a new FP). (ii) SHAP rollup STILL
+    empty for 14 keeps — cannot verify whether e2ad8b0's onset-ACF
+    feature was even inside top GBM features vs spuriously random. (iii)
+    d4d35b1's 0.287 margin-filter catastrophe still undiagnosed; no
+    dense p_splice histograms. (iv) 99081f5 4/16 capacity ghost status
+    unclear at HEAD.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks across
+    62+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE — per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, onset_strength_pre_mean,
+    onset_strength_post_mean, voiced_fraction_pm2s, top-5 |SHAP|).
+    Per-FP onset-intensity fields would decide every voicing-masked
+    scalar hypothesis data-driven instead of theory-only.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
+    with joblib-mtime sanity check.
+
