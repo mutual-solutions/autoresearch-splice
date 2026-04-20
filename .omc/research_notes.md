@@ -3301,3 +3301,115 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     max_iter, l2, min_samples_leaf at HEAD) so I don't have to grep
     train_classifier.py every iteration to confirm ghost state.
 
+## 2026-04-20T15:32:38+09:00 — db59c36 (discard, combined=0.490700)
+subject: HistGBM min_samples_leaf 20 -> 40 (untried regularization axis)
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: HistGBM min_samples_leaf 20 → 40 (untried regularization axis)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` one-line change —
+    raise HistGBM `min_samples_leaf` 20 → 40, keeping max_iter=200 /
+    max_depth=4 / max_leaf_nodes=16 / learning_rate=0.07 /
+    l2_regularization=1.0. features.py sha stable so wrapper's auto-retrain
+    fires on train_classifier.py edit (US-505). min_samples_leaf has NEVER
+    been tuned in the loop's history — every keep/discard used value=20.
+
+(b) WHY this over recent failures. Last 14 iterations exhausted every other
+    axis against the 7972a98 baseline (combined=0.589282, singing=0.345,
+    3 clean FPs): feature-add (aa4f141/fd500b3/49fa2ca/6384137 all
+    regressed), feature removal (ea1636c catastrophic 0.455), DSP gates
+    (53d3ea0 SUM=5.5 / 0cb551f MAX=2.2 / 67633f2 PHASE=0.5 all failed),
+    stride (b120d38 0.15 failed, denser direction untouched), classifier
+    capacity (99081f5 bump in-tree as ghost, 960113c revert matched
+    baseline EXACTLY → proves capacity is saturated on this feature
+    space), learning_rate (17d4aec 0.05 failed). CLAUDE.md mandates
+    structural change after 5+ same-axis failures; every classifier
+    axis except min_samples_leaf + max_iter is saturated.
+    min_samples_leaf is the explicit cited untried fallback from
+    17d4aec(c)(2): "pivot to min_samples_leaf 20→40 (untried
+    regularization axis) to smooth leaf-level variance."
+
+    Mechanism targeting the 3 singing FPs: min_samples_leaf is a LEAF-
+    LEVEL regularizer requiring every terminal leaf to be supported by
+    ≥N training samples before a split is made. Doubling 20→40 forces
+    GBM to coalesce small-support leaves into larger ones, smoothing
+    the decision surface specifically where training data is sparse.
+    Real cross-source splice TPs sit in regions of feature space
+    densely covered by training (cross-domain augmentation, pitch-shift
+    aug, large class-2/class-1 populations) so their leaves have
+    hundreds of supporting samples — p_splice stays ≈1.0 regardless
+    of whether the minimum is 20 or 40. The 3 singing FPs at
+    p_splice ∈ [0.982, ~1.0] are a different population: chord-
+    transition configurations on pop/rock vocals are RARE in training
+    (the augmentation targets splice-edge physics, not chord-cycle
+    within-song physics), so their decision path likely terminates in
+    small-sample leaves that over-fit the training positives around
+    them. Raising min_samples_leaf to 40 forces these micro-leaves to
+    merge with larger neighbor leaves dominated by clean-label
+    training data → p_splice on chord-cycle points gets pulled down
+    toward 0.95, below the 0.982 gate → FPs drop while TPs hold.
+
+    This is exactly the classifier-side remedy the 960113c revert
+    probed but couldn't deliver: 960113c reduced capacity globally
+    (max_depth 4→3, max_leaf 16→8) and produced byte-identical
+    combined (0.589282) because the classifier is ALREADY finding the
+    same decision function at lower capacity. Capacity isn't the
+    bottleneck; leaf-support regularization is a different knob that
+    specifically penalizes small training-support leaves without
+    globally shrinking the decision surface.
+
+    Why 40 specifically: doubles support requirement (still allows
+    granular splits — training set has ~1360 rows in class-2, 20
+    samples/leaf allowed ~68 effective leaves, 40 allows ~34, a
+    meaningful but not draconian tightening). Larger jumps (60, 80)
+    risk wholesale under-fitting; 40 is the natural first step cited
+    in the reflection.
+
+    Orthogonal to every recent axis: NOT feature add/remove
+    (features.py sha stable); NOT primary-tunable (detector.py
+    unchanged); NOT learning_rate (17d4aec); NOT max_depth/
+    max_leaf_nodes (99081f5 / 960113c revert); NOT DSP gate. First
+    min_samples_leaf tuning in the loop's history. Blast radius:
+    1-line edit (20 → 40). Retrain cost absorbed in wrapper's
+    normal cycle (~3 min). Risk-bounded: min_samples_leaf is a
+    well-understood regularizer; worst case under-fits and combined
+    regresses below baseline, fallback is clean (revert to 20 and
+    try max_iter=280 from 17d4aec(c)(1)).
+
+(c) IF THIS FAILS. (1) Under-fit — 40 is too coarse, legitimate splice
+    boundaries get smoothed away → step down to min_samples_leaf=30
+    (finer regularization) OR pair min_samples_leaf=40 with max_iter
+    200→280 to restore effective capacity. (2) Inert — decision paths
+    already terminate in well-supported leaves → pivot to
+    l2_regularization 1.0 → 2.0 (untried shrinkage axis on the weight
+    side rather than leaf-support side). (3) Final escalation: feature-
+    axis return with voiced_percussive_chroma_asymmetry (cited untried
+    4+ times; drums have flat chroma so percussive-mask chroma isolates
+    pitched accompaniment at transient frames — bass/guitar riff
+    cross-song shift, complementary to MFCC asymmetry).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 30+
+    iterations — I cannot verify whether the 3 singing FPs sit in
+    small-support leaves (min_samples_leaf bites cleanly) or well-
+    supported leaves (regularization misses). Every classifier-side
+    hypothesis remains theory-calibrated on the claim that FP leaves
+    are smaller than TP leaves. (ii) SHAP rollup STILL "no keeps yet
+    — rollup empty" for 7972a98 despite 4+ keeps in the last 50
+    iterations — the rollup pipeline appears broken. (iii) Leaf-level
+    statistics are NOT exposed in the training bundle; I don't know
+    the current distribution of leaf sample counts (e.g., are most
+    leaves already well above the 20 floor, making 40 inert?).
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 30+ iterations; per-FP (domain,
+    file, t_sec, label_id, p_splice, leaf_sample_count_at_prediction,
+    top-5 |SHAP|). Leaf sample count at prediction would directly
+    test this iteration's mechanism hypothesis. (2) SHAP rollup
+    pipeline DEBUG — "no keeps yet" persists across 4+ recent keeps.
+    Diagnose why the rollup writer isn't capturing them. (3) CURRENT
+    CLASSIFIER HYPERPARAMS + OOF METRICS block in prompt: (max_depth,
+    max_leaf_nodes, learning_rate, l2_regularization, min_samples_leaf,
+    max_iter, OOF_weighted_F1, OOF_per_class_F1) at HEAD. Resolves
+    the persistent "current ?" rows in the per-tunable frontier AND
+    surfaces the classifier state without me grep-ing every iteration.
+
