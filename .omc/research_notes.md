@@ -3854,3 +3854,151 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     treat exact-match as KEEP not DISCARD. ~15 lines of
     git-commit-message parsing.
 
+## 2026-04-20T16:33:07+09:00 — 4773d1e (discard, combined=0.482741)
+subject: add percussive_spec_contrast_cosine_dist feature (FEATURE_NAMES 80->81) — single-mask 7-dim spec_contrast cosine distance restricted to percussive frames (top-40%% onset-energy, threshold = median(feat_onset)*1.2 matching fd500b3/aa4f141/1a8b1fe). Pre=[t-2,t] vs post=[t,t+2]. Reuses cached feat_contrast + feat_onset — ZERO new librosa calls, ZERO new caches; one lazy per-chunk feat_perc_threshold scalar. Sentinel 0.0 when mask empty or any sub-norm underflows. FEATURE_NAMES count 80->81 forces wrapper auto-retrain via US-505 sha gate. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau (3 clean FPs surviving DSP gates). Last 10+ iterations exhausted classifier hyperparam axis (99081f5+960113c byte-identical capacity revert; LR 17d4aec / min_samples_leaf db59c36 / l2 df0ceec all produced IDENTICAL combined=0.490700 strongly suggesting US-505 does NOT auto-retrain on train_classifier.py-only edits) and every primary tunable (THRESHOLD/MIN_SEP/STRIDE/DSP_MAX/DSP_SUM/DSP_PHASE all tested both directions). Only path alive is features.py-sha-change (1a8b1fe feature-add produced distinct 0.503311 confirming feature-count bump forces retrain). Genuinely NEW feature-space cell PERCUSSIVE x SPEC_CONTRAST. Prior percussive-mask attempts used only CEPSTRAL (fd500b3 percussive_mfcc solo failed, aa4f141 voiced_percussive_mfcc_asymmetry failed — phoneme-correlated noise mode on speech consonants) or PITCH-CLASS (1a8b1fe voiced_percussive_chroma_asymmetry failed — drum chroma is broadband-flat so percussive-chroma mean averages to uniform burying signal). SPEC_CONTRAST is physically DIFFERENT from both: per-band peak-to-valley amplitude ratio is a compressor/EQ/limiter mastering fingerprint, LESS phoneme-correlated than MFCC (per-band contrast varies with mastering chain not phoneme), and drums have NON-FLAT per-band contrast signature (snare ~200Hz, kick ~60Hz, cymbals 5-10kHz produce distinctive peak/valley profile on percussive frames). Mechanism on singing 3 FPs: within one song mastering chain frozen (drum bus compressor + vocal bus + limiter all constant) so percussive_spec_contrast stays stable across chord transitions (cosine_dist 0.05-0.15 small). Cross-song splice crosses drum-bus processing (different drum kit / different compression / different limiter threshold) — per-band peak/valley shifts (cosine_dist 0.25-0.60 large). Intra-song chord cycle (the 3 singing FPs): drum kit unchanged → feature sentinel-small → real cross-song-splice signature is LOUDER on percussive mask than on voiced/unvoiced split because drum-bus processing is the most album-variable mastering element. On speech: percussive frames are plosive bursts whose per-band contrast varies by phoneme but per-phoneme variance is uncorrelated with splice position → GBM low per-domain SHAP via tree splits → self-gates (same mechanism as voiced_spec_contrast on speech). Why single-mask not asymmetry: voiced_unvoiced_spec_contrast_asymmetry already exists (7972a98 keep +0.005) so spec_contrast axis already split via voiced/unvoiced paired-difference route; an unpaired PERCUSSIVE version hits mastering signal through a different frame population (transient-dominant) providing complementary GBM split ground (trees combine voiced_unvoiced_spec_contrast_asymmetry > T1 AND percussive_spec_contrast_cosine_dist > T2 to specifically discriminate same-singer cross-song splice from intra-song chord cycle). Orthogonal to every prior axis: NOT fd500b3 percussive_mfcc (cepstral); NOT aa4f141 voiced_percussive_mfcc_asymmetry (cepstral pairing); NOT 1a8b1fe voiced_percussive_chroma_asymmetry (pitch-class); NOT e7ca9eb voiced_spec_contrast (voiced mask, different frame population); NOT 7972a98 voiced_unvoiced_spec_contrast_asymmetry (voiced/unvoiced pair); NOT de0be6f spec_contrast_symmetry (pairwise sum); NOT 0c3bf76 spec_flatness_asymmetry (scalar abs-delta formulation). FIRST PERCUSSIVE x SPEC_CONTRAST content combination in any form, FIRST percussive mask against a non-cepstral non-pitch-class content axis. Pure features.py change — 1 new block function (~40 lines) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. ZERO new caches, ZERO new librosa calls. Per-t cost: 2 slices + 1 mask compare + 1 masked mean + 1 cosine on 7-dim vectors, sub-ms. Risk-bounded: sentinel 0.0 on empty-mask edge cases; signal physically grounded on singing where drum-bus mastering shifts across cross-song splices. Smoke-verified: len(FEATURE_NAMES)==81, last name 'percussive_spec_contrast_cosine_dist', extract_features returns 81 finite features on synthetic sustained+click audio, idempotent on repeated calls, percussive-mean cosine_dist=0.0024 (small) on stationary within-source signal as expected.
+per-domain: combined_english=0.843373 combined_korean=0.517391 combined_singing=0.257812
+
+# 2026-04-20 — hypothesis: add percussive_spec_contrast_cosine_dist (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — new single-mask feature
+    `percussive_spec_contrast_cosine_dist`. Percussive mask = frames where
+    `feat_onset > median(feat_onset) * 1.2` (top ~40% onset-energy,
+    identical threshold to fd500b3/aa4f141/1a8b1fe). Per position t_sec
+    slice feat_contrast (7-dim per frame, already cached for
+    spec_contrast_delta and e7ca9eb voiced_spec_contrast) on pre=[t−2, t]
+    and post=[t, t+2], keep percussive frames, cosine distance of
+    7-dim percussive-mean contrast vectors. Reuses cached feat_contrast +
+    feat_onset — ZERO new librosa calls, ZERO new caches; one lazy per-
+    chunk `feat_perc_threshold` scalar cached on ctx (same pattern as
+    aa4f141/fd500b3/1a8b1fe). Sentinel 0.0 when any mask empty or any
+    sub-norm underflows, matching 7972a98 safety pattern. FEATURE_NAMES
+    80 → 81 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Last 10+ iterations exhausted the
+    classifier hyperparam axis (99081f5 capacity bump + 960113c revert
+    matched baseline byte-identical; 17d4aec LR / db59c36 min_samples_leaf
+    / df0ceec l2 all produced IDENTICAL combined=0.490700 suggesting
+    US-505 does NOT auto-retrain on train_classifier.py-only edits).
+    Every primary tunable saturated in both directions (THRESHOLD /
+    MIN_SEP / STRIDE / DSP_MAX / DSP_SUM / DSP_PHASE all tested). The
+    only path alive is features.py-sha-change (1a8b1fe feature-add
+    produced distinct combined=0.503311, proving feature-count bump
+    forces retrain).
+
+    Genuinely NEW feature-space cell: PERCUSSIVE × SPEC_CONTRAST. Prior
+    percussive-mask attempts used only CEPSTRAL (fd500b3 percussive_mfcc
+    solo failed; aa4f141 voiced_percussive_mfcc_asymmetry failed) or
+    PITCH-CLASS (1a8b1fe voiced_percussive_chroma_asymmetry failed).
+    Both failure modes were content-specific: MFCC is phoneme-correlated
+    on speech (consonant-plosive bursts dominate percussive MFCC → GBM
+    global over-weight); chroma is FLAT on drums (drum broadband noise
+    averages to uniform 12-bin distribution → percussive-chroma signal
+    buried under drum noise). SPEC_CONTRAST is physically DIFFERENT from
+    both — it measures peak-to-valley amplitude ratio PER BAND, a
+    compressor/EQ/limiter fingerprint that is LESS phoneme-correlated
+    than MFCC (contrast per band is mastering-chain-dependent, not
+    phoneme-specific) AND has non-uniform drum signature (snare ~200Hz,
+    kick ~60Hz, cymbals 5-10kHz produce distinctive per-band peak/valley
+    profile on percussive frames).
+
+    Mechanism targeting the 3 singing FPs at 7972a98 baseline
+    (combined=0.589282, singing=0.345). Within one song the entire
+    mastering chain is fixed: drum bus compressor + vocal bus compressor
+    + mastering limiter are frozen across chord transitions → percussive-
+    mean spec_contrast stable (cosine_dist ~0.05-0.15). Cross-song
+    splice: different album's drum kit / different drum bus compression
+    ratio / different mastering limiter threshold → per-band peak/valley
+    profile on percussive frames shifts noticeably (cosine_dist
+    ~0.25-0.60). Intra-song chord cycle (the 3 singing FPs): drum kit
+    unchanged, same mastering → percussive_spec_contrast stable → feature
+    sentinel-small. Real cross-song splice signature is LOUDER on the
+    percussive mask than on voiced/unvoiced split because drum-bus
+    processing is the most album-variable element of mastering chains.
+    On speech: percussive mask = plosive bursts whose spec_contrast varies
+    per phoneme (plosive at [p] vs [k] have different burst bands) BUT
+    per-phoneme variance is UNCORRELATED with splice position → GBM
+    assigns low per-domain SHAP on english/korean via tree splits, same
+    self-gating mechanism as voiced_spec_contrast e7ca9eb on speech.
+
+    Why single-mask (not asymmetry): voiced_unvoiced_spec_contrast_
+    asymmetry (7972a98) already exists in-tree lifting spec_contrast
+    axis via the voiced/unvoiced paired-difference route. An unpaired
+    PERCUSSIVE version hits the mastering signal through a different
+    frame population (transient-dominant) providing complementary GBM
+    split ground: trees can combine `voiced_unvoiced_spec_contrast_
+    asymmetry > T1` AND `percussive_spec_contrast_cosine_dist > T2` to
+    specifically pick same-singer cross-song splices (large accompaniment
+    mastering change visible through both lenses) vs intra-song chord
+    cycle (both features near-zero).
+
+    Orthogonal to every prior axis: NOT fd500b3 percussive_mfcc (cepstral
+    timbre, phoneme-correlated noise mode on speech); NOT aa4f141
+    voiced_percussive_mfcc_asymmetry (same cepstral noise, persists with
+    pairing); NOT 1a8b1fe voiced_percussive_chroma_asymmetry (pitch-class
+    content, drum-flat problem); NOT e7ca9eb voiced_spec_contrast (voiced
+    mask, different frame population); NOT 7972a98 asymmetry (voiced+
+    unvoiced pairwise diff); NOT de0be6f symmetry (pairwise sum); NOT
+    0c3bf76 spec_flatness_asymmetry (scalar abs-delta formulation).
+    FIRST percussive × spec_contrast content combination in any form,
+    FIRST percussive mask against a non-cepstral non-pitch-class content
+    axis. Pure features.py change — 1 new block function + 1
+    FEATURE_NAMES append + 2 assert bumps (80 → 81) + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost: 2 slices + 1 mask compare + 1 masked mean + 1 cosine on 7-dim
+    vectors, sub-ms.
+
+(c) IF THIS FAILS. (1) combined stuck near 0.50 with singing unchanged
+    (percussive-mean spec_contrast still dominated by drum broadband
+    pedestal, mastering shift invisible) → fallback to
+    `harmonic_spec_contrast_cosine_dist` on the COMPLEMENT mask
+    (bottom-60% onset-energy, sustained tonal content — captures vocal+
+    bass mastering signature, orthogonal frame population to percussive).
+    (2) combined regresses below 0.45 (percussive mask introduces global
+    over-weighting like fd500b3 did on MFCC) → revert to paired form
+    `voiced_percussive_spec_contrast_asymmetry` (percussive_dist − voiced_
+    dist) for self-gating on speech. (3) combined matches 0.490700 or
+    0.503311 EXACTLY with a feature-count change → confirms wrapper
+    retrain-skip bug extends past hyperparam-only sites; escalate to
+    operator with the identical-output streak now spanning physically-
+    distinct feature changes.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 34+
+    iterations — I cannot verify whether the 3 singing FPs sit in
+    percussive-dominant windows (feature fires cleanly) or quiet
+    between-chorus sections (feature inert). Every percussive-mask
+    hypothesis theory-calibrated on physical mechanism. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite
+    14 keeps in loop history — rollup writer broken, no per-feature
+    attribution available. (iii) 99081f5 capacity ghost (max_depth=4 /
+    max_leaf_nodes=16) IN-tree at HEAD per grep; 960113c revert to 3/8
+    was discarded by symmetry-semantics bug, restoring ghost. Absolute
+    comparison to 0.589282 mixes with ghost but feature-add delta
+    attribution is clean. (iv) 0.490700 streak: 5 hyperparam-only
+    iterations produced IDENTICAL combined and per-domain — strongly
+    suggests US-505 does NOT auto-retrain on train_classifier.py changes,
+    only on features.py changes. Cannot verify from inside claude
+    subprocess.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 34+-iteration blocker, cited in every recent
+    reflection. Per-FP (domain, file, t_sec, label_id, p_splice,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_max, dsp_sum,
+    voiced_spec_contrast_cosine_dist, voiced_unvoiced_spec_contrast_
+    asymmetry, percussive_frame_ratio_pre, percussive_frame_ratio_post,
+    top-5 |SHAP|). A single block transforms every feature-add and
+    DSP-tunable hypothesis from theory-calibrated bet into data-driven
+    decision. (2) US-505 COVERAGE FIX — extend the sha-gate to trigger
+    auto-retrain when train_classifier.py sha changes, not just
+    features.py sha. Diagnostic evidence: 5 consecutive
+    train_classifier.py-only iterations (17d4aec, db59c36, df0ceec,
+    and two others) all produced IDENTICAL combined=0.490700 while
+    1a8b1fe feature-count bump produced distinct 0.503311. ~5-line
+    extension of existing US-505 sha-gate in the wrapper. (3)
+    DISCARD-REVERT SYMMETRY SEMANTICS bug fix — wrapper treats
+    "combined matches baseline exactly" as no-improvement and reverts,
+    which RESTORED the 99081f5 capacity ghost via 960113c. If a
+    discarded commit's subject starts with "REVERT" and references
+    a prior-discarded SHA, treat exact-match as KEEP not DISCARD.
+    ~15 lines of git-commit-message parsing. Three highest-priority
+    enhancements for unblocking the loop.
+
