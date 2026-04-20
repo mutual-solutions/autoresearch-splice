@@ -5527,3 +5527,81 @@ per-domain: combined_english=0.850000 combined_korean=0.557746 combined_singing=
     decision with joblib-mtime sanity check would isolate the 0.4907
     identical-streak root cause.
 
+## 2026-04-21T01:00:54+09:00 — 4e67946 (discard, combined=0.515532)
+subject: add mfcc_persistence_ratio (FEATURE_NAMES 80->81) -- future-horizon persistence feature; far_dist(pre,[t+4,t+6])-near_dist(pre,[t,t+2]); real splice persists ~0, chord-cycle reverts negative; smoke verified chord-revert -0.045 vs cross-source ~0
+per-domain: combined_english=0.850000 combined_korean=0.537313 combined_singing=0.300000
+
+# 2026-04-21 — hypothesis: add mfcc_persistence_ratio (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot onto the
+    PERSISTENCE-OF-CHANGE axis. All 5 prior 2nd-order variants (9064eec,
+    26a3687, c5040d7, 8170784, 3bcec76) used cos_dist between sub-window
+    MEAN VECTORS on overlapping ±4s spans and collapsed on chord-cycle
+    FPs because intra and cross co-vary. 2557d2a F-statistic variance-
+    ratio (0.512) did not fix the mimicry either. The genuinely untried
+    structural move is to compare how far post-side has drifted at TWO
+    different future horizons: near-post [t, t+2] vs far-post [t+4, t+6],
+    both against the SAME pre-reference [t-2, t]. For
+        near_dist = cos_dist(mean_mfcc(t-2,t), mean_mfcc(t,t+2))
+        far_dist  = cos_dist(mean_mfcc(t-2,t), mean_mfcc(t+4,t+6))
+        feature   = far_dist - near_dist
+    Real cross-song splice: song B CONTINUES after boundary, far_post is
+    still song B, so far_dist ≈ near_dist (both dominated by A→B mastering
+    / singer shift) → feature ≈ 0 neutral. Chord-cycle FP within one song
+    (pop period ~2-3s): near_post is a different chord; far_post at t+4
+    is ~2 chord cycles past t and typically cycles back toward pre-chord
+    character OR an adjacent chord of the same key → far_dist < near_dist
+    → feature STRONGLY NEGATIVE. Sign-and-magnitude separation chord-
+    cycle (negative) vs real splice (≈0) is a binary discriminator GBM
+    cannot synthesize from the existing feature set because NO existing
+    feature measures temporal extent of a change by comparing two future
+    horizons against one past reference. Reuses cached feat_mfcc, ZERO
+    new librosa calls, ZERO new caches. Edge guard t-2<0 OR t+6>duration
+    OR any norm underflow → sentinel 0.0. FEATURE_NAMES 80→81 forces
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Every 2nd-order variant and the
+    F-statistic tried to discriminate chord-cycle from cross-song at the
+    SAME boundary position via the cross-to-intra contrast. But intra
+    drift within-song is structurally similar to cross-song shift at a
+    single boundary — the signal they share is "MFCC changes over ~2s."
+    They differ in what happens AFTER the boundary: cross-song KEEPS
+    DIFFERING (song B persists); chord-cycle REVERTS (song cycles).
+    This feature reads out exactly that distinction. All 2s windows (no
+    4s-vs-2s scale mismatch that broke 9064eec speech) — speech within-
+    speaker has stable MFCC centroid across any 2s slice, so near_dist
+    and far_dist are both small AND uncorrelated phoneme-noise — their
+    difference is zero-mean → GBM low per-domain SHAP on english/korean
+    (self-gating). Speech cross-speaker splice: near and far post are
+    both speaker B → feature ≈ 0 → feature does NOT boost speech TPs,
+    but existing voiced_unvoiced_mfcc_asymmetry (+0.054 keep) handles
+    that. This feature specifically targets the 3 surviving singing
+    chord-cycle FPs, which is the binding constraint on combined
+    (singing=0.345 drags GM). Orthogonal: NOT 9064eec/26a3687/c5040d7/
+    8170784/3bcec76 (cross-intra contrast on same span); NOT 2557d2a
+    (F-statistic variance on ±4s); NOT 1eda8e3/7972a98 (voiced/unvoiced
+    paired-diff, no future-horizon comparison); NOT d49284c/78513fb/
+    dde4135 (FAR-post asymmetry, single distance not two-horizon
+    comparison). FIRST persistence/reversion feature in 80-feature set.
+
+(c) IF THIS FAILS. (1) Singing unchanged (chord period is 2-3s so far-
+    post at t+4 still sits on a DIFFERENT chord from pre; revert not
+    captured at 2s resolution) → widen far-post to [t+6, t+8] so it
+    spans 3 chord cycles and averages back toward pre-character cleaner.
+    (2) Speech regresses (cross-speaker splice causes far_dist <
+    near_dist somehow — e.g., recording continuation noise uncorrelated
+    with pre) → switch to voicing-masked version. (3) Combined lands at
+    0.490700 identical-streak → wrapper retrain gate broken; escalate.
+
+(d) Information gaps. CLEAN_FP_POSITIONS still absent after 58+
+    iterations — cannot verify chord-revert hypothesis at actual FP
+    positions. SHAP rollup still empty for 14 keeps. Dense p_splice
+    histograms still not logged (d4d35b1 catastrophe left unanalyzed).
+    99081f5 4/16 ghost status unclear at HEAD.
+
+(e) Wrapper enhancements. Unchanged three asks across 58+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP fields
+    (including mfcc_far_post_dist and mfcc_near_post_dist to validate
+    persistence-feature mechanism directly). (2) SHAP ROLLUP REPAIR.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE with joblib-mtime sanity check.
+
