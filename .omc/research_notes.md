@@ -3819,3 +3819,123 @@ per-domain: combined_english=0.888889 combined_korean=0.565714 combined_singing=
     (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
     decision with joblib-mtime sanity check.
 
+## 2026-04-21T02:10:01+09:00 — 1b4fe7c (discard, combined=0.478675)
+subject: add mfcc_corr_structure_distance (FEATURE_NAMES 80->81) -- STRUCTURAL pivot off the entire MEANS-BASED family onto cross-dimensional correlation matrix structure. Cosine distance between strictly-upper-triangle (78 off-diagonal entries) Pearson correlation matrices of the 13 MFCC dims over pre[t-2,t] vs post[t,t+2]. Reuses cached feat_mfcc; ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when either window has <20 frames or either corrcoef is non-finite or either upper-triangle norm underflows. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. Last 10+ iterations all compared MEAN VECTORS or means-of-derived-statistics (9064eec/26a3687/c5040d7/8170784/3bcec76/2557d2a/4e67946/4314449/1b3eb06) and collapsed on chord-cycle FPs because intra/cross both see similar mean shifts. Correlation-matrix structure measures HOW the 13 cepstral dims CO-VARY (recording timbral fingerprint: mic+preamp, room, instruments, mastering dynamics, vocal tract) — a 78-dim relationship GBM cannot synthesize from any existing mean-based feature. Mechanism on 3 singing chord-cycle FPs: same instruments+mic+mastering within one song -> chord transitions shift MFCC mean vector but preserve dim-by-dim co-variation -> corr_pre~corr_post -> feature~0 silent -> FP not boosted. Cross-song splice: different instruments/mic/mastering -> correlation structure differs -> feature fires. Speech self-gating: within-recording MFCC correlation is stable across phonemes (same mic+same vocal tract) -> feature~0 on non-splice speech. Orthogonal: NOT any cos_dist-between-means family, NOT F-statistic scatter-around-mean (2557d2a), NOT trajectory velocity (1b3eb06), NOT any 1st-order paired-diff/voicing-masked variant, NOT block-2 mfcc_delta. FIRST correlation-matrix-structure feature; FIRST feature using cross-dim covariance rather than means. Blast radius: 1 new block (~45 lines) + FEATURE_NAMES append + 2 assert bumps + 1 call. Per-t cost 2 slices + 2 corrcoef on 13x~172 + 1 cos_dist on 78-vec, sub-ms. Smoke-verified: len==81 last-name correct, synthetic A/B splice yields 0.97 vs within-A 0.18 (~5x discrimination), real singing 500 calls = 0.88ms/call, idempotent, all 81 finite, non-trivial dynamic range across positions (0.22-0.81).
+per-domain: combined_english=0.810127 combined_korean=0.550000 combined_singing=0.246154
+
+# 2026-04-21 — hypothesis: add mfcc_corr_structure_distance (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot off the
+    entire MEANS-BASED family onto CROSS-DIMENSIONAL CORRELATION STRUCTURE
+    of MFCC. For ±2s windows, compute the 13×13 Pearson correlation matrix
+    of MFCC dimensions over pre[t-2,t] and post[t,t+2] separately, take the
+    strictly-upper-triangle (78 values, diagonal-excluded because it is
+    always 1), and compute cosine distance between the two vectorized
+    triangles:
+        corr_pre  = np.corrcoef(mfcc_frames_pre)   # 13×13
+        corr_post = np.corrcoef(mfcc_frames_post)  # 13×13
+        v_pre  = corr_pre[triu_k1]   # 78-vec
+        v_post = corr_post[triu_k1]  # 78-vec
+        feature = 1 - cos(v_pre, v_post)
+    Reuses cached feat_mfcc — ZERO new librosa calls, ZERO new caches.
+    Edge guard t-2<0 OR t+2>duration OR either window has <20 frames OR
+    either corrcoef returns NaN (zero-variance row) OR either norm
+    underflow → sentinel 0.0. FEATURE_NAMES 80→81 forces retrain via
+    US-505 sha gate.
+
+(b) WHY over recent failures. Last 10+ iterations all used "distance
+    between sub-window MEAN VECTORS" (or means of derived statistics):
+    9064eec, 26a3687, c5040d7, 8170784, 3bcec76 (cos_dist between MEANS);
+    2557d2a F-statistic (scatter around MEANS); 4e67946 persistence
+    (cos_dist between MEANS at future horizons); 4314449 cross-scale
+    (cos_dist between MEANS at two scales); 1b3eb06 trajectory velocity
+    (L2 of frame-to-frame deltas → per-frame flux is still a mean-like
+    scalar per side). Every one collapsed on chord-cycle FPs because
+    MFCC *mean* drifts across each 2-3s chord cycle → intra and cross
+    both see similar mean shifts.
+
+    CROSS-DIMENSIONAL CORRELATION is structurally orthogonal: it
+    measures HOW the 13 MFCC coefficients CO-VARY over a window, not
+    where their mean sits. This co-variation pattern is a fingerprint
+    of the RECORDING's timbral dynamics (mic+preamp response, room,
+    instrument ensemble, mastering compressor attack/release behaviour,
+    vocal tract dynamics of THIS singer in THIS room). Chord transitions
+    within one song shift the MEAN vector (different pitch classes
+    emphasize different cepstral coefficients) but preserve the
+    CO-VARIATION pattern (same instruments, same mic, same dynamic
+    shaping → coefficient_i and coefficient_j still respond together
+    the same way). So corr_pre ≈ corr_post on within-song chord cycles
+    → cos_dist small → feature ≈ 0 silent → the 3 singing FPs NOT
+    boosted. Cross-song splice changes mic+instruments+mastering →
+    correlation structure differs → feature fires.
+
+    Speech self-gating: within-recording speech has a stable per-
+    recording MFCC-correlation fingerprint (same mic + same vocal
+    tract). Phoneme transitions shift MEAN but not correlation. So
+    corr_pre ≈ corr_post on non-splice speech → feature ≈ 0 across
+    non-splice positions → GBM low per-domain SHAP on english/korean.
+    Cross-speaker splice (TP) crosses recordings → correlation
+    structure differs → feature fires → HELPS speech TPs too.
+
+    GBM max_depth=4/max_leaf=16 cannot synthesize correlation-matrix
+    cosine distance from existing mean-based features via threshold
+    splits — correlation of 13 coefficients is a 78-dim relationship,
+    and no feature in the 80-feature set carries a single scalar
+    reflecting per-side co-variation structure.
+
+    Orthogonal. NOT 9064eec/26a3687/c5040d7/8170784/3bcec76 (cos_dist
+    between MEAN VECTORS); NOT 2557d2a F-statistic (scatter around
+    MEAN — per-frame L2 residual, NOT cross-dim correlation); NOT
+    4e67946 (cos_dist between MEAN VECTORS at future horizons); NOT
+    4314449 (cos_dist between MEAN VECTORS at two scales); NOT
+    1b3eb06 trajectory velocity (mean L2 of deltas); NOT any 1st-order
+    paired-diff / voicing-masked / cos_dist-between-means variant; NOT
+    block-2 mfcc_delta (single-boundary mean-based); NOT e2ad8b0 onset
+    ACF (1D signal autocorrelation not 13×13 matrix structure); NOT
+    block-5 voicing features; NOT any 1D-scalar / F0 / detector
+    post-filter. FIRST correlation-matrix-structure feature in the
+    80-feature set, FIRST feature using cross-dimensional covariance
+    rather than means or scatter around means.
+
+    Blast radius. Pure features.py — 1 new block (~45 lines) + 1
+    FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost: 2 slices + 2 np.corrcoef on 13×~172 arrays (~30k ops each)
+    + 1 cosine distance on 78-vec, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (MFCC correlation structure
+    IS chord-dependent because strongly energized chords push specific
+    MFCC dims which alters their co-variation with others) → widen
+    window to ±3s so correlation stabilizes over multiple chord cycles.
+    (2) Speech regresses (within-sentence phoneme transitions perturb
+    correlation structure enough to cause cos_dist > 0 on non-splice
+    speech) → fall back to voicing-masked version (voiced-only
+    correlation is more stable across phoneme transitions since
+    vowel-formant dynamics are speaker-continuous). (3) Feature fires
+    but GBM assigns zero SHAP (correlation signal absorbed by
+    mfcc_delta_NN + voiced_mfcc_cosine_dist via correlated splits) →
+    pivot to spec_contrast correlation structure (7×7 mastering-
+    fingerprint, genuinely untouched since no prior feature examines
+    cross-band contrast correlation).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 61+
+    iterations — cannot verify whether the 3 singing FPs sit in
+    sections where MFCC correlation is genuinely stable (mechanism
+    assumption) or in sections where correlation shifts with
+    arrangement density. (ii) SHAP rollup STILL empty for 14 keeps
+    — cannot verify what statistical family GBM actually uses. (iii)
+    0.4907 identical-streak root cause unknown. (iv) 99081f5 4/16
+    capacity ghost status unclear at HEAD.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 61+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    mfcc_frame_flux_pre_2s, top-5 |SHAP|). Per-FP metadata would
+    convert every structural hypothesis into a data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision with joblib-mtime sanity check.
+
