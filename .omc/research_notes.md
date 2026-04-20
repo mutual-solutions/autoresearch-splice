@@ -4332,3 +4332,86 @@ per-domain: combined_english=0.701299 combined_korean=0.433333 combined_singing=
     GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. Not tracking DSP gates means
     the agent has to git-log grep to know axis state.
 
+## 2026-04-21T03:08:53+09:00 — 9274ace (discard, combined=0.443912)
+subject: add DSP_PHASE_MIN=0.3 channel-identity-specific floor on dsp_phase_z
+per-domain: combined_english=0.729730 combined_korean=0.516129 combined_singing=0.232258
+
+# 2026-04-21 — hypothesis: add DSP_PHASE_MIN = 0.3 floor (detector.py)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — add an individual
+    channel floor on `dsp_phase_z` (dsp_vals[0]) stacked onto the
+    existing MAX+SUM gates:
+        if dsp_vals[0] < DSP_PHASE_MIN: drop
+    Threshold DSP_PHASE_MIN = 0.3. No retrain, no feature change,
+    feature count stable at 80, classifier sha identical. Wrapper
+    auto-retrain stays passive. Per-emit cost: 1 extra compare.
+
+(b) WHY over recent failures. 60+ features.py additions collapsed on
+    3 surviving singing chord-cycle FPs (0.47–0.55 range). DSP_SUM
+    5.0→5.5 regressed (0.527). DSP_SECOND_HIGHEST=1.5 catastrophically
+    regressed (0.426 — symmetric gating asks a question where chord
+    transitions can legitimately have two elevated channels). CLAUDE.md
+    mandates structural change after 5+ same-axis failures. Individual
+    channel-specific floor is an untried axis: prior DSP tunables are
+    aggregate (MAX = rank-1, SUM = symmetric, SECOND = rank-2). Never:
+    channel-identity-specific.
+
+    Phase_z is the most physically discriminating DSP channel. Within
+    one song, mastering chain (mic impulse response + compressor +
+    limiter + master bus) is frozen → STFT-edge phase is CONTINUOUS
+    across chord transitions → phase_z near 0 (chord shifts spectral
+    magnitude, not inter-frame phase alignment). Cross-source splice
+    by physical necessity crosses masters → phase discontinuity →
+    phase_z elevated (typically 1.5–4.0). T²_z and CPE_z are
+    spectral-distribution / voicing statistics that chord transitions
+    can mimic (different chord = different spectrum = nontrivial T²).
+    Phase is the one channel chord-cycle cannot fake.
+
+    Why 0.3 (not 0.5, not 0.1). Conservative: bites FPs where
+    phase_z ∈ [0, 0.3] (silent phase channel, chord-cycle signature)
+    while preserving real crossfade TPs whose phase may be smoothed
+    but still crosses masters (phase_z > 0.5). 0.5 risks real
+    crossfade TPs; 0.1 may not bite any FP.
+
+    Orthogonal. NOT 273b8f5 MAX gate (all-channel maximum); NOT
+    865d92f/29c06cf/e2fc9de SUM gate (symmetric cumulative); NOT
+    0ae9231 SECOND_HIGHEST (rank-2, symmetric); NOT d4d35b1
+    p_splice margin (catastrophic); NOT 60196aa peak-width; NOT
+    GBM_THRESHOLD/GBM_MIN_SEP_S/ANALYSIS_STRIDE_S; NOT any features.py
+    addition. FIRST channel-identity-specific DSP floor in detector
+    history — phase_z is singled out for its unique mimicry-resistance.
+
+    Blast radius. detector.py only, 1 constant + 1 compare in the gate
+    loop at line 305. Feature set unchanged, classifier byte-identical,
+    no retrain. Per-emit cost: 1 float compare, negligible.
+
+(c) IF THIS FAILS. (1) No change — the 3 FPs already have phase_z > 0.3
+    (T²/CPE-dominated but phase still spikes on chord onset) → raise
+    floor to 0.5 or try a T²-specific floor instead. (2) Real TPs
+    regress — crossfade splices have smoothed phase_z < 0.3 → revert
+    and try CPE_z floor (pitch-clarity discontinuity as alternative
+    mimicry-resistant channel). (3) Singing improves but english/korean
+    regress (real speech splices have lower phase_z than I think) →
+    revert and apply channel-specific floors ONLY to singing class via
+    class-specific routing.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 65+
+    iterations — cannot verify the 3 singing FPs' (phase_z, t2_z, cpe_z)
+    triple and whether phase_z is actually < 0.3 on them. This remains
+    a theory bet. Biggest single gap. (ii) SHAP rollup STILL empty for
+    14 keeps. (iii) Tunable frontier snapshot does NOT track
+    DSP_CONFIRMATION_MIN / DSP_SUM_MIN / DSP_PHASE_MIN — easy to lose
+    state of untried DSP-gate axes.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 65+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE — per-FP (domain, file,
+    t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_sum,
+    dsp_max, dsp_min, top-5 |SHAP|). Per-FP DSP triple would turn every
+    DSP-gate hypothesis into a data-driven decision. PRIORITY 1.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) EXPAND TUNABLE FRONTIER SNAPSHOT to include DSP_CONFIRMATION_MIN,
+    DSP_SUM_MIN, DSP_PHASE_MIN (new), and per-channel minimums alongside
+    GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. Not tracking DSP
+    gates means the agent has to git-log grep to know axis state.
+
