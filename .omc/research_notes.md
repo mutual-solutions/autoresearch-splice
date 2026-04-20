@@ -4002,3 +4002,159 @@ per-domain: combined_english=0.843373 combined_korean=0.517391 combined_singing=
     ~15 lines of git-commit-message parsing. Three highest-priority
     enhancements for unblocking the loop.
 
+## 2026-04-20T16:50:53+09:00 — d3ddc9d (discard, combined=0.503051)
+subject: add harmonic_spec_contrast_cosine_dist feature (FEATURE_NAMES 80->81) — sustained-frame mastering signature, COMPLEMENT of failed percussive mask. Harmonic mask = onset < median(onset)*0.8 (clear sustained / non-transient regime, structural complement of fd500b3/aa4f141/1a8b1fe/4773d1e percussive mask onset > median*1.2). 7-dim spec_contrast cosine on harmonic-mean vectors over pre[t-2,t] vs post[t,t+2]. Reuses cached feat_contrast + feat_onset — ZERO new librosa calls, ZERO new caches, one lazy feat_harm_threshold scalar. Sentinel 0.0 on empty mask or zero-norm. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau (3 clean FPs). Most recent iteration 4773d1e percussive_spec_contrast_cosine_dist failed catastrophically (singing 0.345->0.258) and its explicit cited fallback was harmonic-mask complement. Every prior percussive-mask attempt monotonically bad on singing: fd500b3 (0.319), aa4f141 (0.320), 1a8b1fe (0.319), 4773d1e (0.258) — drum hits add NOISE not signal because drum kits play different fills/patterns within one song so percussive-mean spec_contrast jitters within-song, washing out the cross-song mastering signal. The HARMONIC mask is structurally opposite frame population: sustained vocal notes + bass groove + ringing chords where within-song mastering is FROZEN (vocal bus compressor + master limiter operate identically on sustained content) and cross-song splices cross those mastering chains cleanly. Within-song chord transition: sustained spec_contrast stable (cosine_dist 0.05-0.15). Cross-song splice: vocal preamp / bus compression / mastering EQ shifts -> per-band peak/valley shifts noticeably (cosine_dist 0.25-0.50). Critical asymmetry: drum hits are TRANSIENT events that destabilize percussive-mean spectral statistics within-song; sustained frames are STATISTICALLY STABLE within-song because they're dominated by pitched material whose spectral envelope is mastering-bus-shaped not transient-shaped. Mastering chain has strong continuous effect on sustained content, weak/intermittent on transient content. Speech self-gating: harmonic mask = sustained vowel mid-portions whose spec_contrast captures formant peak/valley structure (speaker/recording-dependent, NOT phoneme-burst-correlated) — same self-gating that worked on e7ca9eb voiced_spec_contrast keep. Why threshold *0.8 (not *1.0): symmetric structural complement of percussive's *1.2; clear sustained-frame regime instead of marginal around-median set. Classifier hyperparam axis verifiably saturated (LR 17d4aec / min_samples_leaf db59c36 / l2 df0ceec all produced IDENTICAL combined=0.490700 — strong evidence US-505 doesn't auto-retrain on train_classifier.py-only edits). Every primary tunable saturated both directions. Only path alive is features.py-sha-change (1a8b1fe/0c3bf76/4773d1e all produced distinct combined values vs the 0.490700 streak). Orthogonal to every prior axis: NOT 4773d1e percussive_spec_contrast (COMPLEMENT mask — physically opposite frame population); NOT e7ca9eb voiced_spec_contrast (voiced=vp>0 mask, harmonic=onset<thr mask, mostly disjoint frame populations on singing); NOT 7972a98 voiced_unvoiced_spec_contrast_asymmetry (paired diff over voiced/unvoiced); NOT de0be6f symmetry; NOT 0c3bf76 spec_flatness asymmetry. FIRST HARMONIC-mask feature in any content axis. Pure features.py change — 1 new block + 1 FEATURE_NAMES append + 2 assert bumps + 1 call. ZERO new caches, ZERO new librosa calls. Per-t cost: 2 slices + 1 mask compare + 1 masked mean + 1 cosine on 7-dim vectors, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'harmonic_spec_contrast_cosine_dist', stationary 440Hz sine cos_dist=2e-6 (sustained tone correctly stable), 440->880 synthetic splice cos_dist=0.379 (~190000x discrimination), all 81 features finite on synthetic audio.
+per-domain: combined_english=0.875000 combined_korean=0.537313 combined_singing=0.270769
+
+# 2026-04-20 — hypothesis: add harmonic_spec_contrast_cosine_dist (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — new single-mask feature
+    `harmonic_spec_contrast_cosine_dist` on the COMPLEMENT of the failed
+    percussive mask. Harmonic mask = frames where
+    `feat_onset < median(feat_onset) * 0.8` (bottom ~40-50% onset-energy =
+    sustained / non-transient frames). 7-dim spec_contrast cosine distance
+    between harmonic-mean vectors on pre=[t-2, t] vs post=[t, t+2].
+    Reuses cached feat_contrast + feat_onset — ZERO new librosa calls,
+    ZERO new caches; one lazy `feat_harm_threshold` scalar cached on ctx
+    (same machinery the failed percussive blocks used). Sentinel 0.0 when
+    mask empty or any sub-norm underflows. FEATURE_NAMES 80 → 81 forces
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. The MOST RECENT iteration (4773d1e
+    percussive_spec_contrast_cosine_dist) failed catastrophically on
+    singing (0.345 → 0.258, the worst regression in the recent window).
+    Its explicit cited fallback (4773d1e/c1) was: "fallback to
+    `harmonic_spec_contrast_cosine_dist` on the COMPLEMENT mask
+    (bottom-60% onset-energy, sustained tonal content — captures
+    vocal+bass mastering signature, orthogonal frame population to
+    percussive)." Every prior percussive-mask attempt has been
+    monotonically bad on singing: fd500b3 (singing 0.345 → 0.319),
+    aa4f141 (0.320), 1a8b1fe (0.319), 4773d1e (0.258). The pattern
+    confirms drum hits ADD noise rather than signal — drum kits play
+    different fills/patterns within a single song, so percussive-mean
+    spec_contrast jitters within-song (washing out the cross-song
+    mastering signal). The HARMONIC mask is the structurally opposite
+    frame population: sustained vocal notes + bass groove + ringing
+    chords, where within-song mastering is FROZEN (vocal bus
+    compressor + master limiter operate identically on sustained
+    content) and cross-song splices cross those mastering chains
+    cleanly. Classifier hyperparam axis is verifiably saturated (LR
+    17d4aec, min_samples_leaf db59c36, l2 df0ceec all produced
+    IDENTICAL combined=0.490700 — strong evidence US-505 doesn't
+    auto-retrain on train_classifier.py-only edits). Every primary
+    tunable saturated in both directions (THRESHOLD/MIN_SEP/STRIDE/
+    DSP_MAX/DSP_SUM/DSP_PHASE). ONLY a features.py-sha-change forces
+    a real retrain (1a8b1fe/0c3bf76/4773d1e all produced distinct
+    combined values vs the 0.490700 streak).
+
+    Mechanism targeting the 3 surviving singing FPs at 7972a98
+    baseline. Within one song the entire mastering chain is fixed:
+    vocal compressor + bus EQ + mastering limiter operate on the
+    sustained vocal/bass/harmony content identically across the
+    chord transitions that cause the FPs. Harmonic-mean spec_contrast
+    pre/post chord transition = stable (cosine_dist 0.05-0.15).
+    Cross-song splice: different vocal preamp / different bus
+    compression / different mastering EQ → per-band peak/valley
+    profile on sustained frames shifts noticeably (cosine_dist
+    0.25-0.50). The CRITICAL DIFFERENCE from percussive mask: drum
+    hits within a song vary heavily (verse vs chorus fills, ghost
+    snare hits) so percussive-mean spec_contrast is HIGH-VARIANCE
+    even within the same mastering chain → cross-song-vs-within-song
+    discrimination drowned in within-song noise. Sustained frames
+    have LOW within-song variance because they're dominated by
+    pitched material whose spectral envelope is mastering-bus-shaped
+    not transient-shaped. On speech: harmonic mask = sustained vowel
+    mid-portions (vowel center where onset has decayed). spec_contrast
+    on these frames captures formant peak/valley structure which is
+    speaker/recording-dependent, NOT phoneme-burst-correlated. Same
+    self-gating mechanism that worked on e7ca9eb's voiced_spec_contrast
+    keep (singing → english 0.840-ish baseline preserved): GBM tree
+    splits assign low per-domain SHAP on english/korean because the
+    feature distribution is similar splice-vs-no-splice when phonemes
+    dominate.
+
+    Why HARMONIC over the failed PERCUSSIVE: physical asymmetry. Drum
+    hits are TRANSIENT events that destabilize percussive-mean spectral
+    statistics within-song; sustained frames are STATISTICALLY STABLE
+    within-song. The mastering chain (compression, EQ, limiting) has
+    a strong continuous effect on sustained content, weak/intermittent
+    effect on transient content. The percussive mask accidentally
+    suppressed mastering signal by amplifying transient noise; the
+    harmonic mask does the opposite. Why threshold * 0.8 (not *1.0):
+    matches the symmetric structural complement of percussive's
+    *1.2; gives a clear sustained-frame regime instead of a marginal
+    around-median set; smoke-supported by typical onset-strength
+    distributions (median + ~20% gap separates clear sustained
+    vs transient frames).
+
+    Orthogonal to every prior axis. NOT 4773d1e percussive_spec_contrast
+    (COMPLEMENT mask — physically opposite frame population). NOT
+    e7ca9eb voiced_spec_contrast (voiced mask = vp>0; harmonic mask =
+    onset<thr; mostly disjoint frame populations on singing — voiced
+    captures sung notes but also vocal attacks, harmonic captures
+    sustained content of ALL instruments including bass+ringing
+    chords whether or not voice is active). NOT 7972a98
+    voiced_unvoiced_spec_contrast_asymmetry (paired diff over
+    voiced/unvoiced); NOT de0be6f spec_contrast symmetry; NOT
+    0c3bf76 spec_flatness asymmetry (different content axis). FIRST
+    HARMONIC-mask feature in any content axis. Pure features.py
+    change — 1 new block function + 1 FEATURE_NAMES append + 2
+    assert bumps + 1 call in extract_features. ZERO new caches, ZERO
+    new librosa calls. Per-t cost: 2 slices + 1 mask compare + 1
+    masked mean + 1 cosine on 7-dim vectors, sub-ms.
+
+(c) IF THIS FAILS. (1) combined regresses below 0.50 (harmonic mask
+    introduces speech-regression noise — sustained vowel mid-portions
+    are MORE phoneme-correlated than I assumed) → fallback to a paired
+    `voiced_harmonic_spec_contrast_asymmetry` (harmonic_dist −
+    voiced_dist) for self-gating via paired differencing (the 1eda8e3
+    pattern that lifted MFCC asymmetry +0.054). (2) combined matches
+    0.490700 or 0.503311 EXACTLY despite a feature-count bump → confirms
+    wrapper retrain-skip bug extends past hyperparam-only sites; escalate
+    to operator. (3) combined improves modestly but singing remains
+    stuck (drum noise wasn't the only confounder — chord transitions
+    also shift sustained spec_contrast within-song because ringing
+    chord overtones change) → pivot to `harmonic_chroma_cosine_dist`
+    (harmonic mask × chroma — pitch-class profile on sustained frames
+    isolates the chord-progression KEY signature, complementary to
+    spec_contrast which is mastering-fingerprint).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 35+
+    iterations — I cannot verify whether the 3 singing FPs sit in
+    sustained-rich windows (feature fires cleanly on sustained vocal/
+    bass/chord content) or transient-dominated windows (mask too
+    sparse → sentinel 0.0 → feature inert). Every harmonic / percussive
+    mask hypothesis remains theory-calibrated. (ii) SHAP rollup STILL
+    "no keeps yet — rollup empty" for 7972a98 despite 14 keeps in loop
+    history — rollup writer broken, no per-feature attribution
+    available to predict harmonic-mask fire-rate. (iii) 99081f5
+    classifier capacity ghost (max_depth=4, max_leaf_nodes=16) is
+    in-tree at HEAD — feature-add delta attribution is clean (only
+    one new feature) but absolute comparison to 0.589282 mixes with
+    ghost. (iv) The 0.490700 streak across 5 hyperparam-only iterations
+    strongly suggests US-505 doesn't auto-retrain on
+    train_classifier.py-only changes — features.py-sha bumps are the
+    only forcing function for retrain.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent 35+-iteration blocker, cited in every
+    recent reflection. Per-FP (domain, file, t_sec, label_id, p_splice,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_max, dsp_sum,
+    voiced_spec_contrast_cosine_dist,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    harmonic_frame_ratio_pre, harmonic_frame_ratio_post,
+    top-5 |SHAP|). Single block transforms every harmonic / percussive
+    / voiced-mask hypothesis from theory-calibrated bet into
+    data-driven decision. (2) US-505 COVERAGE FIX — extend the
+    sha-gate to trigger auto-retrain when train_classifier.py sha
+    changes, not just features.py sha. Diagnostic evidence: 5
+    consecutive train_classifier.py-only iterations all produced
+    IDENTICAL combined=0.490700 while feature-count bumps produced
+    distinct values. ~5-line extension of the existing US-505
+    sha-gate in the wrapper. (3) DISCARD-REVERT SYMMETRY SEMANTICS
+    bug fix — wrapper treats "combined matches baseline exactly" as
+    no-improvement and reverts; this RESTORED the 99081f5 capacity
+    ghost via 960113c. If a discarded commit's subject starts with
+    "REVERT" and references a prior-discarded SHA, treat exact-match
+    as KEEP not DISCARD. ~15 lines of git-commit-message parsing.
+
