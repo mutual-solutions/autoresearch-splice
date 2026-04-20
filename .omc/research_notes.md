@@ -4677,3 +4677,92 @@ per-domain: combined_english=0.765432 combined_korean=0.492754 combined_singing=
     (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN to the
     tunable frontier snapshot alongside GBM_*.
 
+## 2026-04-21T04:09:47+09:00 — 32ff893 (discard, combined=0.544995)
+subject: add voiced_chroma_self_calibrated_novelty (FEATURE_NAMES 80->81) -- SELF-CALIBRATED retrospective-match on voiced chroma. For post[t,t+2] voiced-mean chroma compute min cos_dist to 4 past voiced-mean chromas at [t-k-2,t-k] for k in {3,6,9,12}s (post_novelty), AND mean cos_dist over all 6 pairwise past-past pairs (past_self_sim); feature = post_novelty - past_self_sim. Reuses cached feat_chroma + feat_vp, ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration_s OR any voiced mask empty OR any norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. Three prior retrospective-match variants: b5b1a0d (all-frame MFCC) singing 0.354 best-in-60+ but speech regressed; 3d56d52 (voiced MFCC) singing further regressed; a6cf49d (voiced chroma) singing 0.377 HIGHEST-in-60+ but speech catastrophic (korean 0.667->0.493 english 0.889->0.765). Pattern: retrospective-match bites chord-cycle FPs on singing but absolute min-over-past fires on non-splice speech because within-recording prosody/phoneme drift makes min non-trivial. STRUCTURAL fix = self-calibration: compare post_to_past novelty against past_to_past self-similarity; within-recording drift cancels, only cross-source novelty survives. Mechanism: chord-cycle FP past_self_sim small AND post_novelty small (post recurs in past) -> feature ~0 silent; real cross-song past_self_sim small AND post_novelty LARGE (song B) -> feature +0.25 to +0.50 fires; speech non-splice past_self_sim moderate AND post_novelty moderate same-drift -> feature ~0 (GBM low per-domain SHAP no new FPs); speech cross-speaker TP past_self_sim moderate AND post_novelty LARGE -> feature positive TP boosted. Chroma axis because a6cf49d gave highest-in-60+ singing 0.377 -- raw signal is there only the aggregator was wrong; drums/percussion barely register in chroma so voicing mask doesn't strip productive signal (killed 3d56d52 voiced MFCC). Orthogonal: NOT a6cf49d (absolute min no self-cal); NOT b5b1a0d/3d56d52 (different axis, no self-cal); NOT 32cac36 single-boundary no past bank; NOT 8170784 cross-intra (same +-4s span no past-history bank no self-calibration); NOT f4148cc 1st-order paired-diff; NOT 9064eec/26a3687/c5040d7 cross-intra; NOT 4e67946 persistence; NOT 4314449 cross-scale; NOT 1b4fe7c corr-matrix; NOT any DSP-gate. FIRST self-calibrated (relative to past-history self-similarity) retrospective-match feature, FIRST feature combining novelty with past-history pair-distance baseline. GBM max_depth=4 cannot synthesize subtraction of two derived scalars from threshold splits. Pure features.py change -- 1 new block (~60 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call + self-test assert bump. Per-t cost: 5 voiced-masked-mean 12-dim + 4 post-past cosines + 6 past-past cosines + min + mean + subtract, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81 last-name correct, synthetic chord-cycle C-major cycling 3s period within-song yields t=18 -0.53 / t=22 -0.04 / t=25 -0.06 / t=28 -0.03 ALL NEGATIVE (post recurs in past); A->B splice at t=25 yields t=18 -0.53 / t=22 -0.04 / t=25 +0.26 / t=28 +0.33 SIGN-FLIP at boundary, real singing train 200 calls = 0.89ms/call, edge guards t-14<0 and t+2>duration both return 0.0 sentinel, all 81 features finite, idempotent.
+per-domain: combined_english=0.886076 combined_korean=0.532836 combined_singing=0.342857
+
+# 2026-04-21 — hypothesis: add voiced_chroma_self_calibrated_novelty (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — SELF-CALIBRATED retrospective
+    novelty on voiced chroma. For voiced-mean chroma of post[t,t+2] compute
+    min cos_dist vs 4 past voiced-mean chromas at [t-k-2,t-k] for k in
+    {3,6,9,12}s (post_novelty). ALSO compute mean cos_dist over all 6
+    pairwise (i<j) past-past distances (past_self_sim). feature =
+    post_novelty − past_self_sim. Reuses cached feat_chroma + feat_vp —
+    ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR
+    t+2>duration OR any voiced mask empty OR any norm underflow → sentinel
+    0.0. FEATURE_NAMES 80→81 forces auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. Three retrospective-match variants tried:
+    b5b1a0d (all-frame MFCC, singing 0.354 best-in-60+ but speech regressed
+    via unvoiced noise-floor heterogeneity), 3d56d52 (voiced MFCC, singing
+    regressed 0.354→0.330 because drum-onset signal lives in unvoiced),
+    a6cf49d (voiced chroma, singing 0.377 BEST-in-60+ but korean 0.667→
+    0.493 and english 0.889→0.765 — catastrophic speech regression).
+    Clear pattern: retrospective-match mechanism DOES bite chord-cycle
+    FPs on singing (voiced chroma a6cf49d hit the highest singing score
+    we've seen), but absolute min-over-past distance fires on non-splice
+    speech because within-recording prosody/phoneme drift over 3-12s
+    makes min distance non-trivial even when no splice is present.
+    a6cf49d's theory ("past voiced chromas all similar uniform → min
+    small") was empirically wrong.
+
+    The structural fix is SELF-CALIBRATION: compare the post-to-past
+    distance against how similar past IS to ITSELF. past_self_sim
+    captures local drift magnitude; subtracting it normalizes away
+    the "how drifty is THIS stretch of audio" baseline.
+
+    Mechanism on 3 singing chord-cycle FPs: past_self_sim small (song A
+    cycles through consistent chord set) AND post_novelty small (post
+    chord recurs in past) → feature ~0 silent, FP not boosted. Real
+    cross-song splice: past_self_sim small (song A self-consistent)
+    AND post_novelty LARGE (song B key) → feature +0.25 to +0.50 fires.
+    Speech non-splice (a6cf49d regression class): past_self_sim
+    moderate AND post_novelty moderate (same drift continues) →
+    feature ~0 → GBM low per-domain SHAP on english/korean → NO new
+    FPs. Speech cross-speaker TP: past_self_sim moderate AND
+    post_novelty LARGE (speaker B) → feature +0.15 to +0.40, TP
+    boosted.
+
+    Chroma chosen because a6cf49d gave the HIGHEST singing score in
+    60+ iterations (0.377) — raw signal is there, only the aggregator
+    was wrong. Drums/percussion barely register in chroma so voicing
+    mask doesn't strip productive signal (the failure that killed
+    3d56d52 voiced MFCC).
+
+    Orthogonal. NOT a6cf49d (absolute min, no self-calibration); NOT
+    b5b1a0d (MFCC all-frame absolute); NOT 3d56d52 (voiced MFCC
+    absolute); NOT 32cac36 voiced_chroma (single-boundary no past
+    bank); NOT 8170784 voiced_chroma_cross_intra (intra sub-windows
+    on SAME ±4s span, no past-history bank, no self-calibration);
+    NOT f4148cc 1st-order paired-diff; NOT 9064eec/26a3687/c5040d7
+    cross-intra; NOT 4e67946 persistence; NOT 4314449 cross-scale;
+    NOT 1b4fe7c corr-matrix; NOT any DSP-gate. FIRST self-calibrated
+    (relative to past-history self-similarity) retrospective-match
+    feature in 80-set. GBM max_depth=4 cannot synthesize a
+    subtraction of two derived-statistic scalars via threshold splits.
+
+(c) IF THIS FAILS. (1) Singing loses a6cf49d's +0.032 gain because
+    self-calibration subtracts the chord-cycle drift that was the
+    productive signal → fall back to post_novelty − MIN(past_pairs)
+    (tightest past-history pair as baseline). (2) Speech still
+    regresses (4 past offsets too few to estimate drift) → widen
+    bank to 8 offsets for more reliable self_sim. (3) Feature fires
+    but zero SHAP (redundant with voiced_chroma_cosine_dist via GBM
+    correlated splits) → pivot to MFCC axis with same self-calibration.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 68+
+    iterations — cannot verify the 3 singing FPs sit in stable-key
+    sections (mechanism) vs bridge/modulation. (ii) SHAP rollup STILL
+    empty for 14 keeps. (iii) per-FP retrospective-match values from
+    b5b1a0d/a6cf49d unknown — would directly validate self-calibration.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    voiced_chroma_cosine_dist, post_retrospective_match,
+    past_self_sim, top-5 |SHAP|).
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
+    DSP_SECOND_HIGHEST_MIN to tunable frontier snapshot.
+
