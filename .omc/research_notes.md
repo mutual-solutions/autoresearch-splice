@@ -5702,3 +5702,127 @@ per-domain: combined_english=0.850000 combined_korean=0.633333 combined_singing=
     decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
     with joblib-mtime sanity check.
 
+## 2026-04-21T01:37:00+09:00 — 4314449 (discard, combined=0.471132)
+subject: add voiced_mfcc_cross_scale_contrast (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.790123 combined_korean=0.529412 combined_singing=0.250000
+
+# 2026-04-21 — hypothesis: add voiced_mfcc_cross_scale_contrast (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — voicing-masked CROSS-SCALE
+    MFCC consistency feature. Same boundary, TWO time scales, symmetric on
+    both sides of t. For:
+        near_pre_v  = voiced_mean_mfcc([t-2, t])
+        near_post_v = voiced_mean_mfcc([t, t+2])
+        far_pre_v   = voiced_mean_mfcc([t-4, t])
+        far_post_v  = voiced_mean_mfcc([t, t+4])
+        near_dist   = cos_dist(near_pre_v, near_post_v)
+        far_dist    = cos_dist(far_pre_v,  far_post_v)
+        feature     = far_dist - near_dist
+    Reuses cached feat_mfcc + feat_vp. ZERO new librosa calls, ZERO new
+    caches. Edge guard t-4<0 OR t+4>duration OR any mask empty OR any
+    norm underflow → sentinel 0.0. FEATURE_NAMES 80→81 forces retrain
+    via US-505 sha gate.
+
+(b) WHY this over recent failures. All 6 prior 2nd-order variants
+    (9064eec/26a3687/c5040d7/8170784/3bcec76, 2557d2a F-stat, 4e67946
+    persistence) failed because every one of them introduced an INTRA
+    baseline sub-window that CO-VARIED with the cross boundary on chord-
+    cycle FPs. 4e67946's persistence used ASYMMETRIC pre vs remote post,
+    which broke speech self-gating (speech cross-speaker splice has
+    persistent far-post too, so discrimination flips).
+
+    This hypothesis uses NO intra sub-window and NO asymmetric horizon.
+    It measures the same cross-boundary distance at two SYMMETRIC scales
+    (±2s vs ±4s) and takes the difference.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Chord transitions
+    within one song cycle every 2-3s. 2s voiced-mean samples ONE chord's
+    centroid on each side → near_dist ≈ 0.10-0.15 (chord jump). 4s voiced-
+    mean samples 1.5-2 chords on each side, averaging toward the song's
+    KEY-CENTER cepstral mean → far means converge → far_dist ≈ 0.04-0.08.
+    feature ≈ 0.05 − 0.12 ≈ −0.07 (NEGATIVE), feature silences or reduces
+    p_splice.
+
+    Real cross-song splice. 2s pre = song A averaged cepstrum, 2s post =
+    song B averaged cepstrum → near_dist ≈ 0.25-0.35. 4s pre = more
+    stable A estimate; 4s post = more stable B estimate → far_dist ≈
+    same or slightly LARGER because longer averaging reduces within-
+    song noise without reducing the A→B jump. feature ≈ 0 or SLIGHTLY
+    POSITIVE. SIGN FLIP chord-cycle (NEG) vs cross-song (≥0) is the
+    binary discriminator.
+
+    Speech self-gating. Voiced MFCC within-recording is phoneme-driven;
+    2s samples ~4-6 vowels with stable per-speaker centroid; 4s samples
+    ~8-12 vowels with the SAME centroid. near_dist and far_dist both
+    small and similar on non-splice positions → feature ≈ 0 → GBM low
+    per-domain SHAP on english/korean. Same mechanism that made 49bd0b1
+    voiced_mfcc keep +0.028.
+
+    Why distinct from 49bd0b1 (voiced_mfcc_cosine_dist, kept). That
+    feature IS near_dist alone. GBM max_depth=4 with voiced_mfcc_dist
+    alone cannot synthesize the 4s-averaging reduction because the 4s
+    voiced-mean is not in any feature. Adding the DELTA surfaces the
+    chord-cycle reversal signal directly.
+
+    Why distinct from 4e67946 persistence_ratio. That used asymmetric
+    pre=[t-2,t] vs near-post=[t,t+2] and far-post=[t+4,t+6] — same pre,
+    different posts. This hypothesis uses SAME-BOUNDARY distance at two
+    symmetric scales — pre and post both grow 2s→4s together. Speech
+    cross-speaker doesn't break this because BOTH scales see the same
+    A→B shift on a real speech splice.
+
+    Orthogonal. NOT 49bd0b1 (single scale); NOT 4e67946 (asymmetric
+    persistence); NOT 9064eec/26a3687/c5040d7/8170784/3bcec76 (intra
+    sub-window contrast); NOT 2557d2a (F-statistic variance-based);
+    NOT 1eda8e3/7972a98/f4148cc/every voiced-unvoiced asymmetry (paired-
+    diff, single scale); NOT block-2 mfcc_delta (all-frame single
+    scale); NOT any 1D-scalar / F0 / ZCR / bandwidth / rolloff / flatness
+    / tempo variant; NOT detector post-filter. FIRST cross-scale feature
+    in the 80-feature set — first feature comparing the same boundary
+    at two different time scales.
+
+    Blast radius. Pure features.py change — 1 new block (~50 lines,
+    _block_voiced_mfcc mask logic computed twice at 2s and 4s) + 1
+    FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost: 4 voiced-masked means on 13-dim + 2 cosines + 1 subtraction,
+    sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (chord period in the 3 FPs is
+    ACTUALLY much longer than 2-3s — long sustained chord pads — so 4s
+    doesn't average multiple chords on each side; hypothesis wrong) →
+    widen far scale to ±6s so it definitely spans multiple harmonic
+    cycles. (2) Speech regresses (cross-speaker splice happens to have
+    far-scale distance LOWER than near-scale due to post-boundary
+    recording-length noise averaging — asymmetric noise reduction that
+    voicing-mask doesn't fully cancel) → fallback to chroma axis (pitch-
+    class is key-signature-stable within-song so 4s-averaging effect
+    even stronger). (3) Feature fires but GBM assigns ~zero SHAP →
+    redundant with 49bd0b1 voiced_mfcc near_dist per correlation;
+    pivot to LOG-RATIO far_dist/near_dist instead of subtraction
+    (scale-invariant sensitivity).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 59+
+    iterations — cannot verify the 3 singing FPs sit in chord-cycle
+    regions with 2-3s chord period (central assumption); could be
+    long-pad bridges, outros, or fadeouts where 4s-averaging doesn't
+    reduce far_dist. (ii) SHAP rollup STILL empty for 14 keeps — cannot
+    verify whether 49bd0b1 voiced_mfcc_cosine_dist is actually in top
+    GBM features. (iii) No dense p_splice histogram per chunk (d4d35b1
+    0.287 catastrophe left undiagnosed). (iv) 99081f5 4/16 capacity
+    ghost status unclear at HEAD.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 59+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, voiced_mfcc_cosine_dist_2s,
+    voiced_mfcc_cosine_dist_4s, top-5 |SHAP|). Would turn every
+    cross-scale / persistence / intra-baseline hypothesis into a
+    data-driven decision instead of theory bet.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without
+    per-feature attribution axis-choice remains theory-only.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision with joblib-mtime sanity check.
+
