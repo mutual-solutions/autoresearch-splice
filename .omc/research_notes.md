@@ -4503,3 +4503,141 @@ per-domain: combined_english=0.804878 combined_korean=0.485714 combined_singing=
     the 0.4907 identical-streak root cause. Three unchanged highest-
     priority requests across 48+ iterations.
 
+## 2026-04-20T22:56:05+09:00 — e234649 (discard, combined=0.507418)
+subject: add voiced_unvoiced_spec_rolloff_asymmetry (FEATURE_NAMES 80->81) -- last untried 1D spectral moment on the proven voiced/unvoiced paired-diff template (1eda8e3 NEAR MFCC kept +0.054 biggest win, 7972a98 NEAR spec_contrast kept +0.005). pre[t-2,t] post[t,t+2]: voiced_delta=mean(rolloff[voiced post])-mean(rolloff[voiced pre]); unvoiced_delta=mean(rolloff[unvoiced post])-mean(rolloff[unvoiced pre]); feature=unvoiced_delta-voiced_delta. Reuses cached feat_rolloff (librosa.spectral_rolloff, hop 512, shape (1,n)) + feat_vp, ZERO new librosa calls, ZERO new caches. Sentinel 0.0 on any empty mask. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Cited fallback from 7a170b0(c)(1). Last 22+ iterations exhausted voiced/unvoiced paired-diff across MFCC (kept), spec_contrast (kept), chroma (f4148cc), spec_flatness (0c3bf76 -> 0.539), RMS dB (c006d52 -> 0.491), ZCR (0cdd87e -> 0.508), spec_bandwidth (7a170b0 -> 0.542), every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span), F0 distribution (IQR 27ddbf7, median-cents 1d1144d), voicing-mask temporal structure (8fc7169 -> 0.472), and two detector post-filters (60196aa peak-width -> 0.491). spec_rolloff is the ONE remaining 1D spectral descriptor on this template. Block 2 carries spec_rolloff_delta all-frame only; GBM has never seen rolloff voicing-split. GBM max_depth=3 cannot synthesize voicing-conditional rolloff from (rolloff_delta, voicing_prob_pre, voicing_prob_post) via independent threshold splits; paired-diff is a subtraction interaction trees cannot express. Why rolloff distinct from bandwidth/centroid/flatness: centroid=1st moment (F0-correlated); bandwidth=2nd moment (std); flatness=Wiener entropy (already tried 0c3bf76). Rolloff=85th-percentile HF cutoff directly measures mastering chain LP behavior (master limiter + EQ + codec; Opus rolls off ~20 kHz, MP3-128 ~16 kHz). Percentile statistic robust to spectral-shape outliers that drive bandwidth jitter. Mechanism on 3 singing chord-cycle FPs: within-song limiter+EQ+codec frozen, voiced rolloff at vowel HF baseline ~3-5 kHz, unvoiced rolloff at drum-bus HF baseline ~7-10 kHz; chord transition doesn't change limiter/codec/drum kit -> voiced_delta~0 AND unvoiced_delta~0 -> asymmetry~0 silent, FP not boosted. Same-singer cross-song: voiced_delta small (similar vowel HF), unvoiced_delta LARGE (new drum kit + new cymbal + possibly new codec, rolloff shift 500-2000 Hz) -> asymmetry POSITIVE, TP boosted. Different-singer cross-song: both shift; existing 1eda8e3 MFCC asymmetry fires. Speech self-gating via paired differencing (1eda8e3 mechanism): voiced rolloff on speech varies with vowel identity (/i,u/ lower than /a/); unvoiced rolloff varies with consonant type (fricatives ~8 kHz, plosives moderate); but within same recording mic+preamp+codec constant so voiced+unvoiced deltas both track phoneme context correlated -> DIFFERENCE is zero-mean noise -> GBM low per-domain SHAP on english/korean. Orthogonal: NOT 1eda8e3 (MFCC 13-dim cosine); NOT 7972a98 + every spec_contrast variant (7-dim cosine); NOT f4148cc (chroma 12-dim cosine); NOT 0c3bf76 (spec_flatness Wiener entropy); NOT c006d52 (RMS dB energy); NOT 0cdd87e (ZCR time-domain); NOT 7a170b0 (spec_bandwidth 2nd-moment std -- this is 85th-percentile); NOT 27ddbf7/1d1144d (F0 distribution); NOT block-2 spec_rolloff_delta (all-frame no mask); NOT 8fc7169 voicing_transition_rate_delta (mask structure); NOT 60196aa peak-width (detector); NOT any percussive/harmonic/tonnetz/geometry variant. FIRST percentile-based 1D spectral moment on voicing-masked paired-diff template. Pure features.py change -- 1 new block (~40 lines cloned from _block_voiced_unvoiced_spec_contrast_asymmetry with 1D scalar mean replacing 7-dim cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost 4 slices + 4 masked means + 2 subtractions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_rolloff_asymmetry', synthetic mixed voiced+noise audio yields finite -91.39 on noise region vs 0.0 sentinel on pure-voiced regions (expected -- synthetic pure-tone lacks unvoiced frames so mask-empty path fires), all 81 features finite, idempotent on repeated calls, edge-clamped t=1 returns sentinel via empty-mask path.
+per-domain: combined_english=0.835443 combined_korean=0.529412 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_rolloff_asymmetry (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — the last untried 1D spectral
+    moment on the proven voiced/unvoiced paired-diff template (1eda8e3 NEAR MFCC
+    kept +0.054 biggest win, 7972a98 NEAR spec_contrast kept +0.005). For
+    pre=[t-2,t] and post=[t,t+2]:
+        voiced_delta   = mean(rolloff[voiced post]) - mean(rolloff[voiced pre])
+        unvoiced_delta = mean(rolloff[unvoiced post]) - mean(rolloff[unvoiced pre])
+        feature        = unvoiced_delta - voiced_delta
+    Reuses cached feat_rolloff (librosa.spectral_rolloff, hop 512, shape (1,n))
+    + feat_vp (voicing probability, hop 512). ZERO new librosa calls, ZERO
+    new caches. Sentinel 0.0 on any empty mask. FEATURE_NAMES 80→81 forces
+    retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. EXPLICIT cited fallback from 7a170b0(c)(1):
+    "voiced_unvoiced_rolloff_asymmetry (percentile-based cutoff, different
+    mastering fingerprint than bandwidth)". Last 22+ iterations exhausted
+    voiced/unvoiced paired-diff across MFCC (kept), spec_contrast (kept),
+    chroma (f4148cc discard), spec_flatness (0c3bf76 → 0.539), RMS dB
+    (c006d52 → 0.491), ZCR (0cdd87e → 0.508), spec_bandwidth (7a170b0 →
+    0.542), every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span), F0
+    distribution (IQR 27ddbf7 → 0.524, median-cents 1d1144d → 0.508),
+    voicing-mask temporal structure (voicing_transition_rate_delta 8fc7169
+    → 0.472), and two detector post-filters (60196aa peak-width → 0.491).
+    CLAUDE.md mandates structural change after 5+ same-axis failures;
+    spec_rolloff is the ONE remaining 1D spectral descriptor on this
+    template. Block 2 carries spec_rolloff_delta ALL-FRAME only — GBM has
+    never seen rolloff voicing-split. GBM max_depth=3 cannot synthesize
+    voicing-conditional rolloff from (rolloff_delta, voicing_prob_pre,
+    voicing_prob_post) via independent threshold splits; paired-diff is a
+    subtraction interaction trees cannot express.
+
+    Why rolloff is distinct from bandwidth/centroid/flatness. Centroid is
+    the 1st spectral moment (center of mass) — F0-correlated on voiced
+    frames, partially duplicates f0_mean_delta. Bandwidth is the 2nd moment
+    (std around centroid). Flatness is Wiener entropy (already tried
+    0c3bf76). ROLLOFF is the 85th-percentile frequency CUTOFF — directly
+    measures the mastering chain's high-frequency rolloff characteristic
+    (low-pass behavior imposed by master limiter + EQ + ADC reconstruction
+    filter). Different limiters and codecs have different HF rolloff
+    profiles (Opus rolls off ~20 kHz, MP3-128 ~16 kHz, WAV ~sr/2). Rolloff
+    is a percentile statistic, robust to spectral-shape outliers that drive
+    bandwidth jitter.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song,
+    master limiter + EQ + codec are FROZEN. Voiced rolloff sits at singer's
+    vowel HF characteristic (~3-5 kHz — F4 formant and harmonics dominate
+    rolloff_85); unvoiced rolloff sits at drum-bus HF characteristic
+    (~7-10 kHz — cymbal / high-hat / reverb tail). Chord transition does
+    NOT change limiter / codec / drum kit → voiced_delta ≈ 0 AND
+    unvoiced_delta ≈ 0 → asymmetry ≈ 0, feature silent, FP not boosted.
+    Same-singer cross-song: voiced_delta small (similar vowel HF across
+    songs), unvoiced_delta LARGE (new drum kit + new cymbal signature +
+    possibly new codec → different 85th-percentile cutoff, shifts by
+    500-2000 Hz) → asymmetry POSITIVE, TP boosted. Different-singer
+    cross-song: both shift; existing 1eda8e3 MFCC asymmetry fires.
+
+    Speech self-gating via paired differencing (1eda8e3 mechanism).
+    Voiced rolloff on speech varies with vowel identity (high vowels
+    /i,u/ have lower rolloff than /a/ because formants concentrate
+    lower); unvoiced rolloff on speech varies with consonant type
+    (fricatives /s,f/ have high rolloff ~8 kHz; plosives /p,t,k/ have
+    moderate rolloff). But within same recording microphone + preamp +
+    codec constant → voiced and unvoiced rolloff shifts both track
+    phoneme context in CORRELATED ways → DIFFERENCE is zero-mean noise
+    across non-splice windows → GBM low per-domain SHAP on
+    english/korean → functionally invisible on speech.
+
+    Classifier hyperparam axis verifiably broken (5+ train_classifier.py-
+    only iterations IDENTICAL 0.490700). Only features.py-sha bumps force
+    retrain consistently. Every primary tunable saturated both directions.
+
+    Orthogonal. NOT 1eda8e3 (13-dim MFCC cosine); NOT 7972a98 + every
+    spec_contrast variant (d290101/177d641/88adb49/6c6c254/347c0ac, 7-dim
+    cosine); NOT f4148cc (chroma 12-dim cosine); NOT 0c3bf76 (spec_flatness
+    abs-delta Wiener entropy, not percentile); NOT c006d52 (log-RMS dB
+    energy level, not frequency); NOT 0cdd87e (ZCR time-domain count); NOT
+    7a170b0 (spec_bandwidth 2nd-moment std — this is 85th-percentile); NOT
+    27ddbf7 / 1d1144d (F0 distribution); NOT block-2 spec_rolloff_delta
+    (all-frame, no voicing split); NOT 8fc7169 voicing_transition_rate_delta
+    (mask structure, not rolloff content); NOT 60196aa peak-width (detector);
+    NOT any percussive/harmonic/tonnetz/geometry variant. FIRST percentile-
+    based 1D spectral moment on voicing-masked paired-diff template.
+
+    Blast radius: 1 new block (~35 lines cloned from
+    _block_voiced_unvoiced_spec_contrast_asymmetry with 1D scalar mean
+    replacing 7-dim cosine, matching c006d52/0cdd87e/7a170b0 template) +
+    1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call. ZERO new
+    caches, ZERO new librosa calls. Per-t cost: 4 slices + 4 masked means
+    + 2 subtractions, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing flat / speech preserved (rolloff signal
+    sits in same surface as spec_centroid_delta; voicing-split produces
+    partial duplicate info GBM already has through block-2 deltas) →
+    fallback to voiced_unvoiced_spec_flux_asymmetry (frame-to-frame
+    spectral change, genuinely different from moments; feat_flux isn't
+    cached — would require librosa call but tiny). (2) Speech regresses
+    (voiced rolloff tracks vowel formant strongly enough that 2s window
+    doesn't average it away) → pivot to voiced_unvoiced_rolloff_LOG_ratio
+    = log2(post_u_mean / pre_u_mean) - log2(post_v_mean / pre_v_mean) —
+    log-scale normalisation for register/codec invariance. (3) combined
+    matches 0.4907 AGAIN → confirms the identical-streak spans multiple
+    features.py adds; escalate as systemic wrapper cache-coherence bug.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 48+
+    iterations — cannot verify rolloff values at the 3 singing FPs to
+    confirm whether unvoiced rolloff is in fact stable cross-chord-cycle
+    (as theory predicts) vs already discriminating. Every 1D-scalar
+    asymmetry hypothesis remains theory-calibrated. (ii) SHAP rollup STILL
+    empty for 14 keeps despite 48+ iterations of explicit reflection —
+    rollup writer broken; without per-feature attribution the axis pick
+    is theory-only. Cannot verify whether 1eda8e3/7972a98 are even in
+    the top features GBM uses. (iii) 0.490700 identical-streak crosses
+    features.py AND detector.py changes; no wrapper signal distinguishes
+    "feature silent" from "classifier stale" from "wrapper cache hit".
+    (iv) 99081f5 4/16 capacity ghost status unclear at HEAD after 960113c
+    "REVERT" that wrapper may have discarded.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent 48+-
+    iteration blocker cited in every reflection. Per-FP (domain, file,
+    t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry, voiced_unvoiced_spec_contrast_asymmetry,
+    spec_rolloff_delta, top-5 |SHAP|). Transforms every paired-diff
+    hypothesis from theory bet to data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps is long-standing
+    bug; emit per-iteration SHAP top-K to `.omc/classifier/shap_rollup.json`
+    on every keep; aggregate rolling-5 in wrapper.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip") with
+    joblib-mtime sanity check would isolate the 0.4907 identical-streak
+    root cause. Three unchanged highest-priority requests across 48+
+    iterations.
+
