@@ -5188,3 +5188,122 @@ per-domain: combined_english=0.795181 combined_korean=0.573913 combined_singing=
     would let sample_weight / class_weight hypotheses pick factors
     data-driven instead of by theory.
 
+## 2026-04-21T06:09:13+09:00 — 7b49d40 (discard, combined=0.465942)
+subject: add SINGING_AUG_TIME_STRETCH_RATES=(0.95, 1.05) -- SECOND training-data augmentation axis alongside existing SINGING_AUG_SHIFTS_SEMITONES (pitch-shift). Pure train_classifier.py change, no feature or detector edit. For each clean singing chunk, emit 2 additional augmented copies at librosa.effects.time_stretch rates 0.95 (5% slower, chord cycle 2-3s dilates to 2.1-3.15s) and 1.05 (5% faster, contracts to 1.9-2.85s). chunk-duration-aware sampling: aug_dur_s=len(aug_chunk)/sr since time_stretch changes length (unlike pitch_shift which preserves). EXPLICIT CITED FALLBACK from 4e2941b(c)(2): 'pivot to TIME-STRETCH augmentation via librosa.effects.time_stretch for tempo-invariance'. STRUCTURAL pivot on training-DATA-DIVERSITY axis orthogonal to 4e2941b pitch-shift expansion (FREQUENCY axis) / d1be6c3 GBM max_depth 4->5/max_iter 200->300 (capacity axis discard) / e4a9c18 DATASET_SAMPLE_WEIGHT=2.0 (loss-gradient bias, catastrophic). 3 surviving singing chord-cycle FPs are PERIODIC at 2-3s -- a TEMPORAL signature. Pitch-shift gives GBM same chord-cycle pattern at different pitch levels (frequency); time-stretch gives same pattern at different tempo rates (time). Combined cover both axes so GBM learns rate-invariant AND pitch-invariant discriminators. Mechanism on 3 singing chord-cycle FPs: within-song chord cycle at specific tempo currently maps to one region of feature space; time-stretched clean copies at 0.95x/1.05x populate adjacent regions labeled not_splice, widening not_splice boundary precisely in time-sensitive features (mfcc_delta_*, persistence, trajectory-velocity, voicing_transition_rate_delta) that spurious-fire on chord-cycle periodicity. Speech untouched: ds_id=='singing' gate ensures english/korean rows byte-identical, 0.667/0.889 margins preserved (same safeguard that protected speech across bba6dbe/4e2941b pitch-shift augmentations). Why 0.95/1.05 specifically: phase-vocoder time-stretch is artifact-free within +-5% rate envelope (pitch preserved, transients not smeared audibly); 10%+ introduces phasey artifacts on vocal transients GBM could treat as splice signature. Starts with 2 rates (conservative, matching bba6dbe 2-shift cardinality that lifted singing 0.272->baseline); expandable to (0.9, 0.95, 1.05, 1.1) 4-rate matching pitch-shift cardinality if keeps. Orthogonal: NOT 4e2941b SINGING_AUG_SHIFTS_SEMITONES (frequency axis, complementary template not duplicate); NOT d1be6c3 (GBM capacity knob); NOT e4a9c18 (loss-gradient bias); NOT any features.py addition (FEATURE_NAMES stable 80, features.py sha unchanged); NOT any DSP gate (MAX/SUM/SECOND-HIGHEST/PHASE) or detector post-filter (peak-width/margin/cluster-count); NOT GBM_THRESHOLD/GBM_MIN_SEP_S/ANALYSIS_STRIDE_S. FIRST time-domain training-data augmentation in classifier history; FIRST use of librosa.effects.time_stretch in training pipeline. Blast radius: 1 new tuple constant + 1 new augmentation block (~40 lines cloning pitch-shift template with rate= replacing n_steps= and aug_dur_s=len(aug_chunk)/sr replacing chunk_dur_s for duration-change handling). Feature set unchanged. Detector byte-identical. Retrain cost: ~20 clean singing files x 2 rates = ~40 new rows, time_stretch ~0.5s/chunk + feature extraction, total ~60s training-time bump well inside budget. No inference cost. US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 511 lines, SINGING_AUG_SHIFTS_SEMITONES=(+1,-1,+2,-2) stable, SINGING_AUG_TIME_STRETCH_RATES=(0.95, 1.05) len=2, make_pipeline() constructs Pipeline OK with inherited d1be6c3 capacity (max_iter=300 max_depth=5 max_leaf=32 l2=1.0 min_samples_leaf=20), FEATURE_NAMES stable at 80, librosa.effects.time_stretch(rate=0.95) maps 60.000s->63.158s and rate=1.05 maps 60.000s->57.143s on synthetic chunk as expected.
+per-domain: combined_english=0.829268 combined_korean=0.410959 combined_singing=0.296825
+
+# 2026-04-21 — hypothesis: add SINGING_AUG_TIME_STRETCH_RATES=(0.95, 1.05)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    add SECOND training-data augmentation axis alongside the existing
+    pitch-shift. For each clean singing chunk, emit two additional
+    augmented copies at tempo rates {0.95, 1.05} via
+    librosa.effects.time_stretch. Chunk-duration-aware sampling
+    (use len(aug_chunk)/sr rather than the original chunk_dur_s
+    since time-stretch changes length, unlike pitch-shift which
+    preserves it). FEATURE_NAMES stable at 80; US-505b
+    train_classifier.py sha gate auto-retrains. No detector change,
+    no feature change, no GBM hyperparameter change.
+
+(b) WHY over recent failures. EXPLICIT CITED FALLBACK from 4e2941b
+    (the immediately prior iteration) (c)(2): "pivot to TIME-STRETCH
+    augmentation via librosa.effects.time_stretch for tempo-
+    invariance". The 3 surviving singing chord-cycle FPs are PERIODIC
+    at 2-3s intervals — a TEMPORAL signature. Pitch-shift
+    augmentation (bba6dbe ±1 kept / 4e2941b ±1±2 expansion) attacks
+    the FREQUENCY axis of training diversity: exposes GBM to the
+    same chord-cycle pattern at different pitch levels. Time-stretch
+    is the genuinely orthogonal TEMPORAL axis: rate 0.95 slows audio
+    5% (chord cycle 2-3s becomes 2.1-3.15s), rate 1.05 speeds 5%
+    (becomes 1.9-2.85s). Combined with pitch-shift this gives GBM a
+    richer not_splice distribution across BOTH time AND frequency —
+    learning rate-invariant AND pitch-invariant discriminators.
+
+    Mechanism on 3 singing chord-cycle FPs: within-song chord cycle
+    at a specific tempo currently matches one region of feature
+    space; time-stretched clean copies at 0.95x and 1.05x populate
+    adjacent regions labeled not_splice, expanding the boundary GBM
+    sees on singing and pushing decision thresholds OUT past the
+    chord-cycle feature-space locus. Time-sensitive features
+    (mfcc_delta_*, persistence, trajectory-velocity, voicing-
+    transition-rate) shift slightly at stretched rates, so the GBM
+    not_splice distribution expands precisely in the feature axes
+    most likely to spurious-fire on chord-cycle periodicity.
+
+    Speech untouched: `ds_id == "singing"` gate ensures english/
+    korean rows byte-identical, preserving 0.889/0.667 margins.
+    Pitch-shift augmentation used this same guard safely since
+    bba6dbe.
+
+    Why 0.95/1.05 specifically. librosa.effects.time_stretch uses
+    phase-vocoder reconstruction; 5% rate changes are within the
+    artifact-free envelope (pitch preserved, transients not smeared
+    audibly). 10%+ starts introducing phasey artifacts on vocal
+    transients that GBM could treat as splice signature. Starts
+    with 2 rates (conservative, matching the 2-shift cardinality
+    of the bba6dbe pitch-shift keep that lifted singing 0.272 →
+    baseline); can expand to (0.9, 0.95, 1.05, 1.1) if this keeps.
+
+    Orthogonal. NOT 4e2941b SINGING_AUG_SHIFTS_SEMITONES (frequency
+    axis, same augmentation template, complementary rather than
+    duplicate); NOT d1be6c3 max_depth / max_leaf_nodes / max_iter
+    (GBM capacity knob); NOT e4a9c18 DATASET_SAMPLE_WEIGHT (loss-
+    gradient bias); NOT any features.py addition (FEATURE_NAMES
+    stable 80, features.py sha unchanged); NOT any DSP gate
+    (MAX/SUM/SECOND/PHASE); NOT any detector post-filter (peak-
+    width / margin / cluster-count); NOT any GBM_THRESHOLD /
+    GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. FIRST time-domain training-
+    data augmentation in classifier history; FIRST use of
+    librosa.effects.time_stretch in the training pipeline.
+
+    Blast radius. 1 new tuple constant + 1 new augmentation block
+    (~40 lines cloning the pitch-shift template with `rate=`
+    replacing `n_steps=` and `aug_dur_s = len(aug_chunk)/sr`
+    replacing original chunk_dur_s since time-stretch changes
+    length). Feature set unchanged. Detector byte-identical.
+    Retrain adds ~20 clean singing files × 2 rates = ~40 new rows
+    at ~0.5s/chunk time-stretch + feature extraction ≈ ~60s
+    training-time bump — well inside budget.
+
+(c) IF THIS FAILS. (1) Singing unchanged — 5% rate changes too
+    mild to bite specific cycle periods at the 3 FP positions →
+    expand to (0.9, 1.1) or 4-rate (0.9, 0.95, 1.05, 1.1)
+    matching pitch-shift cardinality. (2) Singing regresses —
+    phase-vocoder transient artifacts shift not_splice distribution
+    the wrong way → revert and pivot to codec augmentation
+    (FLAC → Opus transcode on clean singing chunks) as next
+    augmentation axis. (3) All domains move correlated (GBM learns
+    globally different surface via richer clean-singing envelope
+    that hurts speech generalization indirectly) → revert and
+    narrow augmentation scope to clean-singing-ONLY by
+    down-weighting augmented rows via sample_weight=0.5.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent
+    after 75+ iterations — cannot verify the chord-cycle period
+    at the 3 FP positions to validate the 5% rate choice. Could
+    be 2s cycle (needs ±5% to bite edges) or 4s+ cycle (needs
+    ±10%+). Theory bet. (ii) SHAP rollup STILL empty for 14
+    keeps — cannot verify which time-sensitive features drive
+    the FPs, to argue time-stretch specifically bites them.
+    (iii) Per-domain training row counts still not surfaced —
+    hard to predict effective augmentation weight redistribution
+    after adding ~40 new singing rows. (iv) 4e2941b keep/discard
+    outcome not yet in RESEARCH NOTES so stacking over its state
+    is inference by baseline-unchanged ≈ discard (pitch-shift
+    expansion is on disk regardless; time-stretch builds on top).
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks
+    across 75+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, nearest_chord_cycle_period_s,
+    tempo_estimate_bpm, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    top-5 |SHAP|). Tempo + cycle-period would settle every
+    augmentation-rate choice data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) AUGMENTATION-AXIS FRONTIER SNAPSHOT in CURRENT STATE:
+    SINGING_AUG_SHIFTS_SEMITONES current tuple, new
+    SINGING_AUG_TIME_STRETCH_RATES tuple, total augmented row
+    count per domain. Would prevent losing state on augmentation
+    knobs the same way GBM_THRESHOLD / GBM_MIN_SEP_S /
+    ANALYSIS_STRIDE_S have explicit "tried kept/failed" tracking.
+
