@@ -321,8 +321,10 @@ _detect_deep_orphans() {
            && ! git merge-base --is-ancestor "$cutoff_sha" "$sha" 2>/dev/null; then
             continue
         fi
-        if git log --format=%s --reverse "${sha}..HEAD" 2>/dev/null \
-             | head -3 | grep -q "^baseline:"; then
+        # `head -3 | grep -q` closes stdin after the first match or at line 3;
+        # upstream `git log` can SIGPIPE under pipefail. Isolate in a subshell.
+        if (set +o pipefail; git log --format=%s --reverse "${sha}..HEAD" 2>/dev/null \
+             | head -3 | grep -q "^baseline:"); then
             continue
         fi
         if [ -f "$results_tsv" ] \
@@ -738,12 +740,19 @@ run_loop() {
 
             # Top 5 keeps by combined — lets claude see what has worked,
             # not only what has failed.
-            recent_keeps=$(awk -F'\t' '
-                NR==1 {next}
-                $13 == "keep" && $2 != "NA" {
-                    printf "%s\t  + combined=%s [singing %s / korean %s / english %s]: %s\n", \
-                           $2, $2, $7, $8, $9, $14
-                }' "$RESULTS" | sort -rn -k1,1 -t$'\t' | cut -f2- | head -5)
+            # NOTE: `head -5` closes stdin early; under `set -euo pipefail`
+            # that SIGPIPEs upstream `cut` → exit 141 → loop.crash. Disable
+            # pipefail in the subshell so the head-based truncation can't
+            # propagate as an error.
+            recent_keeps=$(
+                set +o pipefail
+                awk -F'\t' '
+                    NR==1 {next}
+                    $13 == "keep" && $2 != "NA" {
+                        printf "%s\t  + combined=%s [singing %s / korean %s / english %s]: %s\n", \
+                               $2, $2, $7, $8, $9, $14
+                    }' "$RESULTS" | sort -rn -k1,1 -t$'\t' | cut -f2- | head -5
+            )
 
             iter_summary=$(awk -F'\t' '
                 NR==1 {next}
@@ -1192,7 +1201,12 @@ except Exception:
         fi
 
         # Parse combined from the deterministic RESULTS_TSV line.
-        reported=$(grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
+        # `head -1` truncates upstream grep output; isolate pipefail so a
+        # SIGPIPE on the inner grep can't propagate as loop.crash.
+        reported=$(
+            set +o pipefail
+            grep -E "^RESULTS_TSV: " "$PROJECT_DIR/.omc/last_eval.log" | tail -1 | grep -oE "\bcombined=[0-9.]+" | head -1 | cut -d= -f2
+        )
         if [ -z "$reported" ]; then
             _log ERROR wrapper eval.parse_fail reason="no_combined_in_results_tsv"
             uv run python autoresearch/supervisor_agent.py --diagnose \
