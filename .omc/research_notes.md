@@ -5168,3 +5168,108 @@ per-domain: combined_english=0.850000 combined_korean=0.485714 combined_singing=
     ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip") with
     joblib-mtime sanity check.
 
+## 2026-04-21T00:10:35+09:00 — d4d35b1 (discard, combined=0.286699)
+subject: p_splice local-background-margin filter (drop wide plateaus in detector)
+per-domain: combined_english=0.301887 combined_korean=0.321429 combined_singing=0.242857
+
+# 2026-04-21 — hypothesis: p_splice local-background-margin filter (detector.py)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` add — DETECTOR-side structural
+    filter that drops candidates whose p_splice is not a LOCAL ANOMALY
+    against its ±3s neighborhood. After GBM hit_mask + DSP confirm, for
+    each surviving candidate at grid index i compute
+        local_median = median(p_splice[i-K : i+K+1])   # K = 3s / stride = 25 frames
+        if p_splice[i] - local_median < 0.15: drop
+    Dense p_splice is already computed per chunk; add one
+    `scipy.ndimage.median_filter(p_splice, size=2*K+1, mode='nearest')`
+    call per chunk plus one comparison per hit. ZERO new features, ZERO
+    retrain (classifier sha stable, features.py sha stable). Primary
+    tunable — instant.
+
+(b) WHY this over recent failures. 55+ iterations exhausted:
+    voiced/unvoiced 1st-order paired-diff on every content axis
+    (MFCC / spec_contrast / chroma / spec_flatness / RMS-dB / ZCR /
+    spec_bandwidth / spec_rolloff), every geometry (NEAR/MID/WIDE/FAR/
+    narrow-gap/balanced-span), F0 distribution shape+location, voicing-
+    mask temporal structure, and 2nd-order cross-intra consistency on
+    4 content axes (MFCC / spec_contrast / voiced-MFCC / voiced-chroma).
+    Prior detector-side attempt 60196aa peak-width neighbor-support
+    (require adjacent grid points to ALSO exceed 0.95*threshold → enforces
+    WIDTH ≥2 grid points) → 0.491 discarded. My proposal is the
+    structural INVERSE: require neighbors to be LOWER (enforce SPIKE /
+    ANOMALY, not width).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song,
+    chord transitions happen every 2-3s and each produces modest spectral
+    shifts that GBM scores high on spec_*_delta + f0_mean_delta. The dense
+    p_splice curve sits on an ELEVATED FLOOR across a 10-15s chord-cycle
+    section (~0.92-0.98 baseline) with individual chord boundaries producing
+    plateaus at ~0.98-0.99. The surviving FP is the MAX within its 3.5s
+    dedupe window — but the ENTIRE 6s neighborhood also sits at 0.95+.
+    local_median ≈ 0.96, margin = p_splice[i] − 0.96 ≈ 0.02-0.03, which
+    is FAR below 0.15 → DROPPED. Real cross-source splice: genuinely
+    anomalous single grid point; surrounding p_splice on either side sits
+    in the within-song regime (0.1-0.5 typical). local_median ≈ 0.3-0.5,
+    margin ≈ 0.5-0.7 ≫ 0.15 → KEPT.
+
+    Why this SUCCEEDS where 60196aa FAILED. Peak-width required adjacent
+    support ≥0.95*threshold → KEEPS wide plateaus (the chord-cycle failure
+    mode) AND DROPS narrow TPs. Wrong sign for the 3 singing FPs — they
+    ARE wide plateaus so peak-width kept them. Background-subtraction
+    KEEPS narrow spikes (TPs) and DROPS wide plateaus (chord-cycle FPs).
+    Sign flipped; addresses the actual failure mode. Speech self-gating
+    is automatic: speech p_splice curves have isolated phoneme-burst
+    spikes surrounded by low (0.1-0.4) background — margin huge — so
+    speech TPs keep firing.
+
+    Why 0.15 margin. Chord-cycle plateau gaps between candidates are
+    ~0.02-0.05. Real-splice margins should be 0.3-0.7. 0.15 sits in
+    the gap — aggressive enough to bite all 3 FPs but leaves real
+    splice margins untouched.
+
+    Why ±3s window. MIN_SEP_S=3.5, so local window must be wider than
+    dedupe to capture elevated plateau. 3s gives a 6s total window
+    covering 2-3 chord transitions. Narrower = too few samples; wider
+    = cross-chunk-boundary issues since chunks are 60s with 30s overlap.
+
+    Orthogonal. NOT 60196aa peak-width (same detector axis but OPPOSITE
+    sign: they required neighbors HIGH, I require neighbors LOWER); NOT
+    any feature-space hypothesis; NOT DSP magnitude gates; NOT MIN_SEP_S
+    dedupe. FIRST local-background-subtraction filter in detector history.
+    Zero retrain, zero feature change.
+
+    Blast radius. detector.py only — 2 new constants + 1 import addition
+    (median_filter) + 1 function call per chunk + 1 comparison per hit
+    + 1 diag kv. Per-chunk cost: median_filter size=51 on ~500-element
+    array ≈ 25k ops, sub-ms. No retrain — classifier sha stable.
+
+(c) IF THIS FAILS. (1) All singing FPs dropped but english/korean
+    TPs also dropped → domain-gate filter behind singing heuristic.
+    (2) Singing unchanged (p_splice floor is 0.3-0.5 not 0.95 as
+    theorized) → widen window to ±5s or lower margin to 0.05.
+    (3) combined matches 0.589282 exactly → filter never fired because
+    dense p_splice is near-binary → pivot to RANK-based filter (only
+    emit top-K p_splice per chunk).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 55+
+    iterations — cannot inspect actual p_splice distribution around
+    the 3 singing FPs to verify elevated-floor hypothesis. Every detector-
+    side hypothesis theory-calibrated. (ii) SHAP rollup STILL empty for
+    14 keeps. (iii) Wrapper does not log dense p_splice histograms or
+    local-median stats — cannot distinguish "filter never fired" from
+    "filter fired but didn't change any emit". (iv) GBM output calibration
+    unknown — if p_splice clusters at 0.99+, margin-based filter is
+    meaningless. (v) 99081f5 4/16 capacity ghost status unclear.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 55+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE with dense-
+    p_splice fields — per-FP (domain, file, t_sec, p_splice, p_splice_
+    local_median_3s, p_splice_max_in_10s_window, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, chunk_duration_s, top-5 |SHAP|). Would turn every
+    detector-side p_splice-distribution hypothesis into data-driven
+    decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision with joblib-mtime sanity check.
+
