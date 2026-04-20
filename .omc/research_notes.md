@@ -4135,3 +4135,130 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     REPAIR — 14 keeps, 0 rollup entries. (3) US-505b VERIFICATION
     TRACE — confirm hyperparam retrains fire post-920dcdb.
 
+## 2026-04-20T22:00:47+09:00 — 0cdd87e (discard, combined=0.507837)
+subject: add voiced_unvoiced_zcr_asymmetry (FEATURE_NAMES 80->81) -- STRUCTURAL pivot onto TIME-DOMAIN content axis. Apply proven voiced/unvoiced paired-difference template (1eda8e3 NEAR MFCC kept +0.054 biggest win, 7972a98 NEAR spec_contrast kept +0.005) to zero-crossing rate (ZCR) rather than any spectral/cepstral/pitch/energy axis. pre[t-2,t] post[t,t+2]: voiced_delta=mean(zcr[voiced in post])-mean(zcr[voiced in pre]), unvoiced_delta=mean(zcr[unvoiced in post])-mean(zcr[unvoiced in pre]), feature=unvoiced_delta-voiced_delta. Reuses cached feat_zcr (librosa ZCR hop 512) + feat_vp (voicing probability hop 512 -- same frame rate, trivial alignment). ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when any mask empty. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Last 18+ iterations exhausted spectral/cepstral content axes (MFCC/spec_contrast/chroma/spec_flatness at NEAR/MID/WIDE/FAR/narrow-gap/balanced-span), energy-level (c006d52 RMS dB -> 0.491), F0 distribution shape+location (27ddbf7 IQR -> 0.524, 1d1144d median cents -> 0.508), and detector post-filter (60196aa peak-width -> 0.491). CLAUDE.md mandates structural change after 5+ same-axis failures. Block 6 has zcr_pre/zcr_post/zcr_delta (all-frame, no voicing split) but GBM has never seen ZCR paired-differenced on a voicing mask. ZCR is genuinely TIME-DOMAIN (count of sign crossings per frame) -- orthogonal to every prior content axis, all of which are spectral/cepstral/pitch-shape/energy. Mic+preamp high-frequency response and codec quantization drive ZCR baseline on unvoiced frames; vocal-tract resonance drives voiced ZCR baseline. Cross-song splice crosses mic+preamp (and often codec in tier1/tier2 mixed-format chunks) -> ZCR baseline shifts DIFFERENTLY on voiced (stable vocal-tract signal) vs unvoiced (noise-dominated, tracks mic). Mechanism on 3 singing chord-cycle FPs: within one song mic/preamp/codec frozen -> voiced ZCR stays at singer baseline (~4-8/frame), unvoiced ZCR stays at mic noise-floor baseline (~15-25/frame); chord transition does NOT change mic/preamp/codec -> voiced_delta and unvoiced_delta both ~0 -> asymmetry ~0 silent, FP not boosted. Same-singer cross-song: voiced_delta small (similar formants -> similar ZCR on vowels), unvoiced_delta LARGE because new mic noise floor + new codec quantization -> asymmetry POSITIVE, real TP boosted. Different-singer cross-song: both shift; 1eda8e3 MFCC asymmetry already fires. Speech self-gating via paired differencing (reproduces 1eda8e3 mechanism): on english/korean voiced ZCR and unvoiced ZCR both vary with phoneme density but within SAME recording mic/preamp continuous -> voiced+unvoiced baselines shift together with phoneme context -> DIFFERENCE zero-mean noise -> GBM low per-domain SHAP on english/korean. Why ZCR over remaining 1D scalar candidates (spec_bandwidth/centroid/rolloff): spectral moments already seen via all-frame deltas (block 2 top-SHAP) and failed to bite 3 chord-cycle FPs; ZCR is the one time-domain scalar in cached context absent from any paired-diff feature. Why NOT another 1D scalar failure mode: c006d52 RMS dB failed (auto-leveling flattens mastering), F0 IQR/median failed (within-speaker range overlaps cross-song at 2s), spec_flatness failed (Wiener entropy tracks chord-cycle). ZCR structurally different -- COUNT signal, integer-like, dominated by high-freq+codec not loudness/pitch/tonality. Orthogonal: NOT 1eda8e3 (cepstral cosine), NOT 7972a98+variants (spec_contrast), NOT f4148cc (chroma), NOT 0c3bf76 (flatness abs-delta), NOT c006d52 (RMS dB), NOT 27ddbf7/1d1144d (F0), NOT block-6 zcr_delta (all-frame no mask), NOT 60196aa peak-width (detector), NOT any percussive/harmonic/tonnetz/geometry variant. FIRST TIME-DOMAIN voiced/unvoiced paired-diff feature in 80-feature set, FIRST mask-split ZCR. Pure features.py change -- 1 new block (~40 lines cloned from _block_voiced_unvoiced_mfcc_asymmetry with 1D scalar mean replacing 13-dim cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. ZERO new caches, ZERO new librosa calls. Per-t cost: 4 slices + 4 masked means + 2 subtractions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_zcr_asymmetry', real train/singing/tier1 audio t=5s yields asym=+0.00151 (finite non-trivial), sentinel 0.0 on all-voiced 2s windows (common -- feature fires sparsely on mixed-voicing content), all 81 features finite on synthetic + real audio, idempotent on repeated calls.
+per-domain: combined_english=0.825000 combined_korean=0.537313 combined_singing=0.295455
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_zcr_asymmetry (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot onto a
+    TIME-DOMAIN content axis. Apply the proven voiced/unvoiced paired-
+    difference template (1eda8e3 NEAR MFCC kept +0.054 biggest win,
+    7972a98 NEAR spec_contrast kept +0.005) to zero-crossing rate (ZCR)
+    rather than any spectral / cepstral / pitch / energy axis. For
+    pre=[t-2,t] and post=[t,t+2]:
+        voiced_delta  = mean(zcr[voiced in post]) - mean(zcr[voiced in pre])
+        unvoiced_delta = mean(zcr[unvoiced in post]) - mean(zcr[unvoiced in pre])
+        feature = unvoiced_delta - voiced_delta
+    Reuses cached feat_zcr (librosa ZCR, hop 512) + feat_vp (voicing
+    probability, hop 512 — same frame rate, trivial alignment). ZERO new
+    librosa calls, ZERO new caches. Sentinel 0.0 when any mask empty.
+    FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Last 18+ iterations exhausted
+    spectral/cepstral content axes (MFCC / spec_contrast / chroma /
+    spec_flatness at NEAR/MID/WIDE/FAR/narrow-gap/balanced-span
+    geometries), energy-level (RMS dB asymmetry c006d52 → 0.491), F0
+    distribution shape+location (IQR log-ratio 27ddbf7 → 0.524; median
+    cents 1d1144d → 0.508), and detector-side post-filters (peak-width
+    gate 60196aa → 0.491 identical-streak). CLAUDE.md mandates structural
+    change after 5+ same-axis failures. Block 6 has zcr_pre / zcr_post /
+    zcr_delta (all-frame, no voicing split) — GBM has never seen ZCR
+    paired-differenced on a voicing mask. ZCR is genuinely TIME-DOMAIN
+    (count of sign crossings per frame) — orthogonal to every prior
+    content axis, all of which are spectral/cepstral/pitch-shape/energy.
+
+    Mic + preamp high-frequency response and quantization noise floor
+    directly drive ZCR baseline on unvoiced frames; vocal-tract
+    resonance drives voiced ZCR baseline. Cross-song splice crosses
+    mic + preamp (and often codec in tier1/tier2 mixed-format chunks)
+    → ZCR baseline shifts DIFFERENTLY on voiced (stable vocal-tract
+    signal) vs unvoiced (noise-dominated, tracks the mic).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song
+    mic/preamp/codec are frozen. Voiced ZCR stays at singer's baseline
+    (~4-8/frame on sustained tones). Unvoiced ZCR stays at mic's
+    noise-floor baseline (~15-25/frame). Chord transition does NOT
+    change mic/preamp/codec → voiced_delta ≈ 0 AND unvoiced_delta ≈ 0
+    → asymmetry ≈ 0, feature silent, FP not boosted. Same-singer
+    cross-song: voiced_delta small (similar formants → similar ZCR on
+    vowels), unvoiced_delta LARGE because new mic noise floor + new
+    codec quantization produce distinct ZCR baseline → asymmetry
+    POSITIVE. Different-singer cross-song: both shift; 1eda8e3 MFCC
+    asymmetry already fires.
+
+    Speech self-gating via paired differencing (reproduces 1eda8e3
+    mechanism). On english/korean voiced ZCR and unvoiced ZCR both
+    vary with phoneme density but within the SAME recording mic/preamp
+    is continuous → voiced and unvoiced baselines shift together with
+    phoneme context → DIFFERENCE is zero-mean noise across non-splice
+    windows → GBM low per-domain SHAP on english/korean → feature
+    functionally invisible on speech.
+
+    Why ZCR over remaining 1D scalar candidates. spec_centroid /
+    rolloff / bandwidth are spectral moments; GBM already sees their
+    all-frame deltas (block 2, top-SHAP) and they failed to bite the
+    3 chord-cycle FPs. Voicing-split on SAME spectral moments unlikely
+    to surface new signal. ZCR is the one time-domain scalar in the
+    cached context absent from any paired-diff feature.
+
+    Why NOT another 1D scalar failure mode. c006d52 RMS dB → 0.491
+    failed because auto-leveling flattens mastering dB differences;
+    1d1144d/27ddbf7 F0 failed because within-speaker prosodic range
+    overlaps cross-song range at 2s windows; 0c3bf76 spec_flatness
+    failed because Wiener entropy tracks chord-cycle tonality shifts.
+    ZCR is structurally different — COUNT signal, integer-like,
+    dominated by high-frequency content + codec quantization, not by
+    loudness / pitch distribution / tonal balance.
+
+    Orthogonal. NOT 1eda8e3 (cepstral cosine); NOT 7972a98 and every
+    spec_contrast variant (d290101/177d641/88adb49/6c6c254/347c0ac);
+    NOT f4148cc (chroma); NOT 0c3bf76 (spec_flatness abs-delta); NOT
+    c006d52 (RMS dB); NOT 27ddbf7 / 1d1144d (F0); NOT block-6
+    zcr_delta (all-frame, no mask split); NOT 60196aa peak-width
+    (detector); NOT any percussive/harmonic/tonnetz/geometry-variant.
+    FIRST TIME-DOMAIN voiced/unvoiced paired-diff feature, FIRST
+    mask-split ZCR.
+
+    Blast radius: 1 new block (~40 lines cloned from
+    _block_voiced_unvoiced_mfcc_asymmetry with 1D scalar mean replacing
+    13-dim cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) +
+    1 call in extract_features. ZERO new caches, ZERO new librosa
+    calls. Per-t cost: 4 slices + 4 masked means + 2 subtractions,
+    sub-ms.
+
+(c) IF THIS FAILS. (1) Speech regresses (ZCR has phoneme-dependent
+    variation that 2s window doesn't average away) → fallback to
+    voiced_unvoiced_spec_bandwidth_asymmetry (spectral spread, EQ
+    signature). (2) Singing flat (mic baseline shift below ZCR 2s-
+    frame-count resolution) → expand windows to ±4s. (3) combined
+    matches 0.4907 AGAIN → confirms the identical-streak spans
+    features.py AND detector.py changes; escalate as wrapper/cache
+    coherence bug.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 47+
+    iterations. Every scalar-asymmetry hypothesis remains theory-
+    calibrated. (ii) SHAP rollup STILL empty for 14 keeps — no per-
+    feature attribution. (iii) The 0.490700 identical-streak crosses
+    features.py (c006d52) AND detector.py (60196aa) — no wrapper
+    signal to confirm whether US-505 retrain actually fired OR
+    whether detector.py change took effect. Cannot distinguish
+    "feature silent" from "classifier stale" from "wrapper cache hit".
+    (iv) 99081f5 4/16 capacity ghost status unclear.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent
+    47+-iteration blocker. Per-FP (domain, file, t_sec, p_splice,
+    dsp_*, chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, zcr_pre, zcr_post,
+    top-5 |SHAP|). Transforms every hypothesis from theory bet to
+    data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps is long-
+    standing bug; without per-feature attribution claude picks
+    "theoretically orthogonal" not "what GBM actually uses".
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision: "features.py sha Δ XX→YY → retrain" vs "detector.py
+    change only, classifier sha YY stable" with joblib-mtime sanity
+    check. Would isolate the 0.4907 identical-streak root cause.
+    Three unchanged highest-priority requests across 47+ iterations.
+
