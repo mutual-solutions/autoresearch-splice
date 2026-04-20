@@ -78,7 +78,8 @@
     "voiced_mfcc_cosine_dist",
     "voiced_chroma_cosine_dist",
     "voiced_spec_contrast_cosine_dist",
-    "voiced_unvoiced_mfcc_asymmetry"
+    "voiced_unvoiced_mfcc_asymmetry",
+    "voiced_unvoiced_spec_contrast_asymmetry"
   ],
   "label_names": [
     "not_splice",
@@ -103,6 +104,6 @@
       "2": 300
     }
   },
-  "features_py_sha": "258007a89ce9b8e749bedf4f9877adc5e7eef9ca",
-  "training_timestamp": "2026-04-20T00:45:10Z"
+  "features_py_sha": "6e1d206c336a6156cdcc522acf4a0dd343e40781",
+  "training_timestamp": "2026-04-20T01:19:04Z"
 }
