@@ -3433,3 +3433,104 @@ per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=
     every subsequent hypothesis.
 [auto] (no SHAP data for either 32cac36 or 1eda8e3)
 
+## 2026-04-20T10:06:22+09:00 — f4148cc (discard, combined=0.582332)
+subject: add voiced_unvoiced_chroma_asymmetry feature (FEATURE_NAMES 79->80) — pitch-class companion to 1eda8e3's voiced_unvoiced_mfcc_asymmetry. Signed asymmetry unvoiced_chroma_cosine_dist minus voiced_chroma_cosine_dist on +-2s pre/post window. Positive = accompaniment key/chord shifted more than voice (same-singer cross-song splice signature on the HARMONIC axis, orthogonal to the MFCC/timbre asymmetry which leaves chord-cycle intra-song undiscriminated). ~0 on intra-song chord cycle (both voiced and unvoiced chroma shift together with progression) and different-singer cross-song (both high and cancel). Reuses cached feat_chroma (32cac36) + feat_vp — ZERO new librosa calls, ZERO new caches. Per-t cost 4 slices + 4 masked means + 2 cosines on 12-dim vectors, sub-ms. Sentinel 0.0 when either mask empty or either sub-norm underflows, matching 1eda8e3/49bd0b1/32cac36 safety pattern. Targets 1eda8e3 current-keep (0.586244) singing 0.340 weakest-domain plateau where MFCC asymmetry lifted english 0.840->0.889 and korean 0.526->0.667 spectacularly but singing stayed FLAT. The MFCC asymmetry mechanism worked on speech domains (different speakers across splice = different voiced+unvoiced MFCC) but not on singing where real cross-song splices often land on a held note (voiced_mfcc_dist low, unvoiced_mfcc_dist high -> asymmetry positive, BUT this case is rare enough or GBM assigns SHAP modestly). Chroma asymmetry attacks the HARMONIC axis directly: same-singer holding note E across a cut voiced_chroma_dist ~0.05, accompaniment shifted to new key unvoiced_chroma_dist ~0.30-0.50, asymmetry ~+0.25 LARGE. Intra-song chord cycle: voiced and unvoiced chroma BOTH shift together with chord progression (harmony applies to whole mix) so asymmetry ~0, NOT confused with splice. Paired differencing on speech: voiced and unvoiced chroma co-vary with prosodic phoneme context so difference is zero-mean noise, GBM assigns low per-domain SHAP on english/korean (neutralizes the 634cdd2 raw-chroma verify-fail mode). Explicit escalation from 1eda8e3(c)(3): 'add voiced_unvoiced_chroma_asymmetry on the chroma axis so GBM sees accompaniment-vs-voice asymmetry simultaneously in cepstral and pitch-class space — redundant enough to bite through either feature's per-domain noise'. GBM max_depth=3 CANNOT synthesize this interaction from voiced_chroma_cosine_dist alone (would need unvoiced_chroma which isn't in feature set); providing subtraction surfaces pattern directly. Orthogonal to every prior axis: NOT 1eda8e3 (cepstral not pitch-class); NOT 32cac36 voiced_chroma (single-mask no differential); NOT 634cdd2 raw chroma_cosine_dist (no mask no asymmetry); NOT 68004ca tonality-gated chroma (external max/mean ratio); NOT 9fe41d1 chroma persistence_far (4-8s post-filter); NOT ff65865 voiced_chroma_far (far window); NOT 308aa5a tonnetz (linear projection); NOT df6fc0a unvoiced_mfcc (cepstral single-mask); NOT e7ca9eb voiced_spec_contrast (mastering signature not pitch-class). First ASYMMETRIC/DIFFERENTIAL feature in the pitch-class axis. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==80, last name 'voiced_unvoiced_chroma_asymmetry', end-to-end extract_features returns 80 finite features on synthetic audio, sentinel 0.0 triggers correctly when voicing-mask empty (pure synthetic signals).
+per-domain: combined_english=0.888889 combined_korean=0.696970 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: voiced_unvoiced_chroma_asymmetry feature (FEATURE_NAMES 79→80)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `voiced_unvoiced_chroma_asymmetry`, the PITCH-CLASS companion to the
+    just-kept `voiced_unvoiced_mfcc_asymmetry` (1eda8e3). Per position t_sec
+    compute (1) voiced_chroma_dist = cosine distance between VOICED-mean
+    12-dim chroma on pre=[t−2, t] vs post=[t, t+2]; (2) unvoiced_chroma_dist
+    = same on UNVOICED frames (vp==0.0); (3) return
+    `unvoiced_chroma_dist − voiced_chroma_dist` (SIGNED asymmetry; positive
+    = accompaniment key/chord shifted more than voice). Reuses feat_chroma
+    + feat_vp (ZERO new librosa calls, ZERO new caches). Sentinel 0.0 when
+    either mask is empty or either sub-norm underflows, matching
+    1eda8e3/49bd0b1/32cac36 safety pattern. FEATURE_NAMES 79→80 triggers
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over the current state. 1eda8e3 (current keep, combined=
+    0.586244) MFCC-space asymmetry lifted english 0.840→0.889 and korean
+    0.526→0.667 spectacularly but singing stayed FLAT at 0.340 (was 0.341)
+    — still the weakest domain by a wide margin. The asymmetry mechanism
+    worked; it just didn't bite on singing. Explicit cited escalation from
+    1eda8e3(c)(3): "add a second feature voiced_unvoiced_chroma_asymmetry
+    (same mechanism on the chroma axis) so GBM sees the accompaniment-vs-
+    voice asymmetry simultaneously in cepstral and pitch-class space —
+    redundant enough to bite through either feature's per-domain noise."
+    Mechanism on singing: real cross-song splice — voice pitch class
+    preserved if singer holds a note across cut (voiced_chroma_dist low
+    ~0.05) but accompaniment shifts to new key/chord progression
+    (unvoiced_chroma_dist high ~0.30-0.50) → asymmetry +0.25 LARGE
+    POSITIVE (same sign as MFCC asymmetry but on the ORTHOGONAL harmonic
+    axis). Intra-song chord cycle — both voiced and unvoiced chroma shift
+    together with the chord progression (harmony applies to everything in
+    the mix) → asymmetry ~0 SMALL. MFCC asymmetry cannot see this case
+    because MFCC is timbre — chord cycle leaves timbre stable on BOTH
+    masks. Chroma asymmetry sees it clearly as a signed value. Paired
+    differencing on speech: both voiced and unvoiced chroma vary TOGETHER
+    with phoneme / prosody context (consonant and vowel land in similar
+    pitch-class regions within a speaker's prosodic window), so the
+    difference is ~zero-mean noise → GBM assigns low per-domain SHAP on
+    english/korean (the 634cdd2 verify-fail failure mode for raw-chroma
+    is directly neutralized by paired-differencing cancellation).
+    Orthogonal to every prior axis: NOT 1eda8e3 (cepstral, not pitch-
+    class); NOT 32cac36 voiced_chroma (single-mask, no differential); NOT
+    634cdd2 raw chroma_cosine_dist (no mask, no asymmetry); NOT 68004ca
+    tonality-gated chroma (external max/mean ratio gate); NOT 9fe41d1
+    chroma persistence_far (post-filter, 4-8s window); NOT ff65865
+    voiced_chroma_far (far window); NOT 308aa5a tonnetz (linear
+    projection); NOT df6fc0a unvoiced_mfcc (single-mask cepstral, not
+    asymmetric). Blast radius: features.py only — 1 new block + 1
+    FEATURE_NAMES append + 2 assert bumps. Zero new caches. Per-t cost:
+    4 slices + 4 masked means + 2 cosines on 12-dim vectors, sub-ms.
+    Risk-bounded: sentinel-0.0 safety matches proven 1eda8e3 pattern;
+    paired differencing is inherently self-cancelling on speech.
+
+(c) IF THIS FAILS. (1) If singing has too few unvoiced frames in ±2s
+    around real splices (continuous sung phrases → empty unvoiced mask
+    → feature is no-op on exactly the singing population I'm targeting),
+    combine with an RMS-floor mask (frame counts as "accompaniment-
+    carrying" if unvoiced OR below-median RMS). (2) If GBM assigns ~0
+    SHAP (paired differencing cancels too much signal, or the 79-feature
+    baseline already fills the harmonic-accompaniment niche via
+    voiced_chroma_cosine_dist), replace with a RATIO: `unvoiced_chroma_dist
+    / max(voiced_chroma_dist, 0.05)` — preserves magnitude when both
+    distances are large but unvoiced dominates. (3) Final escalation:
+    add `voiced_unvoiced_spec_contrast_asymmetry` (same mechanism on
+    7-dim spec contrast) so GBM sees accompaniment-vs-voice asymmetry
+    in cepstral + pitch-class + mastering-signature spaces
+    simultaneously.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 18+
+    iterations — I cannot verify whether 1eda8e3's 3 surviving clean FPs
+    (singing=3 per baseline, korean=0, english=0 on 1eda8e3) have BOTH
+    voiced and unvoiced frames in ±2s windows. Continuous sung phrases
+    may zero the unvoiced mask → asymmetry sentinel 0.0 → feature
+    no-op for exactly the singing FPs it's designed to bite. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 1eda8e3 — the
+    theoretical claim "MFCC asymmetry couldn't bite singing because
+    singer holds note across cut" is unverifiable against actual SHAP.
+    (iii) Domain-specific not-splice vs cross-song distributions of
+    unvoiced_chroma_dist − voiced_chroma_dist are unknown pre-commit;
+    calibrating threshold intuitions from mechanism not data.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 18+ iterations; per-FP (domain, file,
+    t_sec, label_id, p_splice, vp_pre_frac, vp_post_frac,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, voiced_chroma_dist,
+    unvoiced_chroma_dist, top-5 |SHAP| features with values). Every
+    asymmetry / mask hypothesis has been calibrated from theory; this
+    single block flips the entire loop to data-driven. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that retrains
+    once and reports per-domain OOF-F1 delta vs current — turns "is this
+    feature worth a 3-min retrain" from a bet into a numeric preview.
+    (3) DISCARD-REVERT SYNC auditor: the wrapper's discard path should
+    diff features.py vs baseline-sha features.py and ABORT / restore if
+    they differ, so a discarded hypothesis's code cannot silently persist
+    into the next iteration's classifier (voiced_spec_contrast dragging
+    confounds every subsequent attribution).
+
