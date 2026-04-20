@@ -3687,3 +3687,170 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     treating such matches as KEEP not DISCARD when combined matches
     baseline.
 
+## 2026-04-20T16:14:07+09:00 — 1a8b1fe (discard, combined=0.503311)
+subject: add voiced_percussive_chroma_asymmetry feature (FEATURE_NAMES 80->81) — signed asymmetry percussive_chroma_cosine_dist minus voiced_chroma_cosine_dist on +-2s pre/post window. Percussive mask = top-40% onset-energy frames (same threshold as fd500b3/aa4f141: onset > median*1.2); voiced mask = feat_vp>0. Cosine distance on 12-dim masked-mean chroma vectors, then subtract. Reuses cached feat_chroma + feat_onset + feat_vp — ZERO new librosa calls, ZERO new caches. FEATURE_NAMES count 80->81 triggers wrapper auto-retrain via US-505 sha gate. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau (3 clean FPs). Every plausible classifier-hyperparam axis saturated (depth/leaf 99081f5+960113c matched baseline byte-identical, LR 17d4aec / min_samples_leaf db59c36 / l2 df0ceec all produced IDENTICAL 0.490700) and every primary tunable saturated in both directions; voiced/unvoiced MFCC/chroma/contrast/flatness variants exhausted. This is the explicit cited untried fallback from 5+ consecutive reflections (0cb551f/c3, 53d3ea0/c3, 67633f2/c3, 17d4aec/c3, db59c36/c3, df0ceec/c2, 0c3bf76). Mechanism: percussive-mean chroma filters OUT drum contribution (drums broadband-noise have ~uniform 12-bin chroma averaging to near-uniform) and leaves pitched-accompaniment transient content (bass/guitar attacks) — reflects accompaniment CHORD signature. Voiced-mean chroma reflects singer's pitch class. Case (i) same-singer cross-song: voiced_chroma_dist small (~0.08) because singer holds similar key, percussive_chroma_dist large (~0.35) because accompaniment changes key -> asymmetry ~+0.27 LARGE. Case (ii) intra-song chord cycle (the 3 singing FPs): voice and accompaniment shift TOGETHER with chord progression -> both distances move in tandem -> asymmetry ~0 — chord-cycle FP cannot mimic positive-asymmetry signature because chord cycle is inherently synchronized. Case (iii) different-singer cross-song: both shift -> asymmetry cancels -> GBM falls back on voiced_mfcc / voiced_unvoiced_mfcc_asymmetry (1eda8e3 +0.054) which already fires. Critical orthogonality: percussive × MFCC previously failed both solo (fd500b3 singing regressed 0.345->0.319 — percussive MFCC is drum-timbre-noisy on speech consonants) and in asymmetry (aa4f141 singing 0.320 — cepstral noise mode persists even with paired differencing because voiced+percussive MFCC both shift with phoneme context). CHROMA is physically different from MFCC: drum chroma is near-flat broadband-noise distribution (averages away in percussive mean), whereas drum MFCC has strong timbre signature (dominates percussive mean). Speech self-gating via paired differencing (reproduces 1eda8e3 pattern): percussive-frame chroma tracks plosive bursts (phoneme-dependent, noise-like), voiced-frame chroma tracks vowel-formant harmonicity (phoneme-dependent, tonal) — both vary with phoneme context UNCORRELATED with splice position, so DIFFERENCE is zero-mean noise across training pairs, GBM assigns low per-domain SHAP on english/korean, feature functionally invisible on speech. Prevents the 634cdd2 raw-chroma and df6fc0a unvoiced_mfcc speech-regression failure mode. Orthogonal to every prior axis: NOT 1eda8e3 voiced_unvoiced_mfcc (cepstral asymmetry, unvoiced mask); NOT 7972a98 voiced_unvoiced_spec_contrast (spec_contrast asymmetry, unvoiced mask); NOT f4148cc voiced_unvoiced_chroma (chroma asymmetry but UNVOICED mask — failed because singer sings new note in new key so voiced shifts as much as unvoiced and asymmetry cancels); NOT aa4f141 voiced_percussive_mfcc (percussive × MFCC asymmetry — cepstral noise mode); NOT fd500b3 percussive_mfcc solo; NOT 32cac36 voiced_chroma solo (single-mask, no pair); NOT 308aa5a voiced_tonnetz; NOT 0c3bf76 voiced_unvoiced_spec_flatness_asymmetry. FIRST percussive × chroma content combination in any form, FIRST percussive mask against a non-cepstral content axis. Self-diagnostic on the IDENTICAL-COMBINED-STREAK concern (5 consecutive iterations at 0.490700 across hyperparam-only changes): features.py count bump 80->81 forces retrain via US-505 sha gate (0c3bf76 featadd produced distinct 0.538510 proving this path is alive) — if my change also lands at 0.490700, that's strong evidence of wrapper bug beyond cache invalidation. Blast radius: features.py only — 1 new block function (~40 lines) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. ZERO new caches, ZERO new librosa calls, one lazy scalar feat_perc_threshold cached on ctx (same machinery as aa4f141/fd500b3). Per-t cost: 4 slices + 2 mask applications + 4 masked means + 2 cosines on 12-dim vectors + 1 subtraction, sub-ms. Aggregate per-chunk cost negligible. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_percussive_chroma_asymmetry', extract_features returns 81 finite features on synthetic audio, idempotent on repeated calls, sentinel 0.0 fires correctly on silence (empty voiced mask).
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: add voiced_percussive_chroma_asymmetry feature (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new
+    feature: signed asymmetry `percussive_chroma_cosine_dist` −
+    `voiced_chroma_cosine_dist` on ±2s pre/post window. Percussive mask
+    = frames where `feat_onset > chunk-median(feat_onset) * 1.2` (top
+    ~40% by onset energy; same threshold used by fd500b3/aa4f141).
+    Voiced mask = `feat_vp > 0`. Cosine distance on 12-dim masked-mean
+    chroma vectors, then subtract. Reuses cached feat_chroma +
+    feat_onset + feat_vp — ZERO new librosa calls, ZERO new caches.
+    Sentinel 0.0 when any mask empty or any sub-norm underflows,
+    matching 1eda8e3 / 7972a98 safety pattern. FEATURE_NAMES 80→81
+    triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Every plausible axis has been
+    eliminated in the last ~15 iterations: all 5 HistGBM hyperparams
+    individually (max_depth/max_leaf 99081f5+960113c — capacity INERT,
+    the revert matched baseline byte-identical; learning_rate 17d4aec,
+    min_samples_leaf db59c36, l2 df0ceec — all produced IDENTICAL
+    combined=0.490700 suggesting classifier truly saturated at the
+    80-feature space); every primary tunable in both directions
+    (THRESHOLD 0.980-0.983, MIN_SEP 2.5-3.75, STRIDE 0.11-0.15,
+    DSP_MAX 2.0-2.2, DSP_SUM 4.5-5.5, DSP_PHASE 0.5); every
+    voiced/unvoiced MFCC / chroma / contrast / flatness variant in
+    both solo and asymmetry configurations; feature-removal (ea1636c
+    catastrophic 0.455). The classifier cannot extract more from the
+    current feature set — forward progress requires exposing a new
+    mechanism to GBM. `voiced_percussive_chroma_asymmetry` is cited
+    as the explicit untried fallback in 5+ consecutive reflections
+    (0cb551f/c3, 53d3ea0/c3, 67633f2/c3, 17d4aec/c3, db59c36/c3,
+    df0ceec/c2, 0c3bf76 discussion) — every reflection since ~20
+    iterations ago has queued this as the next experiment.
+
+    Mechanism targeting singing 0.345 weakest-domain plateau (3 clean
+    FPs). Percussive mask captures TOP-40% onset-dominated frames:
+    on singing these are the transient attacks that carry both drum
+    hits (flat chroma noise) AND bass/guitar attack frames (strongly
+    pitched). The chroma MEAN over percussive frames therefore
+    reflects the PITCHED ACCOMPANIMENT CHORD (drum noise averages
+    near-uniform, leaving the pitched instrument chroma visible).
+    Voiced mask captures sustained sung notes — chroma mean reflects
+    the singer's key / pitch class. Asymmetry = accompaniment_chroma
+    shift MINUS voice_chroma shift.
+
+    Three discriminating cases:
+    (i) Real same-singer cross-song splice: singer holds similar
+    pitch class across cut -> voiced_chroma_dist small (~0.08). New
+    accompaniment in different key -> percussive_chroma_dist large
+    (~0.35). Asymmetry ~+0.27 LARGE POSITIVE — chord-cycle FP cannot
+    mimic this because chord cycle moves BOTH voice and accompaniment
+    together.
+    (ii) Intra-song chord cycle (the 3 singing FPs): voice and
+    accompaniment shift TOGETHER with the chord progression so both
+    distances move in tandem -> asymmetry ~0 SMALL. Discriminator.
+    (iii) Different-singer cross-song: both shift -> both large ->
+    diff ~0. GBM falls back on voiced_mfcc /
+    voiced_unvoiced_mfcc_asymmetry which already fire on this case
+    (1eda8e3 +0.054).
+
+    Why THIS MASK × CONTENT combination. Percussive × MFCC was tried
+    solo (fd500b3 FAILED, singing regressed 0.345->0.319 because
+    unmasked percussive MFCC dominated by drum timbre noise on
+    speech) AND in asymmetry form (aa4f141 voiced_percussive_mfcc_
+    asymmetry FAILED, singing 0.320). Both failures were in CEPSTRAL
+    (timbre) axis — where percussive-mean MFCC is genuinely noisy
+    because drum timbre is phoneme-dependent on speech consonants.
+    CHROMA is physically different: drums have near-flat chroma
+    (broadband noise -> ~uniform 12-bin distribution), so percussive-
+    mean chroma filters OUT drum contribution and leaves the pitched
+    transient content (bass + guitar attacks on singing, plosive
+    noise on speech). Paired differencing against voiced_chroma then
+    gives a SPECIFIC accompaniment-vs-voice pitch-class shift
+    discriminator.
+
+    Speech self-gating via paired differencing (reproduces 1eda8e3
+    MFCC asymmetry mechanism that lifted english 0.732->0.889 and
+    korean 0.526->0.667): percussive-frame chroma on speech tracks
+    plosive bursts (phoneme-dependent, noise-like), voiced-frame
+    chroma tracks vowel-formant harmonicity (phoneme-dependent,
+    tonal). Both vary with phoneme context uncorrelated with splice
+    position, so the DIFFERENCE is zero-mean noise across training
+    pairs -> GBM assigns low per-domain SHAP on english/korean ->
+    feature functionally invisible on speech, preventing the
+    634cdd2 raw-chroma / df6fc0a unvoiced_mfcc speech-regression
+    failure mode.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (cepstral asymmetry,
+    unvoiced mask); NOT 7972a98 (spec_contrast asymmetry, unvoiced
+    mask); NOT f4148cc (chroma asymmetry but UNVOICED mask — failed,
+    singer sings new key so voiced shifts too, unvoiced-mask chroma
+    carries per-phoneme noise); NOT aa4f141 (percussive × MFCC
+    asymmetry — cepstral noise mode); NOT fd500b3 (percussive × MFCC
+    solo); NOT 32cac36 voiced_chroma solo (single-mask, no pair); NOT
+    308aa5a tonnetz; NOT 0c3bf76 flatness asymmetry. First PERCUSSIVE
+    × CHROMA content combination in any form, first percussive mask
+    against a non-cepstral content axis. Blast radius: features.py
+    only — 1 new block function + 1 FEATURE_NAMES append + 2 assert
+    bumps + 1 call in extract_features. ZERO new caches, ZERO new
+    librosa calls. Per-t cost: 4 slices + 2 mask applications + 4
+    masked means + 2 cosines on 12-dim vectors + 1 subtraction,
+    sub-ms.
+
+    IDENTICAL-COMBINED-STREAK concern (5 consecutive at 0.490700)
+    applied to hyperparam-only changes — features.py count changes
+    force retrain via US-505 sha gate (0c3bf76 featadd produced
+    distinct 0.538510, proving the path works). My 80->81 bump
+    guarantees a real retrain.
+
+(c) IF THIS FAILS. (1) combined drops modestly (0.52-0.58, singing
+    stuck 0.30-0.34) -> drum attacks dominate percussive-mean and
+    bury bass/guitar chroma signal; fallback is
+    voiced_spec_rolloff_asymmetry (spectral-rolloff shift is
+    mastering-independent brightness signature, complementary to
+    contrast/flatness already covered). (2) combined regresses
+    below 0.45 -> asymmetry introduces speech-regression noise;
+    fallback is voiced_unvoiced_spec_rolloff_asymmetry (same template
+    but rolloff content, dominated by mastering filter cutoff not
+    phoneme-level noise). (3) combined matches 0.490700 AGAIN with
+    a feature-count change -> wrapper has a deeper bug than cache
+    invalidation; escalate to operator with identical-output streak
+    as evidence.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 33+
+    iterations — I cannot verify the 3 singing FPs' actual
+    (voiced_chroma_dist, percussive_chroma_dist) distribution to
+    predict whether asymmetry fires or sits at noise floor. Every
+    feature-add hypothesis since iteration ~70 theory-calibrated on
+    physical mechanism without eval-corpus verification. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite
+    14 keeps in loop history — rollup writer broken. No per-feature
+    attribution available. (iii) 99081f5 classifier capacity ghost
+    (max_depth=4, max_leaf=16) IN-tree at HEAD per grep. 960113c
+    revert to 3/8 matched baseline EXACTLY then discarded — wrapper's
+    symmetry-semantics bug restored 4/16. Feature-add delta
+    attribution is clean but absolute comparison mixes with ghost.
+    (iv) 0.490700 streak unresolved across 5 physically different
+    changes — statistically impossible unless wrapper cache-
+    invalidation / retrain-skip bug. Cannot diagnose from inside
+    claude subprocess.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent blocker across 33+ iterations, cited
+    in every recent reflection. Per-FP: (domain, file, t_sec,
+    label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    voiced_chroma_cosine_dist, voiced_mfcc_cosine_dist,
+    voiced_unvoiced_mfcc_asymmetry, top-5 |SHAP|). Implementation:
+    after eval completes, for each clean_fp run extract_features +
+    predict_proba + SHAP, write `.omc/clean_fp_positions.json`,
+    wrapper injects into prompt. (2) IDENTICAL-COMBINED-STREAK
+    DIAGNOSTIC — emit `wrapper.suspicious.identical_output_streak`
+    when N >= 3 consecutive iterations produce IDENTICAL combined
+    ± 1e-5 AND IDENTICAL per-domain AND non-identical source diffs.
+    Include sha256 of committed joblib / features.py / detector.py /
+    train_classifier.py across the streak — if all byte-identical
+    across physically distinct commits, retrain-skip is confirmed.
+    ~30 lines in post-eval hook. (3) DISCARD-REVERT SYMMETRY
+    SEMANTICS bug fix — wrapper treats "combined matches baseline
+    exactly" as no-improvement and reverts, which RESTORED the
+    99081f5 capacity ghost via 960113c. Fix: if discarded commit
+    subject starts "REVERT" and references a prior-discarded SHA,
+    treat exact-match as KEEP not DISCARD. ~15 lines of
+    git-commit-message parsing.
+
