@@ -5393,3 +5393,137 @@ per-domain: combined_english=0.888889 combined_korean=0.547826 combined_singing=
     making all margin-based filters meaningless. d4d35b1's
     catastrophic outcome amplifies this need.
 
+## 2026-04-21T00:45:02+09:00 — 2557d2a (discard, combined=0.512135)
+subject: add mfcc_variance_ratio_statistic (FEATURE_NAMES 80->81) -- F-statistic variance-reduction ratio on MFCC frames in +-4s window. (RSS_global - RSS_split)/(RSS_split+eps) normalizes the squared pre/post mean-shift by per-frame scatter around each side's local mean. Every prior 2nd-order feature (9064eec/26a3687/c5040d7/8170784/3bcec76) used cos_dist between sub-window MEAN VECTORS and collapsed on chord-cycle FPs because within-song MFCC drift fills intra sub-windows with the same type of mean shift as the cross boundary -- intra and cross co-vary, subtraction zeros on the FPs that need discrimination. FIRST variance-based 2nd-order feature: chord cycle GENERATES per-frame scatter that cross-song splice does NOT so the F-statistic normalization flips the sign of the mimicry. Speech self-gating: phoneme transitions inflate RSS_split -> ratio ~0 on english/korean via frame-level variance rather than mean cancellation. Reuses cached feat_mfcc, ZERO new librosa calls, ZERO new caches. Edge guard full +-4s span required. Smoke-verified len=81 last-name correct, end-to-end 81 finite features on real singing train audio at 0.50ms/call idempotent, synthetic A/B splice t=10 yields 24.23 vs within-A t=5 yields 0.003 (~8500x) vs smooth-drift chord-cycle sim yields 0.99 (~24x).
+per-domain: combined_english=0.850000 combined_korean=0.557746 combined_singing=0.283333
+
+# 2026-04-21 — hypothesis: add mfcc_variance_ratio_statistic (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot to
+    F-statistic-style VARIANCE-REDUCTION RATIO on MFCC frames. For
+    ±4s span clipped to [t-4, t+4], treat the MFCC frame sequence as
+    one pooled model vs two split models (pre + post):
+        μ_pre   = mean(mfcc_frames in [t-4, t])
+        μ_post  = mean(mfcc_frames in [t, t+4])
+        μ_all   = mean(mfcc_frames in [t-4, t+4])
+        RSS_split  = Σ ||x_i - μ_pre||² + Σ ||x_i - μ_post||²
+        RSS_global = Σ ||x_i - μ_all||²
+        feature    = (RSS_global - RSS_split) / (RSS_split + 1e-6)
+    Reuses cached feat_mfcc — ZERO new librosa calls, ZERO new caches.
+    Edge guard t-4<0 OR t+4>duration OR <8 frames per side → sentinel
+    0.0. FEATURE_NAMES 80→81 forces retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Five consecutive 2nd-order variants
+    failed: 9064eec all-frame MFCC cross-intra (0.544, broad regression),
+    26a3687 all-frame spec_contrast (0.493), c5040d7 voiced MFCC (0.513),
+    8170784 voiced chroma (0.494), 3bcec76 unvoiced spec_contrast (0.496).
+    Every variant uses cos_dist between sub-window MEAN VECTORS (4 sub-
+    windows combined into cross - 0.5*(intra_pre+intra_post)). They all
+    collapsed on chord-cycle FPs because WITHIN-SONG MFCC DRIFT fills the
+    intra sub-windows with the SAME TYPE OF MEAN SHIFT as the cross
+    boundary — intra and cross co-vary, subtraction zeros on the FPs I
+    need to discriminate. CLAUDE.md mandates structural change after 5+
+    same-axis failures.
+
+    The genuinely untried structural dimension is VARIANCE-BASED (per-
+    frame SCATTER around local mean), not cosine distance between means.
+    Every prior 2nd-order feature ignores within-window variance; F-
+    statistic normalizes by exactly that. Mathematically:
+        RSS_global - RSS_split
+            = n_pre * ||μ_pre - μ_all||² + n_post * ||μ_post - μ_all||²
+            ≈ (n/2) * ||μ_pre - μ_post||²    (balanced windows)
+    So the NUMERATOR is the squared mean-shift (same signal as prior
+    cosine-dist). The DENOMINATOR (RSS_split) is the sum of per-frame
+    scatter around each side's local mean — the frame-level variance that
+    chord cycle GENERATES but cross-song splice DOES NOT.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song,
+    chord transitions continuously drift MFCC across each 4s half-window.
+    Per-frame residuals around μ_pre are large (chord-cycle variance);
+    same for post. RSS_split LARGE. Mean-shift ||μ_pre - μ_post||
+    moderate (chord shift). RATIO small → feature silent → FP NOT
+    boosted. This is exactly where cosine-dist 2nd-order collapsed;
+    variance normalization catches it.
+
+    Real cross-song splice (the target TPs). Pre-side 4s is song A self-
+    consistent (low per-frame scatter around μ_pre, RSS_pre small).
+    Post-side 4s is song B self-consistent (RSS_post small). RSS_split
+    SMALL. Mean-shift ||μ_pre - μ_post|| large (different mastering +
+    instrument + possibly different singer). RATIO LARGE → feature fires
+    strongly.
+
+    Speech self-gating. Unvoiced frames (consonants /s,f,p,t/ + silence)
+    and voiced frames (vowels) both produce high per-frame MFCC scatter
+    within any 4s window because phoneme transitions shift cepstral
+    envelope 3-5 times per second. RSS_split LARGE on speech. Mean-shift
+    across speech sentences moderate. RATIO small → feature ≈ 0 across
+    non-splice positions on english/korean → GBM low per-domain SHAP.
+    This is the FIRST 2nd-order feature whose speech self-gating comes
+    from frame-level variance rather than from phoneme-averaged mean
+    cancellation, which is why it avoids the c5040d7 / 9064eec speech
+    regressions.
+
+    Why MFCC axis (not spec_contrast/chroma). 9064eec proved MFCC is the
+    most productive 2nd-order content axis (0.544 closest to baseline
+    among recent failures). The failure mode was mean-based; the axis is
+    correct. Reusing MFCC lets the F-statistic surface the signal 9064eec
+    almost captured, through a genuinely different statistical lens.
+
+    Orthogonal. NOT 9064eec (cos_dist on means, all-frame); NOT 26a3687
+    (cos_dist on means, spec_contrast); NOT c5040d7 (cos_dist on means,
+    voiced MFCC); NOT 8170784 (cos_dist on means, voiced chroma); NOT
+    3bcec76 (cos_dist on means, unvoiced spec_contrast); NOT 1eda8e3 /
+    7972a98 / any voiced_unvoiced asymmetry (1st-order single-boundary
+    paired-diff, no variance); NOT block-2 mfcc_delta (1st-order mean-
+    based); NOT 49bd0b1 voiced_mfcc (1st-order no variance); NOT F0 IQR
+    log-ratio (1D distributional shape on F0, not multivariate MFCC
+    scatter); NOT d4d35b1 detector margin (detector-side). FIRST
+    variance-reduction-ratio (F-statistic) feature in the feature set;
+    FIRST feature using within-window per-frame scatter as a normalizer.
+
+    Blast radius. Pure features.py change — 1 new block (~40 lines using
+    existing _slice_frames machinery on feat_mfcc) + 1 FEATURE_NAMES
+    append + 2 assert bumps (80→81) + 1 call in extract_features. ZERO
+    new caches, ZERO new librosa calls. Per-t cost: 2 slices of ~256
+    frames × 13-dim + 3 means + 3 scatter sums, ~10k ops, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (RSS_split on chord-cycle FP is
+    actually LOW — within-chord drift is smooth and MFCC tracks it
+    tightly so scatter around μ_pre stays small; hypothesis wrong) →
+    fallback to the RATIO on voiced-masked MFCC only (sustained vowels
+    have lowest within-song scatter so the F-statistic discriminates
+    cleaner). (2) Speech regresses (sentence transitions produce
+    correlated per-frame scatter AND mean shift simultaneously, so the
+    normalization doesn't save it) → narrow window to ±3s / shrink eps
+    denominator floor. (3) combined matches 0.589282 exactly → GBM
+    ignores variance-based features (stale train data); pivot to raw
+    RSS_split itself as a within-window homogeneity feature (lower = more
+    homogeneous = more splice-like on the splice side but normal within-
+    song).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 57+
+    iterations — cannot verify whether the 3 singing FPs actually sit
+    in high-scatter chord-cycle regions (my central assumption) or in
+    quiet sustained-vocal sections where scatter is low on both sides
+    and the F-statistic might fire spuriously. (ii) SHAP rollup STILL
+    empty for 14 keeps — cannot verify whether the 9064eec 2nd-order
+    signal was actually in the top GBM features vs spuriously assigned.
+    (iii) d4d35b1's 0.287 catastrophe was diagnosed only via per-domain
+    combined — dense p_splice histograms would tell us if the detector
+    margin truly flatlined or specifically killed TPs. (iv) 99081f5 4/16
+    capacity ghost still at HEAD per prior reflections.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 57+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry, voiced_unvoiced_
+    spec_contrast_asymmetry, mfcc_per_frame_scatter_pm4s,
+    voiced_fraction_pm4s, top-5 |SHAP|). Per-FP frame-scatter would
+    convert every variance-based hypothesis into a data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without per-
+    feature attribution axis-choice is theory-only.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision with joblib-mtime sanity check would isolate the 0.4907
+    identical-streak root cause.
+
