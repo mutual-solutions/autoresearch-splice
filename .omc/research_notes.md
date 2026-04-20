@@ -3115,3 +3115,123 @@ per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=
     dsp_cpe_z, voiced_mfcc_dist, voiced_unvoiced_mfcc_asymmetry,
     top-5 |SHAP|).
 
+## 2026-04-20T15:21:21+09:00 — b120d38 (discard, combined=0.530924)
+subject: widen ANALYSIS_STRIDE_S 0.12 -> 0.15 (untried sparser direction) — FIRST sparser-stride experiment in loop history. Pure detector.py one-line constant edit plus 4-line comment refresh, stacked on existing GBM_THRESHOLD=0.982 + GBM_MIN_SEP_S=3.5 + DSP_CONFIRMATION_MIN=2.0 + DSP_SUM_MIN=5.0. No retrain, no feature change, features.py sha stable so classifier byte-identical. Reduces candidate positions per 30s chunk ~250 -> ~200 (-20%%). Still ~23 candidates per 3.5s dedupe window. Per-tunable frontier: only 0.11 tried (failed, denser than current 0.12); 0.12 is codebase default never formally varied upward; sparser direction genuinely virgin. Every other primary-tunable axis saturated in both directions: GBM_THRESHOLD (0.980-0.983 all tested), GBM_MIN_SEP_S (3.75/3.6 failed sparser, below 3.0 adds FPs), DSP_CONFIRMATION_MIN (2.2 failed tighter), DSP_SUM_MIN (5.5 failed tighter). Feature-add axis saturated (10+ recent failures), feature removal catastrophic (ea1636c 0.455), classifier capacity revert matched baseline exactly (960113c 0.589282) confirming plateau is structural on classifier side. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau with clean_fp=3. Asymmetric-peak mechanism: TP vs FP p_splice peaks differ in time width. Real cross-source splices produce sustained spectral discontinuity (voice/accompaniment/mastering/mic-room shift persists ~0.3-0.5s past cut) so p_splice stays high across 3-5 consecutive grid points at 0.12 stride. At 0.15 stride same 0.3-0.5s TP plateau still hits 2-3 grid points -> dedupe picks maximum -> TP preserved. Chord-transition FPs driven by sharp spec_centroid_delta/spec_rolloff_delta/mfcc_delta peaks (~0.05-0.15s wide, 1-3 STFT frames). At 0.12 stride FP peak hits 1-2 grid points crossing threshold. At 0.15 stride narrowest FP peaks (0.05-0.10s wide) fall BETWEEN grid points (0.075s half-stride exceeds 0.05s peak half-width) -> no grid point samples resonance center -> adjacent-grid p_splice below threshold -> FP dropped. Asymmetry is structural: TP peaks broader because cross-source physics persists; FP peaks sharper because chord-transition spectral events are transient. Orthogonal to every recent axis: NOT a feature add (features.py sha stable, no retrain); NOT a classifier hyperparam (99081f5 ghost in-tree unchanged — orthogonal to my delta); NOT DSP_SUM_MIN/DSP_CONFIRMATION_MIN/DSP_PHASE_MIN (all stacked-DSP tightenings failed); NOT GBM_THRESHOLD; NOT GBM_MIN_SEP_S; NOT feature removal (ea1636c catastrophic); NOT class-routed/HPR-routed DSP. First sparser-stride experiment. Blast radius: 1-line constant + 4-line comment. Zero new code paths. Per-emit cost unchanged. Risk-bounded: stride can only MISS narrow-peak candidates predominantly FPs by physical prior; can't create new FPs; eval ~20%% FASTER (more headroom within 243/300s). Smoke-verified: ANALYSIS_STRIDE_S=0.15 loads, all other tunables unchanged (GBM_THRESHOLD=0.982, GBM_MIN_SEP_S=3.5, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0).
+per-domain: combined_english=0.804878 combined_korean=0.656250 combined_singing=0.283333
+
+# 2026-04-20 — hypothesis: ANALYSIS_STRIDE_S 0.12 → 0.15 (untried sparser direction)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` primary tunable — widen the dense
+    scan stride from 0.12 → 0.15. One-line constant edit at line 41,
+    stacked on existing GBM_THRESHOLD=0.982 + GBM_MIN_SEP_S=3.5 +
+    DSP_CONFIRMATION_MIN=2.0 + DSP_SUM_MIN=5.0. No retrain, no feature
+    change, features.py sha stable so classifier byte-identical. Reduces
+    candidate positions per 30s chunk ~250 → ~200 (−20%). Still ~23
+    candidates per 3.5s dedupe window, well above 1 needed to catch any
+    real-splice plateau.
+
+(b) WHY this over recent failures. ANALYSIS_STRIDE_S is genuinely the
+    ONLY primary tunable where the SPARSER direction is untried.
+    Per-tunable frontier: only 0.11 tried (failed, denser than current
+    0.12), and 0.12 is the codebase default never formally varied
+    upward. Every other primary-tunable axis is saturated in both
+    directions: GBM_THRESHOLD (0.980-0.983 all tested, 0.982 kept),
+    GBM_MIN_SEP_S (2.5 below-tried would only ADD dedupe FPs, 3.75/3.6
+    failed sparser), DSP_CONFIRMATION_MIN (2.2 failed tighter, looser
+    adds FPs), DSP_SUM_MIN (5.5 failed tighter, 4.5 prior-kept value).
+    Feature-add axis saturated (10+ recent failures across mask/rhythm
+    variants), feature removal catastrophic (ea1636c 0.455), classifier
+    capacity ghost (99081f5) revert matched baseline exactly (960113c
+    0.589282) confirming plateau is structural on the CLASSIFIER side.
+    Stride is the one axis with clear untested ground.
+
+    Asymmetric-peak mechanism: TP vs FP p_splice peaks have different
+    TIME WIDTHS. Real cross-source splices produce sustained spectral
+    discontinuity — voice / accompaniment / mastering / mic-room shift
+    persists ~0.3-0.5s past the cut, so p_splice stays high across
+    3-5 consecutive grid points at 0.12 stride (0.36-0.60s span). At
+    0.15 stride, the same 0.3-0.5s TP plateau still hits 2-3 grid
+    points (0.30-0.45s coverage) → dedupe picks the maximum, TP
+    preserved. In contrast, chord-transition FPs are driven by sharp
+    spec_centroid_delta / spec_rolloff_delta / mfcc_delta peaks at
+    the transition frame (~0.05-0.15s wide, 1-3 STFT frames). At
+    0.12 stride the FP peak hits 1-2 grid points (p_splice likely
+    crosses threshold at least once). At 0.15 stride the FP peak
+    may fall BETWEEN grid points (0.075s half-stride > 0.05s peak
+    half-width at the narrowest FPs) → no grid point samples the
+    resonance center → peak p_splice at adjacent grid points is
+    below threshold → FP dropped. The asymmetry is structural: TP
+    peaks are broader because cross-source physics persists; FP
+    peaks are sharper because chord-transition spectral events are
+    transient.
+
+    Risk-bounded: 0.15 is still dense enough (every 0.15s) that
+    real splice plateaus of ≥0.3s duration hit ≥2 grid points.
+    Eval budget unchanged (actually FASTER by ~20% — more headroom
+    within 243/300s). Per-emit cost unchanged. Can only miss
+    narrow-peak candidates which should be predominantly FPs.
+    Secondary: 0.15 is outside the [0.11, 0.12] tested range, so
+    extrapolation risk exists — if the classifier's p_splice peaks
+    on real TPs happen to be as narrow as FP peaks on this eval set
+    (counter to physical prior), recall drops.
+
+    Orthogonal to every recent axis: NOT a feature add (features.py
+    sha stable, no retrain); NOT a classifier hyperparam (99081f5
+    ghost unchanged — orthogonal to my delta); NOT DSP_SUM_MIN /
+    DSP_CONFIRMATION_MIN / DSP_PHASE_MIN (all stacked-DSP failed);
+    NOT GBM_THRESHOLD; NOT GBM_MIN_SEP_S; NOT feature removal
+    (ea1636c catastrophic); NOT class-routed / HPR-routed DSP.
+    FIRST sparser-stride experiment in loop history. Blast radius:
+    1-line constant edit + comment refresh. Zero new code paths.
+
+(c) IF THIS FAILS. (1) If singing TPs drop (real singing crossfade
+    TPs have narrower plateaus than the physical prior suggests
+    — maybe because tier1 hard cuts also produce sharp peaks),
+    step DOWN to 0.10 (between failed 0.11 and current 0.12 —
+    narrowly-untested, slightly denser than current, might catch
+    sub-resolution boundary alignments without 0.11's specific
+    failure mode). (2) If clean_fp unchanged (stride doesn't bite
+    singing chord-transition FPs because their peaks are broad
+    enough to hit 0.15 grid alignment), pivot to CLASSIFIER
+    hyperparam: learning_rate 0.07 → 0.05 (cited fallback in
+    960113c(c)(1); smoother fit tightens p_splice tail calibration
+    at 0.98-0.99 where FPs sit). (3) Final escalation: GBM_MIN_SEP_S
+    = 4.0 (looser dedupe, untried above 3.75 failed — marginal but
+    unexplored), stacked with 0.15 stride.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 28+
+    iterations — I cannot verify the peak-width assumption: are the
+    3 surviving singing FPs narrow-peak (stride bites) or broad-peak
+    (stride misses)? Every stride / threshold / DSP-gate hypothesis
+    remains theory-calibrated. (ii) SHAP rollup STILL empty for
+    7972a98 — cannot correlate which features drive singing FP
+    p_splice to predict peak width. (iii) 99081f5 classifier-capacity
+    ghost remains in-tree at HEAD (max_depth=4, max_leaf_nodes=16) —
+    960113c revert discarded as "no improvement" because 0.589282
+    matched baseline exactly, so the discard reversal RESTORED the
+    ghost code, but the on-disk joblib may still be 960113c's 3/8
+    manual-retrain artifact (wrapper auto-retrain fires on features.py
+    sha drift only, NOT train_classifier.py). Current eval runs
+    against whatever joblib is on disk. (iv) No per-domain stride
+    sensitivity data; 0.15 applied uniformly across domains.
+
+(e) Wrapper enhancements. (1) **DISCARD-REVERT SYMMETRY SEMANTICS**
+    — the discard path treats "combined matches baseline exactly"
+    as no-improvement and reverts the change. When the change was
+    a REVERT of a ghost commit (e.g., 960113c reverting 99081f5),
+    this RESTORES the ghost instead of keeping the cleaner state.
+    Proposed: if the discarded commit's title starts with "REVERT"
+    and its body references a previously-discarded SHA, keep the
+    revert; otherwise discard as normal. ~15 lines of git-commit-
+    message parsing in the discard path. (2) CLEAN_FP_POSITIONS
+    JSON block in CURRENT STATE — persistent blocker for 28+
+    iterations; per-FP (domain, file, t_sec, label_id, p_splice,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_max, dsp_sum, peak_width_s,
+    top-5 |SHAP|). peak_width_s (FWHM of p_splice trace around emit)
+    would directly test the stride-peak-width hypothesis. (3)
+    `scripts/primary_tunable_sweep.py --tunable ANALYSIS_STRIDE_S
+    --values 0.08,0.10,0.12,0.15,0.20` — loads current classifier,
+    runs detect on a cached 3-file eval subset per value, reports
+    per-value combined delta. Turns "is this stride worth a full
+    243s eval" into a 30-second sweep across 5 values.
+
