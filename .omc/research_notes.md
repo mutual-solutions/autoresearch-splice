@@ -4065,3 +4065,73 @@ per-domain: combined_english=0.835443 combined_korean=0.542857 combined_singing=
     case. Three unchanged highest-priority requests across 46+
     iterations.
 
+## 2026-04-20T21:37:47+09:00 — 60196aa (discard, combined=0.490700)
+subject: add peak-width neighbor-support gate (NEIGHBOR_SUPPORT_FRACTION=0.95) to detector.py -- STRUCTURAL pivot from feature-add exhaustion to per-emit peak-width filter on p_splice. After GBM hit_mask + DSP confirmation, require at least one adjacent grid point (t +- ANALYSIS_STRIDE_S) p_splice >= GBM_THRESHOLD * 0.95 (0.9329 floor). Enforces min peak width ~2 grid points ~0.24s at stride 0.12. Targets 7972a98 baseline (combined=0.589282) singing 0.345 3-FP chord-cycle plateau. Last 15+ iterations exhausted voiced/unvoiced paired-diff template across MFCC/spec_contrast/chroma/spec_flatness/RMS dB content axes and F0 distribution shape/location (IQR log-ratio, median cents). CLAUDE.md mandates structural change after 5+ same-axis failures. PRIMARY-tunable axis (no retrain). Mechanism: real cross-source splice produces sustained spectral discontinuity 0.3-0.5s past boundary as bus-comp/limiter attacks adapt -- p_splice stays above threshold for 3-5 consecutive grid points. Chord-cycle/phoneme-burst FPs produce narrow peaks 0.05-0.15s wide 1-2 STFT frames because chord onsets are instantaneous spectral events. Peak-width filter drops narrow FPs while preserving wide TPs. Explicit cited fallback from 1d1144d(c)(3) pure detector-level post-filter. Orthogonal to every prior DSP tweak (DSP_SUM_MIN/MAX/PHASE_MIN gated MAGNITUDE, this gates WIDTH) and stride-widening (053c0b5 0.15 uniform affected all positions; per-emit neighbor-support keeps dense scan). FIRST PEAK-WIDTH filter in detector history. Pure detector.py change -- 1 constant + 1 boolean check in hit_mask loop + 1 diag kv. Per-emit cost 2 array lookups + 2 comparisons sub-us. No retrain, no feature-set change, features.py sha stable, classifier byte-identical. Smoke-verified: NEIGHBOR_SUPPORT_FRACTION=0.95 loads, neighbor_floor=0.9329, AST parse OK 914 lines, all other tunables unchanged (GBM_THRESHOLD=0.982, MIN_SEP=3.5, STRIDE=0.12, DSP_SUM=5.0, DSP_MAX=2.0).
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: peak-width neighbor-support gate (detector.py)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` add — STRUCTURAL pivot from
+    feature-add to per-emit peak-width filter. After GBM hit_mask + DSP
+    confirmation, require at least one adjacent grid point (t ± stride)
+    to also exceed GBM_THRESHOLD * NEIGHBOR_SUPPORT_FRACTION (0.95 →
+    0.933). Drops narrow-peak emits (<0.24s wide at stride 0.12) as
+    chord-cycle artifacts; preserves sustained real-splice transients
+    (0.3-0.5s wide). No retrain. Zero new code paths in the hot loop
+    — one boolean check per hit_mask survivor.
+
+(b) WHY this over recent failures. Last 15+ iterations exhausted the
+    voiced/unvoiced paired-difference template across MFCC / spec_contrast
+    / chroma / spec_flatness / RMS dB / F0 distribution shape / F0
+    location — every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span)
+    discarded. F0 axis pivot also failed (27ddbf7 IQR 0.524, 1d1144d
+    median-cents 0.508, c006d52 RMS-dB 0.491). CLAUDE.md mandates
+    structural change after 5+ same-axis failures. The untried axis is
+    the p_splice PEAK SHAPE itself on the time grid — existing post-
+    filters tighten DSP magnitudes (SUM/MAX) or widen the stride globally
+    (053c0b5 0.15 failed because uniform widening loses TP grid hits),
+    but NOTHING has examined per-emit TEMPORAL WIDTH of the p_splice
+    peak. Mechanism: real cross-source splice produces sustained
+    spectral discontinuity (voice + accompaniment + mastering shift
+    persists ~0.3-0.5s past the boundary as bus-comp / limiter attacks
+    adapt) so p_splice stays above threshold for 3-5 consecutive grid
+    points (at 0.12 stride). Chord-cycle / phoneme-burst FPs produce
+    narrow peaks (0.05-0.15s wide, 1-2 STFT frames) because chord
+    transitions are INSTANTANEOUS spectral events (chord onset → new
+    note → done). Requiring at least one neighbor ≥ 0.95*threshold
+    enforces peak width ≥ 2 grid points ≈ 0.24s, cleanly separating
+    the distributions. Explicit cited fallback from 1d1144d(c)(3)
+    "pivot to pure detector-level post-filter". Orthogonal to every
+    prior DSP tweak (DSP_SUM_MIN/MAX/PHASE_MIN all gated MAGNITUDE,
+    this gates WIDTH) and every stride-widening experiment (053c0b5
+    uniform stride 0.15 affected ALL grid positions; this filters
+    per-emit). FIRST PEAK-WIDTH filter in detector history. Blast
+    radius: 1 constant + 1 boolean check in the hit_mask loop. Per-emit
+    cost: 2 array lookups + 2 comparisons, sub-µs.
+
+(c) IF THIS FAILS. (1) Speech regresses (narrow legit hard-cut TPs
+    produce 1-grid-point peaks) → loosen NEIGHBOR_SUPPORT_FRACTION
+    0.95 → 0.85 so only extremely narrow peaks drop. (2) Singing
+    unchanged (3 chord-cycle FPs happen to produce wide peaks too —
+    chord sustains across transition) → tighten to REQUIRE both
+    neighbors ≥ 0.95*threshold (wider peak requirement, 0.48s minimum
+    width). (3) combined matches 0.589282 exactly → threshold
+    fraction set too loose and no peaks were actually dropped;
+    fallback is fraction=1.0 (strict consecutive threshold crossing).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 46+
+    iterations — cannot measure the actual peak-width distribution
+    of the 3 surviving singing FPs vs real TPs, so width threshold
+    (0.95 fraction) is theory-calibrated. (ii) SHAP rollup STILL
+    empty for 7972a98 despite 14 keeps — rollup writer broken.
+    (iii) 99081f5 4/16 capacity ghost status unclear at HEAD after
+    960113c "REVERT" that wrapper may have discarded.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE with PEAK-WIDTH fields — per-FP (domain, file,
+    t_sec, p_splice_at_t, p_splice_at_t_minus_stride,
+    p_splice_at_t_plus_stride, chunk_duration_s, top-5 |SHAP|) so
+    peak-width hypotheses become data-driven. (2) SHAP ROLLUP
+    REPAIR — 14 keeps, 0 rollup entries. (3) US-505b VERIFICATION
+    TRACE — confirm hyperparam retrains fire post-920dcdb.
+
