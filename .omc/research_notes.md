@@ -3319,3 +3319,117 @@ per-domain: combined_english=0.814815 combined_korean=0.555385 combined_singing=
     N. Would directly confirm/deny the "voiced_mfcc suppresses
     same-singer singing TPs" hypothesis driving THIS iteration.
 
+## 2026-04-20T09:52:06+09:00 — 1eda8e3 (keep, combined=0.586244)
+subject: add voiced_unvoiced_mfcc_asymmetry feature (FEATURE_NAMES 78->79) — signed asymmetry unvoiced_mfcc_cosine_dist minus voiced_mfcc_cosine_dist on ±2s pre/post window. Positive = accompaniment changed more than voice (same-singer cross-song splice signature); ~0 on intra-song chord cycle (both low) and different-singer cross-song (both high, cancel). Reuses cached feat_mfcc + feat_vp — ZERO new librosa calls, ZERO new caches. Per-t cost is 4 slices + 4 masked means + 2 cosines on 13-dim vectors, sub-ms. Sentinel 0.0 when either mask is empty or either sub-norm underflows, matching 49bd0b1/32cac36 safety pattern. Targets 32cac36 current-keep (0.532261) singing 0.341 weakest-domain plateau where five consecutive voiced-mask single-mask variants have failed: ff65865 voiced_chroma_far (english 0.840->0.684), 308aa5a voiced_tonnetz (stuck 0.522), df6fc0a unvoiced_mfcc (singing REGRESSED 0.341->0.316), e7ca9eb voiced_spec_contrast (singing REGRESSED 0.341->0.316). Common failure mode: single-mask distance features with signal too noisy on at least one domain and GBM globally mis-weights via tree splits. The df6fc0a unvoiced_mfcc fail is directly instructive — unvoiced MFCC carries the accompaniment-change signal on singing (drums/bass/mastering dominate unvoiced gaps + sibilants) BUT its INDEPENDENT value varies wildly on speech consonants [s,p,t,k,silence], so GBM over-weighted it globally and singing tanked. The fix is NOT to reintroduce unvoiced_mfcc as an independent feature. It is to add the DIFFERENCE against voiced_mfcc as a SINGLE feature — PAIRED DIFFERENCING cancels phoneme-correlated noise on speech (both voiced and unvoiced speech MFCC vary together with phoneme context / speaker identity / recording conditions so their difference is ~zero-mean noise), while preserving singing's same-singer-cross-song signature (voiced~0.05 unvoiced~0.30 asymmetry~+0.25). Intra-song chord cycle: voiced~0.05 unvoiced~0.10 asymmetry~+0.05 SMALL. Explicit escalation from df6fc0a(c)(3): "combine voiced AND unvoiced into a single accompaniment_mfcc_asymmetry feature = unvoiced_mfcc_cosine_dist - voiced_mfcc_cosine_dist". GBM max_depth=3 CANNOT synthesize this interaction from voiced_mfcc alone post-df6fc0a revert (unvoiced_mfcc isn't in feature set); providing the subtraction surfaces the pattern directly. Orthogonal to every prior axis: NOT 49bd0b1 voiced_mfcc (single-mask no differential); NOT df6fc0a unvoiced_mfcc (single-mask, tanked singing via GBM global over-weighting); NOT 32cac36 voiced_chroma (pitch-class not cepstral); NOT 308aa5a tonnetz; NOT ff65865 far-window; NOT e7ca9eb voiced_spec_contrast (spectral-contrast not cepstral AND not asymmetric). First ASYMMETRIC/DIFFERENTIAL feature in the voiced-mask axis. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==79, last name 'voiced_unvoiced_mfcc_asymmetry', synthetic unvoiced-shifted yields +0.39 positive, voiced-shifted yields -0.13 negative, empty-mask yields sentinel 0.0, end-to-end extract_features returns 79 finite features on synthetic audio.
+per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=0.340000
+
+# 2026-04-20 — hypothesis: voiced_unvoiced_mfcc_asymmetry feature (FEATURE_NAMES 78→79)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `voiced_unvoiced_mfcc_asymmetry`. Per position t_sec compute in a single
+    block: (1) voiced_mfcc_dist = cosine distance between VOICED-mean 13-dim
+    MFCC on pre=[t−2, t] vs post=[t, t+2]; (2) unvoiced_mfcc_dist = same on
+    UNVOICED frames (vp==0.0); (3) return `unvoiced_mfcc_dist −
+    voiced_mfcc_dist` (SIGNED asymmetry; positive = accompaniment changed
+    more than voice). Reuses feat_mfcc + feat_vp (ZERO new librosa calls,
+    ZERO new caches). Sentinel 0.0 when either mask is empty or either
+    sub-norm underflows, matching 49bd0b1 / 32cac36 safety pattern.
+    FEATURE_NAMES 78→79 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Five consecutive voiced-mask variants on
+    cached features have failed since 32cac36 kept voiced_chroma: ff65865
+    voiced_chroma_far (english 0.840→0.684), 308aa5a voiced_tonnetz (stuck
+    0.522), df6fc0a unvoiced_mfcc (singing REGRESSED 0.341→0.316), e7ca9eb
+    voiced_spec_contrast (singing 0.341→0.316 REGRESSED again). Common
+    failure mode: SINGLE-MASK distance features where the signal is noisy
+    on at least one domain and GBM globally mis-weights it via tree splits.
+    The df6fc0a unvoiced_mfcc fail is directly instructive: unvoiced MFCC
+    carries the exact accompaniment-change signal I want on singing
+    (drums/bass/mastering live in unvoiced gaps and sibilants) BUT its
+    INDEPENDENT value varies wildly on speech consonants [s, p, t, k,
+    silence], so GBM over-weighted it globally and singing tanked.  The
+    fix is NOT to reintroduce unvoiced_mfcc as an independent feature. It
+    is to add the DIFFERENCE against voiced_mfcc as a SINGLE feature.
+    PAIRED DIFFERENCING cancels most phoneme-correlated noise on speech —
+    both voiced and unvoiced speech MFCC vary TOGETHER with phoneme
+    context / speaker identity / recording conditions, so their difference
+    is ~zero-mean noise. On singing the same-singer-cross-song pattern
+    STAYS: voice timbre same (voiced_mfcc ~0.05) BUT accompaniment shifts
+    (unvoiced_mfcc ~0.30), so asymmetry ~+0.25 LARGE POSITIVE; chord
+    cycle-back intra-song: voiced ~0.05, unvoiced ~0.10, asymmetry ~+0.05
+    SMALL. Explicit cited escalation from df6fc0a(c)(3): "combine voiced
+    AND unvoiced into a single accompaniment_mfcc_asymmetry feature =
+    unvoiced_mfcc_cosine_dist − voiced_mfcc_cosine_dist, encoding
+    'accompaniment changed more than voice' (positive = same-singer-
+    different-song splice; negative = intra-song phoneme variation)."
+    GBM max_depth=3 CANNOT synthesize this interaction from voiced_mfcc
+    alone (the tree would need to split on unvoiced_mfcc which isn't in
+    the post-df6fc0a feature set) — providing the subtraction surfaces
+    the pattern directly. Orthogonal to every prior axis: NOT 49bd0b1
+    voiced_mfcc (single-mask, no differential); NOT df6fc0a unvoiced_mfcc
+    (single-mask, tanked singing via GBM global over-weighting); NOT
+    32cac36 voiced_chroma (pitch-class not cepstral); NOT 308aa5a tonnetz;
+    NOT ff65865 far-window; NOT e7ca9eb voiced_spec_contrast (spectral
+    contrast not cepstral AND not asymmetric). First ASYMMETRIC /
+    DIFFERENTIAL feature in the voiced-mask axis — genuinely new mechanism.
+    Blast radius: features.py only — 1 block + 1 FEATURE_NAMES append +
+    assert bump. Per-t cost: 4 slices + 4 masked means + 2 cosines on
+    13-dim vectors, sub-ms. Zero new caches. Risk-bounded: both
+    sub-distances have proven sentinel-0.0 safety; the subtraction
+    retains 0.0 under any sentinel; paired differencing is inherently
+    self-cancelling on domains where both masks carry similar
+    phoneme-correlated noise.
+
+(c) IF THIS FAILS. (1) If GBM still assigns high SHAP on english/korean
+    (paired differencing doesn't fully cancel because the voiced and
+    unvoiced frame subsets hit DIFFERENT 40-ms frames so phoneme noise
+    doesn't perfectly co-vary), CLIP to nonnegative:
+    `max(0, unvoiced_dist − voiced_dist)` — accompaniment-change-only,
+    zero on speech where the sign of the diff is random-noise. (2) If
+    singing TPs still regress (real DIFFERENT-singer cross-song splices
+    have voiced≈0.3 and unvoiced≈0.3 → asymmetry ≈ 0 so the feature
+    goes silent there too, while voiced_mfcc alone would have fired),
+    replace with a RATIO: `unvoiced_dist / max(voiced_dist, 0.05)` —
+    the ratio stays >1 even when both distances are large, as long as
+    unvoiced shifts more. (3) Final escalation: add a second feature
+    `voiced_unvoiced_chroma_asymmetry` (same mechanism on the chroma
+    axis) so GBM sees the accompaniment-vs-voice asymmetry
+    simultaneously in cepstral and pitch-class space — redundant enough
+    to bite through either feature's per-domain noise.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS still absent after 17+
+    iterations — I cannot verify whether 32cac36's 2 surviving singing
+    FPs have BOTH voiced and unvoiced frames in ±2s windows. Continuous
+    sung phrases may have zero unvoiced frames so the asymmetry
+    collapses to sentinel 0.0 on those FPs and the feature is a no-op
+    for exactly the singing population I'm targeting. (ii) SHAP rollup
+    still "no keeps yet — rollup empty" — the theoretical claim
+    "unvoiced_mfcc tanked singing via GBM global over-weighting" is
+    unverifiable against the actual SHAP distribution on df6fc0a. (iii)
+    The in-tree features.py has 78 features (voiced_spec_contrast from
+    e7ca9eb kept in code even though listed as a RECENT FAILED
+    HYPOTHESIS and absent from baseline 32cac36 at 77 features) — the
+    wrapper appears to have failed to revert features.py on the
+    voiced_spec_contrast discard. My asymmetry adds as the 79th; the
+    wrapper retrains on 79 features, so eval is internally consistent,
+    but attribution of the combined delta will mix my asymmetry's lift
+    with voiced_spec_contrast's drag, confounding the signal.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 17+ consecutive iterations; per-FP
+    (domain, file, t_sec, label_id, p_splice, vp_pre_frac, vp_post_frac,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, top-5 |SHAP| features with
+    values). Every mask-based feature hypothesis has been calibrated
+    from theory; this single block flips the entire loop to data-driven.
+    (2) `scripts/feature_oof_preview.py --add <feature_fn>` that
+    retrains once and reports per-domain OOF-F1 delta vs current —
+    turns "is this feature worth a 3-min retrain cycle" from a bet into
+    a numeric preview. (3) DISCARD-REVERT SYNC auditor: the wrapper's
+    discard path should diff features.py vs the baseline-sha features.py
+    and ABORT / restore if they differ, so a discarded hypothesis's
+    code can never silently persist into the next iteration's classifier.
+    Currently e7ca9eb's voiced_spec_contrast block is still in-tree
+    despite the feature being listed as a failure, which confounds
+    every subsequent hypothesis.
+[auto] (no SHAP data for either 32cac36 or 1eda8e3)
+
