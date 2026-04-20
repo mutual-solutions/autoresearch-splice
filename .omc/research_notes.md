@@ -4262,3 +4262,125 @@ per-domain: combined_english=0.825000 combined_korean=0.537313 combined_singing=
     check. Would isolate the 0.4907 identical-streak root cause.
     Three unchanged highest-priority requests across 47+ iterations.
 
+## 2026-04-20T22:17:04+09:00 — 7a170b0 (discard, combined=0.542324)
+subject: add voiced_unvoiced_spec_bandwidth_asymmetry (FEATURE_NAMES 80->81) -- cited fallback from 0cdd87e(c)(1). Voicing-masked paired-diff on the 1D spectral-bandwidth second-order moment (std around centroid), the only untried 1D spectral moment on the proven voiced/unvoiced template (1eda8e3 MFCC +0.054 biggest keep, 7972a98 spec_contrast +0.005). pre[t-2,t] post[t,t+2]: voiced_delta=mean(bw[voiced post])-mean(bw[voiced pre]); unvoiced_delta=mean(bw[unvoiced post])-mean(bw[unvoiced pre]); feature=unvoiced_delta-voiced_delta. Reuses cached feat_bandwidth (hop=512 (1,n)) + feat_vp (hop=512 (n,)), ZERO new librosa calls, ZERO new caches. Sentinel 0.0 on empty mask. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Last 20+ iterations exhausted voiced/unvoiced paired-diff across MFCC/spec_contrast/chroma/spec_flatness/RMS-dB/ZCR + every geometry + F0 distribution shape+location + detector post-filter. CLAUDE.md mandates structural change after 5+ same-axis failures; bandwidth is the ONE untried 1D spectral moment on the paired-diff template. Block 2 carries spec_bandwidth_delta ALL-FRAME only. GBM max_depth=3 cannot synthesize voicing-conditional bandwidth from (bandwidth_delta, voicing_prob_pre, voicing_prob_post) via independent threshold splits; paired-diff is a subtraction interaction trees cannot express. Mechanism on 3 singing chord-cycle FPs: within-song mic+EQ+compression frozen, voiced bandwidth at singer-formant baseline ~500-1200Hz spread, unvoiced at drums+noise-floor ~2000-4000Hz spread, chord transition does NOT change mic/EQ -> voiced_delta~0 AND unvoiced_delta~0 -> asymmetry~0 silent. Same-singer cross-song: voiced_delta small (similar formant spread), unvoiced_delta LARGE (new drum-bus EQ + different mastering limiter shapes post-vowel-tail spread) -> asymmetry POSITIVE, TP boosted. Different-singer: both shift; existing 1eda8e3 MFCC asymmetry fires. Speech self-gating (1eda8e3 mechanism): voiced bandwidth varies with vowel identity (i/a/u spread) but within same recording mic+EQ continuous -> voiced+unvoiced deltas both respond to phoneme context correlated -> DIFFERENCE is zero-mean noise -> GBM low per-domain SHAP on english/korean. Why bandwidth over remaining 1D moments: spec_centroid (F0-correlated on voiced, partial dup of F0_mean_delta); spec_rolloff (percentile, coarser proxy for same EQ info); spec_flatness already tried (0c3bf76 0.539). Bandwidth is second-order spectral moment (std around centroid), more directly mastering-EQ-signature than centroid, NOT duplicated by any existing paired-diff feature. Classifier hyperparam axis verifiably broken (5+ iterations IDENTICAL 0.490700); only features.py-sha bumps force retrain. Orthogonal: NOT 1eda8e3 (MFCC cosine); NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac (spec_contrast); NOT f4148cc (chroma); NOT 0c3bf76 (spec_flatness abs-delta asym); NOT c006d52 (RMS dB); NOT 0cdd87e (ZCR); NOT 27ddbf7/1d1144d (F0); NOT block-2 spec_bandwidth_delta (all-frame no mask); NOT 60196aa peak-width. FIRST spec_bandwidth voicing-masked paired-diff, SECOND-ORDER spectral moment axis. Pure features.py change -- 1 new block (~35 lines cloned from _block_voiced_unvoiced_mfcc_asymmetry with 1D scalar mean replacing 13-dim cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 4 slices + 4 masked means + 2 subtractions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_bandwidth_asymmetry', mixed-voicing synthetic audio with EQ-shifted noise-floor yields -228.8 at splice boundary vs +42.3/-18.2 within-source (~5x discrimination), empty-mask sentinel 0.0, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.814815 combined_korean=0.604545 combined_singing=0.323810
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_bandwidth_asymmetry (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — apply the proven voiced/unvoiced
+    paired-difference template (1eda8e3 NEAR MFCC +0.054 biggest win, 7972a98
+    NEAR spec_contrast +0.005) to the untried 1D SPECTRAL-BANDWIDTH moment.
+    For pre=[t-2,t] and post=[t,t+2]:
+        voiced_delta   = mean(bw[voiced in post]) - mean(bw[voiced in pre])
+        unvoiced_delta = mean(bw[unvoiced in post]) - mean(bw[unvoiced in pre])
+        feature        = unvoiced_delta - voiced_delta
+    Reuses cached feat_bandwidth (librosa.spectral_bandwidth, hop=512, shape
+    (1,n)) + feat_vp (voicing probability, hop=512, shape (n,)) — ZERO new
+    librosa calls, ZERO new caches. Sentinel 0.0 on empty mask. FEATURE_NAMES
+    80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. EXPLICIT cited fallback from 0cdd87e(c)(1):
+    "voiced_unvoiced_spec_bandwidth_asymmetry (spectral spread, EQ signature)".
+    Last 20+ iterations exhausted voiced/unvoiced paired-diff across MFCC
+    (1eda8e3 kept), spec_contrast (7972a98 kept, d290101/177d641/88adb49/
+    6c6c254/347c0ac discards), chroma (f4148cc discard), spec_flatness
+    (0c3bf76 → 0.539), RMS dB (c006d52 → 0.491), ZCR (0cdd87e → 0.508);
+    every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span); F0
+    distribution (IQR 27ddbf7 → 0.524, median-cents 1d1144d → 0.508); and
+    detector post-filter (60196aa → 0.491). CLAUDE.md mandates structural
+    change after 5+ same-axis failures; bandwidth is the ONE untried 1D
+    spectral moment on the paired-diff template.
+
+    Block 2 carries spec_bandwidth_delta ALL-FRAME — GBM has never seen
+    bandwidth voicing-split. GBM max_depth=3 cannot synthesize voicing-
+    conditional bandwidth from (bandwidth_delta, voicing_prob_pre,
+    voicing_prob_post) via independent threshold splits; paired-diff is
+    a subtraction interaction trees cannot express.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song mic
+    + mastering EQ + bus compression are FROZEN. Voiced bandwidth stays
+    at singer-formant baseline (~500-1200 Hz spread around centroid),
+    unvoiced bandwidth stays at drums+noise-floor baseline (~2000-4000
+    Hz). Chord transition does NOT change mic/EQ → voiced_delta ≈ 0 AND
+    unvoiced_delta ≈ 0 → asymmetry ≈ 0, feature silent, FP not boosted.
+    Same-singer cross-song: voiced_delta small (similar formant spread),
+    unvoiced_delta LARGE (new drum-bus EQ + different mastering limiter
+    shapes the post-vowel-tail spread differently) → asymmetry POSITIVE,
+    TP boosted. Different-singer: both shift; existing 1eda8e3 MFCC
+    asymmetry fires.
+
+    Speech self-gating via paired differencing (1eda8e3 mechanism). Voiced
+    bandwidth on speech varies with vowel identity (i ≠ a ≠ u in spread)
+    but within same recording mic+EQ is continuous → voiced and unvoiced
+    bandwidth deltas both respond to phoneme context in correlated ways
+    → DIFFERENCE is zero-mean noise across non-splice positions → GBM
+    low per-domain SHAP on english/korean → functionally invisible on
+    speech.
+
+    Why bandwidth over remaining 1D moments. (i) spec_centroid — existing
+    centroid_delta is top-SHAP AND centroid is F0-correlated on voiced
+    frames (voiced ⊂ pitched) so voicing-split partially duplicates F0
+    mean-delta signal. (ii) spec_rolloff — 85th-percentile, coarser proxy
+    for same EQ info. (iii) spec_flatness — ALREADY tried (0c3bf76 →
+    0.539). Bandwidth is the second-order spectral moment (std around
+    centroid), more directly mastering-EQ-signature than centroid AND
+    not duplicated by any existing paired-diff feature.
+
+    Classifier hyperparam axis verifiably broken (5+ train_classifier.py-
+    only iterations IDENTICAL 0.490700). Only features.py-sha bumps force
+    retrain. Every primary tunable saturated both directions.
+
+    Orthogonal. NOT 1eda8e3 (MFCC cosine); NOT 7972a98 + every spec_contrast
+    variant; NOT f4148cc (chroma); NOT 0c3bf76 (spec_flatness abs-delta
+    asymmetry); NOT c006d52 (RMS dB); NOT 0cdd87e (ZCR); NOT 27ddbf7/
+    1d1144d (F0 distribution); NOT block-2 spec_bandwidth_delta (all-frame,
+    no voicing split); NOT 60196aa peak-width (detector); NOT any
+    percussive/harmonic/tonnetz/geometry variant. FIRST spec_bandwidth on
+    voicing-masked paired-diff, SECOND-ORDER spectral moment axis.
+
+    Blast radius: 1 new block (~35 lines cloned from
+    _block_voiced_unvoiced_mfcc_asymmetry with 1D scalar mean replacing
+    13-dim cosine, matching c006d52/0cdd87e 1D template) + 1 FEATURE_NAMES
+    append + 2 assert bumps (80→81) + 1 call in extract_features. ZERO
+    new caches, ZERO new librosa calls. Per-t cost: 4 slices + 4 masked
+    means + 2 subtractions, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech preserved (bandwidth
+    signal sits in same GBM-learnable surface as centroid_delta; voicing-
+    split insufficient) → fallback to voiced_unvoiced_rolloff_asymmetry
+    (percentile-based cutoff, different mastering fingerprint than
+    bandwidth). (2) Speech regresses (voiced bandwidth tracks vowel
+    identity strongly enough that 2s window doesn't average it away) →
+    pivot to wider 4s-balanced-adjacent windows on bandwidth (more
+    phoneme averaging). (3) combined matches 0.4907 AGAIN → confirms
+    the identical-streak spans BOTH features.py AND detector.py edits;
+    escalate as wrapper cache-coherence bug.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 47+
+    iterations — cannot verify whether the 3 singing FPs sit in regions
+    where bandwidth-delta discriminates vs flatlines. (ii) SHAP rollup
+    STILL empty for 14 keeps — no per-feature attribution so axis
+    selection is theory-only. (iii) The 0.490700 identical-streak
+    crosses features.py (c006d52) AND detector.py (60196aa) — no
+    wrapper signal to confirm retrain fired OR detector change took
+    effect. Cannot distinguish "feature silent" from "classifier stale"
+    from "wrapper cache hit". (iv) 99081f5 4/16 capacity ghost status
+    unclear at HEAD after 960113c "REVERT" wrapper may have discarded.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent 47+-
+    iteration blocker. Per-FP (domain, file, t_sec, p_splice, dsp_*,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, spec_bandwidth_pre,
+    spec_bandwidth_post, top-5 |SHAP|). Transforms every hypothesis from
+    theory bet to data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without per-
+    feature attribution I pick "theoretically orthogonal" not "what GBM
+    actually uses."
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip") with
+    joblib-mtime sanity check would isolate the 0.4907 identical-streak
+    root cause. Three unchanged highest-priority requests across 47+
+    iterations.
+
