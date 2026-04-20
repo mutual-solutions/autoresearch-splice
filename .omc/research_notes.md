@@ -3877,3 +3877,127 @@ per-domain: combined_english=0.888889 combined_korean=0.646154 combined_singing=
     voiced_spec_contrast_cosine_dist remains in-tree post-discard,
     contaminating every subsequent attribution including this one.
 
+## 2026-04-20T11:56:25+09:00 — aa4f141 (discard, combined=0.578070)
+subject: add voiced_percussive_mfcc_asymmetry feature (FEATURE_NAMES 80->81) — PAIRED DIFFERENCING companion to 1eda8e3's voiced_unvoiced_mfcc_asymmetry on a new mask axis: percussive (top-40%% onset-strength frames) instead of unvoiced. Signed asymmetry percussive_mfcc_cosine_dist minus voiced_mfcc_cosine_dist on +-2s pre/post window. Reuses cached feat_mfcc + feat_onset + feat_vp with one lazy scalar perc_threshold = median(feat_onset)*1.2 — ZERO new librosa calls. Per-t cost 4 slices + 4 masked means + 2 cosines on 13-dim vectors, sub-ms. Sentinel 0.0 when either mask empty or sub-norm underflows. Targets 7972a98 current-keep (0.589282) singing 0.345 weakest-domain plateau. Mechanism: fd500b3's percussive_mfcc solo failed (singing 0.345->0.319) because GBM globally over-weighted transient-mask noise on speech. Paired differencing (asymmetry) is the proven fix — 1eda8e3 voiced_unvoiced_mfcc_asymmetry kept +0.054 (biggest win in the voiced-mask family). On singing: real same-singer-cross-song splice = held vocal note so voiced_mfcc_dist ~0.05 stable, but drum kit/mastering shifts so percussive_mfcc_dist ~0.30, asymmetry ~+0.25 LARGE POSITIVE — exact chord-cycle-vs-cross-song discriminator voiced_mfcc alone CAN'T see. Intra-song chord cycle: both stable (same singer, same drums) -> asymmetry ~0. Different-singer cross-song: both shift -> asymmetry cancels (GBM falls back to voiced_mfcc which fires anyway). On speech, plosive onsets (percussive mask) and vowel formants (voiced mask) both co-vary with phoneme context, so difference is zero-mean noise -> GBM low SHAP on english/korean (self-gates exactly the way fd500b3 solo couldn't). Explicit cited escalation from fd500b3(c)(3): 'PAIRED ASYMMETRY on the new axis (voiced_percussive_mfcc_asymmetry = percussive_mfcc_dist - voiced_mfcc_dist), making the accompaniment-vs-voice discriminator explicit in the way 1eda8e3 MFCC asymmetry did for voiced/unvoiced'. Critically orthogonal to voiced/unvoiced asymmetry family: PERCUSSIVE mask != UNVOICED mask — percussive is top-40%% onset-strength (tight transient subset: drum hits / bass attacks on singing, plosive bursts on speech); unvoiced is every non-voiced frame (broad: breath/silence/sibilant/consonant). Physically different populations of accompaniment signal. Orthogonal to every prior axis: NOT 1eda8e3 voiced_unvoiced_mfcc_asymmetry (unvoiced mask); NOT fd500b3 percussive_mfcc (single-mask, no differential — that's what failed); NOT 7972a98 voiced_unvoiced_spec_contrast_asymmetry (7-dim mastering not 13-dim cepstral); NOT f4148cc voiced_unvoiced_chroma_asymmetry (pitch-class); NOT 49bd0b1 voiced_mfcc (single-mask); NOT df6fc0a unvoiced_mfcc (single-mask); NOT 308aa5a tonnetz; NOT raw mfcc_delta (all-frames). First TRANSIENT-PAIRED ASYMMETRY in the voiced-mask family. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_percussive_mfcc_asymmetry', extract_features returns 81 finite features on synthetic audio, sentinel 0.0 fires on silence.
+per-domain: combined_english=0.878049 combined_korean=0.687500 combined_singing=0.320000
+
+# 2026-04-20 — hypothesis: voiced_percussive_mfcc_asymmetry feature (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `voiced_percussive_mfcc_asymmetry` = percussive_mfcc_cosine_dist −
+    voiced_mfcc_cosine_dist on ±2s pre/post window. Percussive mask = frames
+    where feat_onset > chunk-median(feat_onset) * 1.2 (top ~40% by onset
+    energy; drum-hit / transient-dominant frames). Voiced mask reused from
+    49bd0b1. Positive asymmetry = percussive (accompaniment/mastering)
+    changed MORE than voiced (singer's formant structure) = same-singer
+    cross-song splice on held note. ~0 on intra-song chord cycles (both
+    stable within fixed drum kit + singer) and different-singer cross-song
+    (both shift, cancel). Reuses cached feat_mfcc + feat_onset + feat_vp —
+    ZERO new librosa calls, ZERO new caches. Per-t cost is 4 slices + 4
+    masked means + 2 cosines on 13-dim vectors, sub-ms. Sentinel 0.0 when
+    either mask empty or sub-norm underflows, matching 1eda8e3/7972a98
+    safety. FEATURE_NAMES 80→81 triggers wrapper auto-retrain via US-505.
+
+(b) WHY this over recent failures. fd500b3's `percussive_mfcc_cosine_dist`
+    (SINGLE mask) failed with combined=0.568 / singing REGRESSED 0.345→
+    0.319 — GBM globally over-weighted a feature whose independent value
+    on speech (plosive onsets are phoneme-dependent) contaminated all
+    three domains. The EXPLICIT CITED fallback from fd500b3(c)(3) is
+    "PAIRED ASYMMETRY on the new axis (voiced_percussive_mfcc_asymmetry
+    = percussive_mfcc_dist − voiced_mfcc_dist), making the 'accompaniment
+    vs voice' discriminator explicit in the way 1eda8e3's MFCC asymmetry
+    did for voiced/unvoiced." The asymmetry pattern has a proven track
+    record: 1eda8e3 voiced_unvoiced_mfcc_asymmetry was the single biggest
+    keep +0.054, 7972a98 voiced_unvoiced_spec_contrast_asymmetry kept
+    +0.003. Paired differencing cancels phoneme-correlated noise on
+    speech because BOTH masks co-vary with phoneme context (plosive
+    onsets land in percussive mask, vowel formants drive voiced mask,
+    both move together within a speaker's prosodic window) → difference
+    is zero-mean noise → GBM assigns low per-domain SHAP on english/
+    korean, reproducing the self-gating that made fd500b3's solo mask
+    fail. On singing the physics diverge: voiced_mfcc ~0.05 (held note,
+    same singer, same vocal tract) but percussive_mfcc ~0.30 (new drum
+    kit / mastering / compressor) → asymmetry ~+0.25 LARGE POSITIVE =
+    the exact chord-cycle-vs-cross-song discriminator that voiced_mfcc
+    alone CAN'T see (singer holds note, voiced_mfcc stays low, single-
+    mask voiced_mfcc doesn't fire).
+
+    Critically orthogonal to the voiced/unvoiced asymmetry family: the
+    PERCUSSIVE mask ≠ UNVOICED mask. Unvoiced = any non-voiced frame
+    (breath, silence, sibilant, consonant) — a broad phoneme-
+    distribution noise source already captured by 1eda8e3. Percussive
+    = top-40% by onset strength, a much tighter transient-focused
+    subset. On singing, unvoiced captures breath gaps + sibilants
+    (mostly vocal-source), percussive captures drum hits + bass
+    attacks (mostly accompaniment-source). The PHYSICAL signal is
+    different. On speech, unvoiced captures all non-vowel frames
+    including silence, percussive captures plosive bursts only —
+    again different. So voiced_unvoiced_mfcc_asymmetry (1eda8e3) and
+    voiced_percussive_mfcc_asymmetry fire on DIFFERENT populations of
+    accompaniment signal.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 voiced_unvoiced_mfcc
+    (UNVOICED mask, broad non-vowel distribution); NOT fd500b3
+    percussive_mfcc (single-mask, no differential — that's what failed);
+    NOT 7972a98 voiced_unvoiced_spec_contrast (spec_contrast 7-dim
+    mastering-signature, not 13-dim cepstral); NOT f4148cc
+    voiced_unvoiced_chroma (pitch-class); NOT 49bd0b1 voiced_mfcc
+    (single-mask); NOT df6fc0a unvoiced_mfcc (single-mask); NOT 308aa5a
+    tonnetz; NOT raw mfcc_delta (all-frames). First TRANSIENT-PAIRED
+    ASYMMETRY in the voiced-mask family. Blast radius: features.py
+    only — 1 new block + 1 FEATURE_NAMES append + 2 assert bumps + 1
+    call in extract_features. Zero new caches. Per-t cost: sub-ms.
+    Risk-bounded: sentinel-0.0 safety matches 1eda8e3 proven pattern;
+    paired differencing inherently self-cancels phoneme-correlated
+    noise; percussive-mask chunk-median threshold is local-adaptive so
+    robust to overall chunk loudness.
+
+(c) IF THIS FAILS. (1) If singing has continuous-vocal phrases with
+    <3 percussive frames in ±2s (empty mask → sentinel 0.0 → feature
+    no-op exactly where needed), use a HYBRID mask (onset>median OR
+    rms<median — "accompaniment-carrying" frames including quiet
+    gaps). (2) If GBM assigns ~0 SHAP (percussive_mfcc still too
+    correlated with voiced_mfcc because drum hits have broad spectral
+    content overlapping formant bands), shift to CHROMA
+    (voiced_percussive_chroma_asymmetry) — drums have near-flat
+    chroma so percussive_chroma isolates pitched accompaniment (bass
+    line, guitar riff) at transient frames, complementary to voiced
+    pitch signal. (3) Final escalation: shift off features entirely
+    — try ANALYSIS_STRIDE_S=0.08 (denser scan, only 0.11 failed,
+    current 0.3 per baseline) or GBM_MIN_SEP_S=2.0 (below current 2.5,
+    catch clustered singing TPs).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 21+
+    consecutive iterations — I cannot verify whether 7972a98's 3
+    surviving singing FPs have enough high-onset frames in ±2s windows
+    for the percussive mask to fire. Purely-sustained chord-transition
+    FPs would empty the mask → sentinel 0.0 → feature no-op on exactly
+    the population this targets. Every mask design remains theory-
+    calibrated. (ii) SHAP rollup STILL "no keeps yet — rollup empty"
+    for 7972a98 — I cannot confirm that voiced_unvoiced_mfcc_asymmetry
+    is actually carrying the english/korean lift on 1eda8e3 or whether
+    it's being shadowed. Without this, the claim that asymmetry cancels
+    phoneme noise on speech is structural-theoretical not empirical.
+    (iii) Per-chunk onset_strength distribution histograms across the
+    eval population are unknown; the 1.2x median threshold is
+    calibrated from general music-analysis priors.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 21+ iterations; per-FP (domain,
+    file, t_sec, label_id, p_splice, vp_pre_frac, vp_post_frac,
+    n_percussive_pre, n_percussive_post, voiced_mfcc_dist,
+    unvoiced_mfcc_dist, percussive_mfcc_dist, top-5 |SHAP| features
+    with values). Every asymmetry / mask / pairing design has been
+    calibrated from theory; this single block flips the entire loop
+    to data-driven. (2) `scripts/feature_oof_preview.py --add
+    <feature_fn>` that retrains once and reports per-domain OOF-F1
+    delta vs current — turns "is this feature worth a 3-min retrain
+    cycle" from a bet into a numeric preview. (3) DISCARD-REVERT SYNC
+    auditor: the wrapper's discard path should diff features.py vs
+    baseline-sha features.py and ABORT / restore if they differ —
+    e7ca9eb's voiced_spec_contrast_cosine_dist is STILL in-tree
+    post-discard (features.py has 80 features, its block still
+    present) contaminating every subsequent attribution including
+    this one. A 3-line shell guard after the discard decision would
+    prevent this.
+
