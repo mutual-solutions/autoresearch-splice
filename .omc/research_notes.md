@@ -4158,3 +4158,142 @@ per-domain: combined_english=0.875000 combined_korean=0.537313 combined_singing=
     "REVERT" and references a prior-discarded SHA, treat exact-match
     as KEEP not DISCARD. ~15 lines of git-commit-message parsing.
 
+## 2026-04-20T17:10:22+09:00 — d49284c (discard, combined=0.539430)
+subject: add voiced_unvoiced_mfcc_asymmetry_far feature (FEATURE_NAMES 80->81) — FAR-window companion to 1eda8e3 (kept +0.054 biggest win). Same paired-difference template, post=[t+4,t+8] instead of [t,t+2]. Reuses cached feat_mfcc + feat_vp, ZERO new librosa calls. Edge guard t+8>duration_s OR t-2<0 returns sentinel 0.0. Targets 7972a98 baseline (combined=0.589282) singing 0.345 weakest-domain plateau (3 chord-cycle FPs surviving NEAR-window asymmetry which is ~0 on within-song chord cycle). Mechanism: within-song chord cycle voiced_far ~0.20 (different vowels for new lyrics) but unvoiced_far ~0.05 (same drums/mastering across 6s within song) -> asymmetry NEGATIVE -0.15. Same-singer cross-song splice voiced_far ~0.10 (similar vocal tract) but unvoiced_far ~0.30-0.50 (new drums + new mastering) -> asymmetry POSITIVE +0.15 to +0.40. SIGN FLIP between chord-cycle FP (NEG) and cross-song splice (POS) is binary discriminator GBM cannot synthesize from existing NEAR features. Trees split on (near_asym>0.15 AND far_asym>0 -> splice) vs (near_asym~0 AND far_asym<0 -> chord cycle). Speech self-gating: voiced+unvoiced far-window MFCC both co-vary with new sentence content -> diff is zero-mean noise -> GBM low SHAP on english/korean (1eda8e3 proven mechanism). Classifier hyperparam axis verifiably broken (5 train_classifier.py-only iterations all produced IDENTICAL combined=0.490700 -> US-505 doesn't auto-retrain on hyperparam edits); only features.py-sha bumps force retrain (1a8b1fe/0c3bf76/4773d1e/d3ddc9d all distinct values). Last 5 mask experiments all regressed singing catastrophically (4773d1e percussive_spec_contrast 0.345->0.258, d3ddc9d harmonic_spec_contrast 0.270, 1a8b1fe voiced_percussive_chroma 0.319, fd500b3/aa4f141 0.319-0.320). Pivot back to working voiced/unvoiced asymmetry family with new TIME SCALE rather than yet another mask. Orthogonal: NOT 1eda8e3 (NEAR window same template); NOT 7972a98 (spec_contrast not cepstral); NOT f4148cc (chroma asym NEAR); NOT 0c3bf76 (1D scalar abs-delta); NOT ff65865 voiced_chroma_far (single-mask no asymmetry); NOT 32cac36/49bd0b1/308aa5a/percussive/harmonic mask family. FIRST FAR-window asymmetry feature in any content axis. Pure features.py change — 1 new block (~50 lines, template-cloned from 1eda8e3 with edge guard) + 1 FEATURE_NAMES append + 2 assert bumps + 1 call. ZERO new caches, ZERO new librosa calls. Per-t cost 4 slices + 4 masked means + 2 cosines on 13-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_mfcc_asymmetry_far', edge guard fires correctly (t=5 with 12s chunk -> 0.0; t=1 with t-2<0 -> 0.0), in-range t=2.5 yields finite value 0.011, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.825000 combined_korean=0.537313 combined_singing=0.354098
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_mfcc_asymmetry_far (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — FAR-window companion to
+    1eda8e3's voiced_unvoiced_mfcc_asymmetry (kept +0.054, biggest win
+    in loop history). Same multi-dim cosine + paired-difference template,
+    but post window is FAR =[t+4, t+8] instead of NEAR =[t, t+2]. Pre stays
+    [t-2, t]. Reuses cached feat_mfcc + feat_vp — ZERO new librosa calls,
+    ZERO new caches. Edge guard: t+8 > duration_s returns sentinel 0.0
+    (matches ff65865 pattern). Sentinel 0.0 also on empty masks / zero
+    norm. FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505
+    sha gate (provably the only forcing function — 5+ classifier
+    hyperparam-only iterations all produced IDENTICAL combined=0.490700).
+
+(b) WHY this over recent failures. Last 10+ iterations exhausted: 5 mask
+    variants on percussive/harmonic axis (all regressed singing
+    catastrophically: 4773d1e percussive_spec_contrast 0.345->0.258,
+    d3ddc9d harmonic_spec_contrast 0.270, 1a8b1fe voiced_percussive_chroma
+    asym 0.319, fd500b3/aa4f141 percussive_mfcc 0.319-0.320), 1D-scalar
+    voiced/unvoiced asymmetries (0c3bf76 spec_flatness 0.319), classifier
+    hyperparam axis verifiably broken via US-505 retrain bug (5 iterations
+    at IDENTICAL 0.490700), all primary tunables saturated both directions.
+    The voiced/unvoiced ASYMMETRY family at NEAR window is the most
+    productive axis (1eda8e3 +0.054, 7972a98 +0.005); FAR-window companion
+    is genuinely untried and pivots back to the working axis with a new
+    time scale, not yet another mask experiment.
+
+    Mechanism targeting the 3 surviving singing FPs (within-song chord
+    cycle). NEAR asymmetry (1eda8e3) at chord cycle is ~0 because both
+    voiced & unvoiced MFCC are stable across the +-2s window — neither
+    voice nor accompaniment shifts on the timescale that bites NEAR.
+    GBM cannot tell chord-cycle FP (near=0) from real same-singer
+    cross-song splice (near=+0.25) at the borderline NEAR values where
+    the 3 FPs sit. FAR window (t-2..t vs t+4..t+8) introduces a
+    different signature:
+    - Within-song chord cycle: at [t+4,t+8] singer is on a DIFFERENT
+      chord and singing different vowels for new lyrics -> voiced_far
+      MFCC differs significantly (~0.20). Unvoiced (drums + same
+      mastering) is nearly identical across 6s within one song ->
+      unvoiced_far_dist ~0.05. Asymmetry = unvoiced_far - voiced_far
+      ~ -0.15 NEGATIVE.
+    - Real same-singer cross-song splice: at [t+4,t+8] we're 4-8s
+      into the new song. Drums + mastering totally different ->
+      unvoiced_far_dist ~0.30-0.50. Singer tract similar ->
+      voiced_far_dist ~0.10-0.15. Asymmetry ~ +0.15 to +0.40 POSITIVE.
+    - Different-singer cross-song: both shift -> asymmetry near 0 or
+      positive. Existing NEAR asymmetry catches this case.
+
+    The SIGN FLIP between within-song chord cycle (NEGATIVE) and
+    same-singer cross-song splice (POSITIVE) is a clean binary
+    discriminator GBM cannot synthesize from existing features. Trees
+    can split on (near_asym > 0.15 AND far_asym > 0 -> splice) vs
+    (near_asym ~ 0 AND far_asym < 0 -> chord cycle).
+
+    Self-gating on speech via paired differencing (proven mechanism
+    that lifted english 0.732->0.889 and korean 0.526->0.667 on 1eda8e3):
+    voiced (vowels) and unvoiced (consonants) far-window MFCC both
+    co-vary with new sentence content uncorrelated with splice
+    position -> difference is zero-mean noise -> GBM low per-domain
+    SHAP on english/korean. Same self-gating shielded the original
+    voiced_unvoiced_mfcc_asymmetry on speech.
+
+    Why FAR over yet another mask. Every harmonic/percussive mask
+    attempt has failed monotonically; voiced/unvoiced is the working
+    family. The TIME-SCALE companion is the orthogonal axis
+    untouched by the asymmetry family — ff65865 voiced_chroma_far
+    failed but as a SINGLE-MASK chroma feature; paired-difference
+    asymmetry (the proven 1eda8e3 mechanism) on a far window has
+    never been combined.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (NEAR window — same
+    template at different time scale); NOT 7972a98 (spec_contrast not
+    cepstral); NOT f4148cc (chroma asymmetry, NEAR); NOT 0c3bf76
+    (1D scalar abs-delta, flatness); NOT ff65865 voiced_chroma_far
+    (single-mask, no asymmetry); NOT 32cac36 voiced_chroma; NOT
+    49bd0b1 voiced_mfcc; NOT 308aa5a tonnetz; NOT any percussive /
+    harmonic mask variant. FIRST FAR-window asymmetry feature in any
+    content axis. Pure features.py change — 1 new block (~50 lines,
+    template-cloned from 1eda8e3 with edge guard) + 1 FEATURE_NAMES
+    append + 2 assert bumps + 1 call in extract_features. ZERO new
+    librosa calls, ZERO new caches. Per-t cost: 4 slices + 4 masked
+    means + 2 cosines on 13-dim vectors + 1 subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) Within-song singer's voiced MFCC IS stable
+    across 4-8s (sustained held notes during chorus -> voiced_far_dist
+    small instead of expected ~0.20) -> asymmetry on chord cycle is
+    near 0 like NEAR, sign-discrimination collapses -> fallback is
+    voiced_unvoiced_spec_contrast_asymmetry_far (mastering signature
+    is drum-bus-fixed within song so unvoiced_far stays small even
+    when voiced_far is small from sustained vocals -> asymmetry stays
+    near 0; cross-song unvoiced_far jumps via mastering shift while
+    voiced stays low -> asymmetry positive). (2) Edge-guard sentinel
+    fires too often (t+8 > chunk_dur on most chunks since
+    ANALYSIS_STRIDE_S=0.12 dense scan reaches near chunk end) ->
+    feature mostly returns 0 and GBM ignores it -> shrink the far
+    offset to [t+3, t+6] (less dense but still beats NEAR's
+    chord-cycle blind spot). (3) Final escalation: voiced_unvoiced_
+    f0_jitter_asymmetry — pivot from cepstral envelope to vocal F0
+    stability axis (cited untried in 0c3bf76(c)(3); F0 is intrinsic
+    to vocal tract / singer identity, untouched by asymmetry family).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 36+
+    iterations — I cannot verify the 3 surviving singing FPs' actual
+    t_sec positions to predict whether t+8 > chunk_dur fires the edge
+    guard on most of them. If FPs cluster near chunk ends (likely
+    because eval files are 30-120s and FPs accumulate over duration),
+    feature is mostly inert. Every FAR-window hypothesis remains
+    theory-calibrated. (ii) SHAP rollup STILL "no keeps yet — rollup
+    empty" for 7972a98 despite 14 keeps — rollup writer broken, no
+    per-feature attribution available. (iii) IDENTICAL-COMBINED
+    streak across 5 train_classifier.py-only iterations strongly
+    suggests US-505 doesn't auto-retrain on hyperparam edits — only
+    features.py-sha bumps force retrain. My +1 feature-count change
+    is the safe path. (iv) 99081f5 capacity ghost in-tree
+    (max_depth=4, max_leaf_nodes=16) — feature-add delta clean,
+    absolute comparison to 0.589282 mixes with ghost.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 36+-iteration blocker. Per-FP (domain, file,
+    t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|). chunk_
+    duration_s explicitly tells me whether FAR-window edge guard
+    fires on each FP. (2) US-505 COVERAGE FIX — extend retrain sha
+    gate to include train_classifier.py changes, not just features.py.
+    Diagnostic: 5 consecutive train_classifier.py-only iterations
+    (17d4aec, db59c36, df0ceec + 2 others) all produced IDENTICAL
+    combined=0.490700 while 1a8b1fe / 0c3bf76 / 4773d1e / d3ddc9d
+    feature-count changes produced distinct values. ~5-line shell
+    extension of existing US-505 sha-gate. (3) DISCARD-REVERT
+    SYMMETRY SEMANTICS bug fix — wrapper treats "matches baseline
+    exactly" as no-improvement, restoring the 99081f5 capacity ghost
+    via 960113c discard. If commit subject starts "REVERT" + names a
+    prior-discarded SHA, treat exact-match as KEEP. ~15 lines git
+    commit-message parse.
+
