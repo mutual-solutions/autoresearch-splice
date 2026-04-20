@@ -4462,3 +4462,110 @@ per-domain: combined_english=0.850000 combined_korean=0.531250 combined_singing=
     current tunable state (and the per-tunable frontier's "current ?"
     rows resolve).
 
+## 2026-04-20T14:42:14+09:00 — 0cb551f (discard, combined=0.490700)
+subject: tighten DSP_CONFIRMATION_MIN 2.0 -> 2.2 (MAX floor) — first tightening of the MAX axis in the loop's history. Pure detector.py one-line constant edit plus comment refresh, stacked on existing SUM>=5.0 + GBM_THRESHOLD=0.982 + MIN_SEP=3.5. No retrain, no feature change, features.py sha stable so classifier byte-identical. Drops emits where max(dsp_phase_z, dsp_t2_z, dsp_cpe_z) < 2.2 even when SUM passes. Targets 7972a98 current-keep (combined=0.589282) singing 0.345 weakest-domain plateau with clean_fp=3 survivors past the current max>=2.0 gate. Last 10 iterations exhausted every other axis: feature-add (fd500b3 percussive_mfcc, aa4f141 voiced_percussive_asymmetry, 49fa2ca/6384137 rhythm/autocorr — all regressed), SUM tightening (53d3ea0 5.0->5.5 failed, dropped singing 0.345->0.325 via legitimate crossfade TPs in 5.0-5.5 band), feature removal (ea1636c catastrophic 0.455), classifier capacity bump (99081f5 discard). CLAUDE.md mandates structural change after 5+ same-axis failures — MAX floor is the ONE primary-tunable axis never tuned (history has only value 2.0). Explicit cited fallback from 7255ec6 ('If TPs don't rise but FPs do, fallback is tighten DSP_CONFIRMATION_MIN 2.0 -> 2.2') and from 53d3ea0 ('fallback is DSP_CONFIRMATION_MIN 2.0 -> 2.2 on the MAX axis — different channel-mass distribution, never tried'). Channel-mass distribution argument: the MAX gate bites emits where NO SINGLE channel is strong (2.0 <= max < 2.2), a strictly smaller set than SUM-tightening catches — chord-transition singing FP with T²≈2.1 + phase≈1.5 + CPE≈1.5 gives max=2.1 sum=5.1 passes both current gates but drops under MAX>=2.2. Real cross-source singing TPs produce at least one strong channel (phase_z>=3 or T²_z>=3) by physical mechanism (different mic/room, different spectral distribution) so max>=2.2 is structurally robust. Preferred over SUM-bumping because 53d3ea0 proved the SUM band 5.0-5.5 contains legitimate smooth-crossfade TPs; the MAX [2.0, 2.2] band is structurally different (all-channels-mediocre). Orthogonal to every recent axis: NOT a feature add (features.py sha stable, no retrain); NOT a classifier hyperparam (train_classifier.py unchanged); NOT DSP_SUM_MIN (53d3ea0 failed); NOT GBM_THRESHOLD (7255ec6 0.980 failed); NOT GBM_MIN_SEP_S; NOT ANALYSIS_STRIDE_S (0.11 failed); NOT class-routed DSP (eb8984e failed); NOT HPR-routed DSP; NOT channel-specific CPE floor (0.449 failed); NOT feature removal (ea1636c catastrophic). First MAX-axis tightening. Blast radius: 1-line constant edit + comment refresh. Zero new code paths. Per-emit cost unchanged (same max+compare). Risk-bounded: stacked on SUM so can only DROP emits past SUM; drops require max DSP in [2.0, 2.2] narrow band; cannot create TPs. Worst case: singing smooth-crossfade TPs with all channels in 2.0-2.2 band drop and recall falls — fallback is DSP_PHASE_MIN=0.5 (channel-specific phase floor, untried vs 0.449-failed CPE floor) or ANALYSIS_STRIDE_S=0.08 (denser scan, untried below 0.11). Smoke-verified: DSP_CONFIRMATION_MIN=2.2 loads, all other tunables unchanged (SUM=5.0 THR=0.982 SEP=3.5 STRIDE=0.12).
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: tighten DSP_CONFIRMATION_MIN 2.0 → 2.2 (MAX floor)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` primary tunable — tighten the
+    DSP MAX floor from 2.0 → 2.2. One-line constant edit at line 60,
+    stacked on existing SUM≥5.0 + GBM_THRESHOLD=0.982 + MIN_SEP=3.5. No
+    retrain, no feature change, features.py sha stable so classifier
+    byte-identical. Drops emits where max(dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z) < 2.2 even when SUM passes and all 80 classifier
+    features say "splice."
+
+(b) WHY this over recent failures. Last 10 iterations exhausted the
+    feature-add axis (voiced/unvoiced/percussive/rhythm variants, all
+    failed — plateau 0.318-0.345 on singing), the SUM axis (53d3ea0
+    tried 5.0→5.5 and failed dropping singing to 0.325), the feature-
+    removal axis (ea1636c catastrophic 0.455), and the classifier-
+    capacity axis (99081f5 bump discard). CLAUDE.md mandates
+    structural change after 5+ same-axis failures — every axis tried
+    is saturated EXCEPT the MAX floor. The MAX axis has NEVER been
+    tuned (only value 2.0 in history); 2.2 is the explicit cited
+    untried fallback from 7255ec6 ("If TPs don't rise but FPs do,
+    fallback is tighten DSP_CONFIRMATION_MIN 2.0 → 2.2") and 53d3ea0
+    ("fallback is DSP_CONFIRMATION_MIN 2.0 → 2.2 on the MAX axis —
+    different channel-mass distribution, never tried"). Channel-mass
+    distribution argument: the MAX gate bites emits where NO SINGLE
+    channel is strong (2.0 ≤ max < 2.2), a strictly smaller set than
+    SUM-tightening catches. Realistic chord-transition singing FP:
+    T²≈2.1, phase≈1.5, CPE≈1.5 gives max=2.1 sum=5.1 — passes
+    current gates, drops under MAX≥2.2. Real cross-source singing
+    TPs produce at least one strong channel (phase_z≥3 or T²_z≥3)
+    by physical mechanism (different mic/room or different spectral
+    distribution), so max≥2.2 is structurally robust. Preferred
+    over SUM-bumping because 53d3ea0 proved the SUM band 5.0-5.5
+    contained legitimate crossfade TPs (smooth transitions with
+    phase/CPE firing weakly, sum 5.0-5.5). The MAX floor at 2.2
+    targets emits where ALL channels are mediocre — a different
+    structural signature than SUM.
+
+    Orthogonal to every recent axis: NOT a feature add (features.py
+    sha stable — classifier byte-identical); NOT a classifier
+    hyperparam (train_classifier.py unchanged); NOT DSP_SUM_MIN
+    (53d3ea0 failed); NOT GBM_THRESHOLD (7255ec6 0.980 failed); NOT
+    GBM_MIN_SEP_S; NOT ANALYSIS_STRIDE_S (0.11 failed); NOT
+    class-routed DSP (eb8984e failed); NOT HPR-routed DSP (failed);
+    NOT channel-specific CPE floor (0.449 failed); NOT feature
+    removal (ea1636c catastrophic). First tightening of MAX axis in
+    the loop's history. Blast radius: 1-line constant edit + comment
+    refresh. Zero new code paths. Per-emit cost unchanged (same
+    max+compare path). Risk-bounded: stacked on SUM gate so can only
+    DROP emits; drops require max DSP in [2.0, 2.2] band, a narrow
+    strip. Cannot create TPs.
+
+(c) IF THIS FAILS. (1) If clean_fp unchanged (the 3 singing FPs have
+    max ≥ 2.2 by measurement — they're driven by a single strong
+    channel above 2.2), fallback to a PHASE-specific floor
+    DSP_PHASE_MIN = 0.5 — untried channel-specific axis on phase
+    instead of CPE (the 0.449-failed axis). Chord transitions
+    produce phase_z ≈ 0; same-recording same-singer cross-song
+    splices still produce phase_z > 1 via mic/mastering differences.
+    (2) If TPs drop (singing real crossfade TPs sit in max [2.0, 2.2]
+    band — smooth transitions don't produce a single strong channel),
+    revert and try ANALYSIS_STRIDE_S = 0.08 (denser scan, untried
+    below 0.11 fail and below current 0.12) to catch boundary-
+    adjacent TPs. (3) Final escalation: feature-axis return with
+    voiced_percussive_chroma_asymmetry (untried; percussive-mask
+    chroma isolates pitched accompaniment at transient frames —
+    bass/guitar riff shift across cross-song splices).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 25+
+    iterations — I cannot verify the 3 singing FPs' actual (phase_z,
+    t2_z, cpe_z) distribution to predict whether max falls in the
+    [2.0, 2.2] band 2.2 bites or sits well above. Every DSP-tunable
+    hypothesis has been theory-calibrated. (ii) Two GHOST code
+    states persist that confound attribution: (a) e7ca9eb's
+    voiced_spec_contrast_cosine_dist still in features.py (ea1636c
+    ablation failed so it stays — 80 features still include it);
+    (b) 99081f5's max_depth=4/max_leaf_nodes=16 still in
+    train_classifier.py (discarded but never reverted — current
+    classifier trains with higher capacity than 7972a98-keep-time
+    classifier). My MAX-floor change runs against a classifier that
+    differs from 7972a98's keep-time state; combined deltas mix with
+    these ghosts. (iii) SHAP rollup STILL "no keeps yet — rollup
+    empty" for 7972a98 — cannot see how DSP z-scores rank against
+    the 80 classifier features or predict MAX-floor impact.
+
+(e) Wrapper enhancements. (1) DISCARD-REVERT SYNC auditor —
+    addresses the root cause of the 99081f5 hyperparam ghost AND
+    the e7ca9eb feature ghost. Wrapper's discard path should diff
+    each changed file vs baseline-sha file and ABORT + restore if
+    drift remains. ~20 lines of shell guard after the discard
+    decision. Would have prevented 15+ iterations of attribution
+    contamination from both ghosts. (2) CLEAN_FP_POSITIONS JSON
+    block in CURRENT STATE — persistent blocker for 25+ iterations;
+    per-FP (domain, file, t_sec, label_id, p_splice, dsp_phase_z,
+    dsp_t2_z, dsp_cpe_z, dsp_max, dsp_sum, top-5 |SHAP|). A single
+    block transforms every DSP-tunable hypothesis from theory-
+    calibrated bet to data-driven decision. (3) CURRENT DETECTOR
+    CONSTANTS + CURRENT CLASSIFIER HYPERPARAMS block in prompt —
+    explicit snapshot of (GBM_THRESHOLD, GBM_MIN_SEP_S,
+    ANALYSIS_STRIDE_S, DSP_CONFIRMATION_MIN, DSP_SUM_MIN) + (max_iter,
+    max_depth, max_leaf_nodes, learning_rate, l2, min_samples_leaf)
+    at HEAD so ghost state is surfaced explicitly and the
+    per-tunable frontier "current ?" rows resolve.
+
