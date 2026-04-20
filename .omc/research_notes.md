@@ -4228,3 +4228,107 @@ per-domain: combined_english=0.850000 combined_korean=0.531250 combined_singing=
     ANALYSIS_STRIDE_S. Not tracking these gates means the agent has to
     git-log grep to know the axis state.
 
+## 2026-04-21T03:02:19+09:00 — 0ae9231 (discard, combined=0.426339)
+subject: add DSP_SECOND_HIGHEST_MIN=1.5 multi-channel-consensus gate (detector.py only; pure primary tunable, no retrain)
+per-domain: combined_english=0.701299 combined_korean=0.433333 combined_singing=0.255000
+
+# 2026-04-21 — hypothesis: add DSP_SECOND_HIGHEST_MIN=1.5 gate to detector.py
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line addition of a THIRD
+    DSP-confirmation gate stacked on top of MAX (2.0) and SUM (5.0).
+    Require the SECOND-HIGHEST of the three DSP z-scores
+    (phase_z / t2_z / cpe_z) to be >= 1.5. Equivalently: at least TWO
+    of the three DSP channels must fire >= 1.5 simultaneously.
+    Pseudocode:
+        sorted_dsp = sorted(dsp_vals, reverse=True)
+        if max < DSP_CONFIRMATION_MIN
+           or sum < DSP_SUM_MIN
+           or sorted_dsp[1] < DSP_SECOND_HIGHEST_MIN:  # NEW
+            skip
+    No retrain, no feature change, feature count stable at 80.
+    Classifier sha identical.
+
+(b) WHY over recent failures. Last 60+ iterations exhausted features.py
+    additions on every content axis. Detector-side DSP_SUM_MIN
+    tightening just failed (e2fc9de 5.0->5.5 regressed all three domains
+    0.589->0.527), which tells us the 3 singing FPs have SUM >= 5.5 —
+    tightening SUM further just drops real TPs. But SUM is SYMMETRIC in
+    channels: [4.0, 0.7, 0.3] sums to 5.0 and passes; [2.5, 1.3, 1.2]
+    sums to 5.0 and passes. SECOND-HIGHEST specifically rejects "one
+    loud + two quiet" configurations that SUM tolerates. This is a
+    genuinely new axis inside the DSP-gate family — never tried
+    (confirmed via git log grep second/top-2/quorum/two-of-three).
+    29c06cf kept 4.5->5.0 proving the DSP-gate axis is productive when
+    the right dimension is picked.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Chord transitions
+    typically fire ONE dominant DSP channel: either phase_z (phase
+    discontinuity at chord boundary, abrupt harmonic realignment) OR
+    t2_z (spectral-distribution shift across chord voices) with the
+    others WEAK. Pattern [phase=2.5, t2=1.5, cpe=1.2] — max=2.5
+    passes, sum=5.2 passes, 2nd=1.5 borderline; [phase=3.0, t2=1.3,
+    cpe=0.8] — max=3.0 passes, sum=5.1 passes, 2nd=1.3 < 1.5 BLOCKS.
+    1.5 threshold surgically bites the single-dominant-channel regime
+    where other two channels remain near the chunk-local noise floor.
+
+    Real cross-song splice. Disrupts MULTIPLE physical signals
+    simultaneously — mic-impulse-response change drives phase_z, new
+    spectral distribution drives t2_z, new noise-floor + compression
+    dynamics drive cpe_z. Typical pattern [2.5, 2.2, 1.8] or
+    [3.0, 2.5, 2.0] — second-highest usually >= 2.0 comfortably above
+    1.5 threshold, margin >= 0.5.
+
+    Why 1.5 (not 2.0). Conservative start — bites [2.5, 1.3, 1.2] and
+    [4.0, 0.7, 0.3] single-channel-dominant patterns while preserving
+    [2.0, 1.8, 1.5] three-channel-balanced patterns. Threshold 2.0
+    would also block [2.5, 1.8, 1.5] configurations that may include
+    real crossfade TPs where one channel is moderate. 1.5 is
+    minimal-risk.
+
+    Orthogonal. NOT 273b8f5 MAX gate (absolute highest channel); NOT
+    865d92f/29c06cf/e2fc9de SUM gate (symmetric cumulative); NOT
+    d256901 class-specific routing; NOT 60196aa peak-width neighbor-
+    support; NOT d4d35b1 local-margin filter; NOT 7255ec6 GBM_THRESHOLD;
+    NOT any GBM_MIN_SEP_S/ANALYSIS_STRIDE_S tweak; NOT features.py
+    addition; NOT classifier hyperparameter. FIRST "multi-channel
+    consensus" gate requiring simultaneous activation of >=2 DSP
+    signals above a shared floor.
+
+    Blast radius. detector.py only. 1 new constant + 1 sorted() call
+    + 1 compare inside the existing gate loop at line 305. Per-emit
+    cost: 1 extra 3-element sort + 1 float compare, negligible.
+    Feature set unchanged, classifier byte-identical, no retrain.
+
+(c) IF THIS FAILS. (1) Singing unchanged (the 3 FPs happen to have
+    [2.5, 2.0, 1.5]+ — balanced, not single-dominant) → raise threshold
+    to 1.8 for tighter consensus demand. (2) English/korean regress
+    (real speech TPs have asymmetric DSP: e.g., crossfade TPs with
+    strong t2_z but weak phase_z/cpe_z) → revert and split into
+    class-specific DSP configurations (relax second-highest for
+    class 2 crossfades, keep for class 1 hard cuts). (3) Combined
+    matches 0.4907 identical-streak → wrapper joblib cache issue;
+    escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON block STILL absent
+    after 64+ iterations — cannot verify the 3 singing FPs' actual
+    (phase_z, t2_z, cpe_z) triple to know if they're single-channel-
+    dominant (my central assumption) or balanced. This hypothesis
+    remains a theory bet until FP-position metadata is exposed.
+    (ii) SHAP rollup STILL empty for 14 keeps. (iii) Dense p_splice
+    histogram per chunk still not logged. (iv) tunable frontier
+    snapshot does not track DSP_SECOND_HIGHEST_MIN / DSP_CONFIRMATION_MIN
+    / DSP_SUM_MIN — easy to lose this axis state.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 64+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE — per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_sum,
+    dsp_second_highest, voiced_unvoiced_mfcc_asymmetry, top-5 |SHAP|).
+    Per-FP DSP triple would let every DSP-gate hypothesis be decided
+    data-driven instead of theory-only.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_SECOND_HIGHEST_MIN
+    to the tunable frontier snapshot alongside GBM_THRESHOLD /
+    GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. Not tracking DSP gates means
+    the agent has to git-log grep to know axis state.
+
