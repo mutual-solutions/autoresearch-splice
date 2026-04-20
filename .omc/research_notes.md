@@ -3642,3 +3642,109 @@ per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=
     attribution.
 [auto] (no SHAP data for either 1eda8e3 or 7972a98)
 
+## 2026-04-20T11:23:40+09:00 — de0be6f (discard, combined=0.584400)
+subject: add voiced_unvoiced_spec_contrast_symmetry feature (FEATURE_NAMES 80->81) — SUM companion to 7972a98's just-kept voiced_unvoiced_spec_contrast_asymmetry. Nonnegative joint magnitude voiced_spec_contrast_cosine_dist + unvoiced_spec_contrast_cosine_dist on +-2s pre/post window. Reuses cached feat_contrast + feat_vp — ZERO new librosa calls, ZERO new caches. Per-t cost is 4 slices + 4 masked means + 2 cosines on 7-dim vectors (same machinery as asymmetry block), sub-ms. Sentinel 0.0 when either mask empty or either sub-norm underflows, matching 1eda8e3/7972a98 safety pattern. Targets 7972a98 current-keep (0.589282) singing 0.345 weakest-domain plateau where asymmetry barely moved singing (+0.005) because asymmetry collapses two physically distinct cases to ~0: (i) BOTH voiced and unvoiced contrast shift together (different-singer cross-song, everything changes, diff cancels); (ii) NEITHER shifts (quiet within-song passage). Both collapse to sentinel losing discrimination. The SYMMETRY recovers that axis: joint magnitude HIGH = splice signature (either case i or strong overall change), LOW = stable within-song. Combined with asymmetry GBM sees the full 2D (symmetry, asymmetry) plane: (high_sym, ~0_asym) = different-singer cross-song; (any_sym, +asym) = same-singer cross-song accompaniment shift; (low_sym, ~0_asym) = within-song stable. GBM max_depth=3 CAN access voiced_spec_contrast_cosine_dist (e7ca9eb in-tree) but NOT unvoiced_spec_contrast_cosine_dist so it cannot synthesize the sum from current features — explicit symmetry surfaces the 'joint magnitude' pattern directly. Explicit escalation option (1) from 7972a98(c)(1): 'add a companion voiced_unvoiced_spec_contrast_symmetry = unvoiced+voiced (jointly-big vs jointly-small), giving GBM both axes'. Orthogonal to every prior axis: NOT 7972a98 (DIFFERENCE not sum — orthogonal linear combination of same two components); NOT e7ca9eb voiced_spec_contrast (single-mask voiced-only); NOT 1eda8e3 voiced_unvoiced_mfcc_asymmetry (cepstral envelope not mastering signature AND diff not sum); NOT f4148cc voiced_unvoiced_chroma_asymmetry (pitch-class not mastering AND diff not sum); NOT 32cac36 voiced_chroma (single-mask pitch-class); NOT 308aa5a tonnetz; NOT 49bd0b1 voiced_mfcc (single-mask cepstral). First SYMMETRIC/JOINT-MAGNITUDE feature in the voiced/unvoiced mask family. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_contrast_symmetry', end-to-end extract_features returns 81 finite features on synthetic audio, feature is nonnegative bounded [0, 4] as expected from sum of two cosine distances each in [0, 2].
+per-domain: combined_english=0.925000 combined_korean=0.676923 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: voiced_unvoiced_spec_contrast_symmetry (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `voiced_unvoiced_spec_contrast_symmetry` = voiced_spec_contrast_dist +
+    unvoiced_spec_contrast_dist on ±2s pre/post window. Paired companion
+    of 7972a98's just-kept voiced_unvoiced_spec_contrast_ASYMMETRY
+    (difference); this is the SUM on identical machinery. Reuses cached
+    feat_contrast + feat_vp — ZERO new librosa calls, ZERO new caches.
+    Per-t cost is 4 slices + 4 masked means + 2 cosines on 7-dim vectors
+    (same as the asymmetry block), sub-ms. Sentinel 0.0 when either mask
+    empty or either sub-norm underflows, matching 1eda8e3/7972a98 safety
+    pattern. FEATURE_NAMES 80→81 triggers wrapper auto-retrain via US-505
+    sha gate.
+
+(b) WHY this over recent failures. 7972a98 (current keep, combined=0.589282)
+    lifted aggregate +0.003 and singing slightly (0.340→0.345) via
+    ASYMMETRY on the mastering-signature axis. The asymmetry feature is
+    SILENT on two physically distinct cases that both need discriminating:
+    (i) BOTH voiced and unvoiced contrast shift together (different-singer
+    cross-song splice with different mastering — everything changes,
+    asymmetry cancels to ~0); (ii) NEITHER shifts (quiet within-song
+    passage — asymmetry also ~0). The ASYMMETRY collapses both the
+    "jointly big" and "jointly small" cases to the same sentinel, losing
+    discrimination. The SYMMETRY (sum) recovers exactly that axis: joint
+    magnitude large=splice-signature, small=within-song-stability.
+    Combined with the existing asymmetry, GBM sees the full 2D
+    (symmetry, asymmetry) plane: (high sym, ~0 asym) = different-singer
+    cross-song; (any sym, +asym) = same-singer cross-song; (low sym,
+    ~0 asym) = stable within song. GBM max_depth=3 CAN already access
+    voiced_spec_contrast_cosine_dist (e7ca9eb in-tree) but NOT
+    unvoiced_spec_contrast_cosine_dist as independent features, so it
+    cannot synthesize the sum — explicit SYMMETRY as a feature surfaces
+    the "joint magnitude" pattern directly.
+
+    Explicit cited escalation from 7972a98(c)(1): "If asymmetry signal
+    collapses on singing because chord-transition voiced contrast shifts
+    are small enough that asymmetry looks positive too, CLIP sign to the
+    positive side only and add a companion
+    `voiced_unvoiced_spec_contrast_symmetry` = unvoiced+voiced
+    (jointly-big vs jointly-small), giving GBM both axes." This is
+    option (1) from the most recent keep's own fallback plan.
+
+    Orthogonal to every prior axis: NOT 7972a98 (DIFFERENCE not sum; same
+    two components, orthogonal linear combination); NOT e7ca9eb
+    voiced_spec_contrast (single-mask, voiced-only); NOT
+    voiced_unvoiced_mfcc_asymmetry 1eda8e3 (different axis: cepstral
+    envelope not mastering signature, AND difference not sum); NOT
+    f4148cc voiced_unvoiced_chroma_asymmetry (different axis AND
+    difference). First SYMMETRIC / JOINT-MAGNITUDE feature in the
+    voiced/unvoiced mask family. Blast radius: features.py only — 1
+    new block function that duplicates the asymmetry block's mask/cosine
+    machinery and returns the sum; 1 FEATURE_NAMES append; 1 assert bump;
+    1 call in extract_features. ZERO new caches. Per-t cost: sub-ms
+    (mirrors asymmetry). Risk-bounded: sentinel-0.0 safety identical to
+    7972a98; feature is strictly nonnegative (sum of two cosine distances,
+    each in [0, 2]), bounded [0, 4].
+
+(c) IF THIS FAILS. (1) If GBM assigns ~0 SHAP (symmetry too correlated
+    with the existing single voiced_spec_contrast_cosine_dist at
+    max_depth=3), ADD a companion on the MFCC axis as well
+    (voiced_unvoiced_mfcc_symmetry) so GBM sees joint-magnitude
+    simultaneously in cepstral + mastering-signature spaces. (2) If
+    singing regresses (jointly-big false positives fire on loud
+    orchestral swells within same song), threshold the symmetry below
+    a quantile — only fire above the 90th percentile of training-set
+    joint magnitudes. (3) Final escalation: shift off features entirely
+    — try ANALYSIS_STRIDE_S=0.08 (denser scan between untried 0.06 and
+    current 0.12) or GBM_MIN_SEP_S=3.0 (= previously kept lower value,
+    for tighter dedup letting clustered TPs survive).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 19+
+    iterations — I cannot verify whether 7972a98's 3 surviving singing
+    FPs have jointly-big contrast shifts (testing this hypothesis's
+    core claim directly) or jointly-small. Without that data, the
+    "chord cycle = low symmetry" mechanism is theoretical. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for the current keep
+    (7972a98) — cannot see how the asymmetry feature's per-domain SHAP
+    compares to voiced_spec_contrast_cosine_dist to predict whether the
+    symmetry will add lift or be dominated by the existing single-mask
+    feature. (iii) The 0.589/0.586/0.532 plateau across the last 3
+    keeps suggests the feature family (voiced-mask + asymmetry on
+    MFCC/chroma/spec_contrast) may be reaching diminishing returns;
+    adding the final symmetry completes the linear-combination coverage
+    of this family but doesn't introduce a new physical axis (tempo,
+    rhythm, HPSS-percussive).
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 19+ consecutive iterations; per-FP
+    (domain, file, t_sec, label_id, p_splice, vp_pre_frac, vp_post_frac,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, voiced_chroma_dist,
+    unvoiced_chroma_dist, voiced_spec_contrast_dist,
+    unvoiced_spec_contrast_dist, top-5 |SHAP| features with values).
+    Every symmetry/asymmetry/mask hypothesis is calibrated from theory;
+    this single block flips the entire loop to data-driven. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that retrains
+    once and reports per-domain OOF-F1 delta vs current — turns "is
+    this feature worth a 3-min retrain" into a numeric preview. (3)
+    DISCARD-REVERT SYNC auditor — the wrapper's discard path should
+    diff features.py vs baseline-sha features.py and ABORT/restore on
+    drift — e7ca9eb's voiced_spec_contrast_cosine_dist is still in-tree
+    post-discard contaminating every subsequent attribution.
+
