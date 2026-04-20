@@ -4489,3 +4489,103 @@ per-domain: combined_english=0.835443 combined_korean=0.582353 combined_singing=
     (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
     DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot.
 
+## 2026-04-21T03:38:47+09:00 — 3d56d52 (discard, combined=0.479388)
+subject: add voiced_mfcc_post_retrospective_match (FEATURE_NAMES 80->81) -- VOICING-MASKED retrospective context match. Fuses proven voicing-mask self-gating (1eda8e3 +0.054 biggest keep, 49bd0b1 voiced_mfcc +0.028 keep) onto b5b1a0d's retrospective-match mechanism (all-frame version lifted singing 0.345->0.354 best in 60+ iterations but regressed korean/english). For post[t,t+2] voiced-mean MFCC, compute min cos_dist to voiced-mean MFCC at past windows [t-k-2,t-k] for k in {3,6,9,12}s. Voicing mask excludes mic/room noise-floor variability that drove b5b1a0d speech regression. Mechanism on 3 singing chord-cycle FPs: same singer's repeated vowels match some past k -> min tiny -> silent. Cross-song splice: post voiced differs from all past song-A voiced -> min large -> fires. Speech self-gating: within-recording same-speaker vowel-mean MFCC stable across past k -> min tiny non-splice -> silent. Cross-speaker splice: post voiced differs from all past speaker-A voiced -> min large -> fires. Reuses cached feat_mfcc + feat_vp, ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration OR any voiced mask empty -> sentinel 0.0. Orthogonal: NOT b5b1a0d (all-frame no mask); NOT 49bd0b1 voiced_mfcc (single-boundary no past bank no MIN); NOT 4e67946 persistence (future horizon); NOT 9064eec/c5040d7 cross-intra (intra sub-windows on SAME span); NOT 1eda8e3/7972a98 asymmetry (single boundary no past bank). FIRST voicing-masked min-over-past-context feature. Pure features.py change -- 1 new block (~55 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost 5 slices + 5 voiced-masked means on 13-dim + 4 cosines + 1 min, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name correct, synthetic A(220Hz)/B(440Hz) splice at t=30 yields 0.432 vs within-A t=20 yields 0.003 (~160x discrimination), edge guards t=10 (t-14<0) and t=39 (t+2>40s) both return 0.0, all 81 features finite on synthetic audio, idempotent on repeated calls.
+per-domain: combined_english=0.715385 combined_korean=0.466667 combined_singing=0.330000
+
+# 2026-04-21 — hypothesis: add voiced_mfcc_post_retrospective_match (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — VOICING-MASKED
+    retrospective context matching. For post[t,t+2] compute voiced-mean
+    MFCC; for each k ∈ {3, 6, 9, 12}s compute voiced-mean MFCC over
+    past window [t-k-2, t-k]; feature = MIN over k of cos_dist(
+    post_voiced_mean, past_voiced_mean_k). Reuses cached feat_mfcc +
+    feat_vp — ZERO new librosa calls, ZERO new caches. Edge guard
+    t-14<0 OR t+2>duration OR any window's voiced mask empty OR any
+    norm underflow → sentinel 0.0. FEATURE_NAMES 80→81 forces
+    auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. b5b1a0d (mfcc_post_retrospective_match
+    all-frame) IMPROVED singing 0.345→0.354 — the best singing score
+    in 60+ iterations, the retrospective mechanism clearly bit chord-
+    cycle FPs — but regressed korean 0.667→0.582 and english 0.889→
+    0.835. Speech regression very likely comes from all-frame mean
+    mixing voiced (phoneme) + unvoiced (silence/mic-noise) axes;
+    mic/room noise-floor at non-splice t differs across past k in a
+    recording with varying phoneme density, so min_past dist can be
+    non-trivial on non-splice speech → feature spuriously boosts
+    p_splice on speech, creating new FPs. Voicing-mask proven to fix
+    exactly this failure mode: 1eda8e3 MFCC asymmetry (+0.054 biggest
+    keep) and 49bd0b1 voiced_mfcc (+0.028 keep) both pair cepstral
+    cosine distance with a voiced mask to self-gate speech.
+
+    Mechanism on 3 singing chord-cycle FPs: same singer's voiced
+    vowels repeat at every chord cycle (2-3s period) → post
+    voiced_mean_mfcc at chord-cycle FP matches some past k ∈
+    {3,6,9,12}s window within the song closely → min tiny → silent,
+    FP not boosted. Unvoiced accompaniment transients are excluded
+    so noisy drum-hit variability no longer lifts the min.
+
+    Cross-song splice (singing TP): post voiced = song B vocalist,
+    past voiced = all song A vocalist → all past distances LARGE →
+    min LARGE → fires.
+
+    Speech self-gating on non-splice: within-recording same speaker's
+    vowel-mean MFCC is the speaker+mic fingerprint, stable across
+    past k=3/6/9/12s windows → min tiny on non-splice speech →
+    feature silent, no new FPs. Cross-speaker splice (speech TP):
+    post voiced = speaker B vowels, past voiced = all speaker A
+    vowels → min LARGE → fires, HELPS speech TPs (reproduces
+    1eda8e3 self-gating mechanism).
+
+    Orthogonal. NOT b5b1a0d (all-frame, no voicing mask); NOT
+    49bd0b1 voiced_mfcc (single-boundary, no past-history bank, no
+    MIN aggregator); NOT 4e67946 persistence (future horizon, same
+    pre reference); NOT 4314449 cross-scale (two scales, same
+    boundary); NOT 9064eec/c5040d7 cross-intra (intra sub-windows
+    on SAME span, no past bank, no MIN); NOT 1eda8e3/7972a98
+    asymmetry (voiced/unvoiced paired-diff on single boundary); NOT
+    1b4fe7c corr-matrix; NOT 1b3eb06 trajectory velocity; NOT
+    1e57702 histogram; NOT any DSP-gate. FIRST voicing-masked
+    min-over-past-context feature; FIRST feature combining voicing
+    mask with past pre-history comparison bank.
+
+    Blast radius. Pure features.py — 1 new block (~50 lines fusing
+    _block_voiced_mfcc mask logic with b5b1a0d's past-bank MIN
+    aggregator) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) +
+    1 call in extract_features. ZERO new caches, ZERO new librosa
+    calls. Per-t cost: 5 slices + 5 voiced-masked means on 13-dim +
+    4 cosines + 1 min, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing loses b5b1a0d's +0.009 gain (voicing
+    mask strips drum-onset signal that was driving retrospective-
+    match) → fall back to UNVOICED-only variant (unvoiced captures
+    drum/mastering which may be the true cross-song signature).
+    (2) Speech still regresses (within-recording vowel-mean voiced-
+    MFCC drifts enough at 3-12s offsets to make min non-trivial) →
+    widen offset bank to {6, 9, 12, 15, 18}s for longer baseline.
+    (3) Feature fires but zero SHAP (redundant with 49bd0b1
+    voiced_mfcc via correlated GBM splits) → pivot to CHROMA voiced
+    retrospective match (direct chord-class identity, orthogonal
+    to cepstral).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent — cannot
+    verify the 3 singing FPs sit at chord-cycle periods matching
+    {3,6,9,12}s; could be verse→chorus transitions (10-30s) or
+    sustained-pad bridges where retrospective bank finds no match.
+    (ii) SHAP rollup STILL empty for 14 keeps — cannot verify
+    whether 49bd0b1 voiced_mfcc was itself load-bearing. (iii)
+    b5b1a0d per-domain TP recall delta unknown (singing +0.009
+    could be on clean-FP-reduction OR on real-TP gain).
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks
+    across 67+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    voicing_fraction, voiced_mfcc_past_bank_min_k, top-5 |SHAP|).
+    Would settle every retrospective-context-match hypothesis
+    data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN to
+    the tunable frontier snapshot alongside GBM_*.
+
