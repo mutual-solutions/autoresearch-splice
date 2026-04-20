@@ -4951,3 +4951,126 @@ per-domain: combined_english=0.783750 combined_korean=0.517808 combined_singing=
     "no Δ → skip") with joblib-mtime sanity check post-retrain.
     Would isolate the 0.4907 identical-streak root cause.
 
+## 2026-04-20T23:47:24+09:00 — c5040d7 (discard, combined=0.512673)
+subject: add voiced_mfcc_cross_intra_contrast (FEATURE_NAMES 80->81) -- voicing-masked SECOND-ORDER MFCC consistency feature fusing two proven mechanisms: voicing-mask (1eda8e3 asym kept +0.054 biggest win, 49bd0b1 voiced_mfcc kept +0.028) + 2nd-order cross-intra template (9064eec all-frame MFCC 0.544 closest-to-baseline in 20+ recent failures, but speech regressed english 0.889->0.861 due to unvoiced consonant/silence MFCC heterogeneity pushing cross > intra on speech). pre/post +-4s clipped to [t-4,t+4]: intra_pre=cos_dist(voiced_mean_mfcc(t-4,t-2), voiced_mean_mfcc(t-2,t)); intra_post=cos_dist(voiced_mean_mfcc(t,t+2), voiced_mean_mfcc(t+2,t+4)); cross=cos_dist(voiced_mean_mfcc(t-4,t), voiced_mean_mfcc(t,t+4)); feature=cross-0.5*(intra_pre+intra_post). Voiced mask uses feat_vp>0 on feat_mfcc, ZERO new librosa calls, ZERO new caches. Edge guard t-4<0 OR t+4>duration_s OR any mask empty OR any norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. CLAUDE.md mandates structural change after 5+ same-axis failures; 26+ iterations exhausted 1st-order voiced/unvoiced paired-diff across every content axis (MFCC/spec_contrast/chroma/flatness/RMS-dB/ZCR/bandwidth/rolloff) + every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span) + F0 distribution (IQR/median-cents) + voicing-mask temporal structure + detector peak-width; the untried move inside the 2nd-order template is NOT another content axis or geometry but COMBINING 2nd-order with the voicing mask that has always been the productive speech-self-gating mechanism. Mechanism on 3 singing chord-cycle FPs: voiced MFCC drifts smoothly with lyric/vowel progression on both sides of t within one song; intra_pre captures ~1 chord boundary on voiced vowels ~0.04-0.08; intra_post similar; cross 4s-vs-4s voiced-mean still within-song same singer ~0.04-0.08; feature ~0 silent, FP not boosted. Real cross-song splice: pre 4s song A voiced-consistent (intra_pre ~0.03-0.05), post 4s song B voiced-consistent (intra_post ~0.03-0.05), cross captures vocal-tract/mastering shift on voiced frames ~0.10-0.30; feature +0.16 POSITIVE. Speech self-gating: voiced MFCC on speech is vowel-identity-driven; 2s samples ~4-6 vowels giving stable per-speaker centroid; 4s samples ~8-12 vowels giving SAME centroid; intra~intra~cross on speech -> feature ~0 across non-splice positions -> GBM low per-domain SHAP on english/korean -> feature functionally invisible on speech. Same mechanism that made 49bd0b1 voiced_mfcc speech-safe. Orthogonal: NOT 9064eec mfcc_cross_intra_contrast (all-frame no mask); NOT 26a3687 spec_contrast_cross_intra_contrast (different content axis); NOT 1eda8e3 / any voiced_unvoiced_mfcc geometry variant (1st-order paired-diff no intra baseline); NOT 49bd0b1 voiced_mfcc (1st-order single distance no intra); NOT any 1D-scalar asymmetry (RMS/ZCR/bandwidth/rolloff/flatness); NOT F0 distribution; NOT voicing_transition_rate_delta; NOT detector post-filter. FIRST voicing-masked second-order feature in the 80-feature set. Pure features.py change -- 1 new block (~65 lines fusing _block_voiced_mfcc mask logic with 9064eec intra/cross structure) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 6 slices + 6 voiced-masked means on 13-dim vectors + 3 cosines + 2 subtractions + 1 average, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_mfcc_cross_intra_contrast', synthetic A(440Hz sine)/B(220Hz saw) splice at t=10 yields +0.372 LARGE, within-source t=5 yields -0.0002 sentinel-small (~1900x discrimination), edge guard t=1 (t-4<0) returns 0.0, edge guard t=17 with 20s audio (t+4>20) returns 0.0, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.774074 combined_korean=0.555385 combined_singing=0.313433
+
+# 2026-04-20 — hypothesis: add voiced_mfcc_cross_intra_contrast (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot combining
+    two proven mechanisms into one: the voicing-mask (1eda8e3 voiced_unvoiced
+    asymmetry kept +0.054 biggest win; 49bd0b1 voiced_mfcc kept +0.028) plus
+    the second-order cross-intra template (9064eec all-frame MFCC version
+    was the CLOSEST-to-baseline recent hypothesis at 0.544 — every other
+    1st-order failure sat at 0.49-0.52). For pre/post ±4s clipped to
+    [t-4, t+4]:
+        intra_pre  = cos_dist(voiced_mean_mfcc(t-4,t-2), voiced_mean_mfcc(t-2,t))
+        intra_post = cos_dist(voiced_mean_mfcc(t,t+2),   voiced_mean_mfcc(t+2,t+4))
+        cross      = cos_dist(voiced_mean_mfcc(t-4,t),   voiced_mean_mfcc(t,t+4))
+        feature    = cross - 0.5 * (intra_pre + intra_post)
+    Voiced mean uses vp>0 mask on existing feat_mfcc+feat_vp — ZERO new
+    librosa calls, ZERO new caches. Edge guard t-4<0 OR t+4>duration_s OR
+    any masked sub-window empty OR any norm underflow → sentinel 0.0.
+    FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 9064eec (all-frame MFCC 2nd-order) hit
+    combined=0.544 — the best recent near-baseline result in the 20+-
+    iteration valley — but speech regressed (english 0.889→0.861, korean
+    0.667→0.624) because unvoiced MFCC frames (consonants /s,f,p,t/ +
+    silence) have wildly varying cepstra, so on speech the 4s-mean cross
+    overshot 2s-sub-mean intra. Its cited fallback (c)(1) was normalized
+    ratio and (c)(2) narrower windows. 26a3687 content-axis swap to
+    spec_contrast didn't close the gap (0.493, singing 0.295, english
+    0.784 collapsed harder than MFCC did). CLAUDE.md mandates structural
+    change after 5+ same-axis failures; the untried move inside the
+    2nd-order template is NOT another content axis or geometry but
+    **combining the 2nd-order template with the voicing mask** that
+    has always been the productive speech-self-gating mechanism on this
+    project (1eda8e3 +0.054, 49bd0b1 +0.028).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Singer's vocal
+    tract + bus compression are continuous within one song; voiced MFCC
+    drifts smoothly across chord transitions (vowels shift formants with
+    lyric progression but not with chord). intra_pre captures ~1 chord
+    boundary on voiced vowels → 0.04-0.08. intra_post similar. cross
+    averages 4s of voiced vowels pre vs 4s of voiced vowels post — still
+    within-song, same singer → 0.04-0.08. feature ≈ 0.06 − 0.06 ≈ 0,
+    silent, FP NOT boosted.
+
+    Real cross-song splice (different-singer OR same-singer different
+    recording). Pre-side 4s of song A voiced vowels is self-consistent
+    (intra_pre ≈ 0.03-0.05). Post-side 4s of song B voiced vowels is
+    self-consistent (intra_post ≈ 0.03-0.05). cross captures vocal-tract
+    + mastering shift on voiced frames between A and B → 0.10-0.30.
+    feature ≈ 0.20 − 0.04 = +0.16 POSITIVE. Smaller than 9064eec all-
+    frame on cross-song (which captured drum/mastering shift too) but
+    cleaner separation from chord-cycle FP because intra is now
+    genuinely small within-song on voiced frames.
+
+    Speech self-gating via voicing mask. The 9064eec failure mode —
+    cross overshoots intra on english/korean due to unvoiced-frame
+    heterogeneity — is neutralized by masking to voiced. Voiced MFCC on
+    speech is driven by vowel identity; 2s voiced-mean samples ~4-6
+    vowels giving a stable per-speaker centroid; 4s voiced-mean samples
+    ~8-12 vowels giving the SAME centroid (same speaker). So intra_pre
+    ≈ intra_post ≈ cross on speech → feature ≈ 0 across non-splice
+    positions → GBM low per-domain SHAP on english/korean → feature
+    functionally invisible on speech domains. Same mechanism that made
+    49bd0b1 voiced_mfcc speech-safe.
+
+    Orthogonal. NOT 9064eec mfcc_cross_intra_contrast (all-frame, no
+    voicing mask — this is voicing-masked); NOT 26a3687
+    spec_contrast_cross_intra_contrast (different content axis); NOT
+    1eda8e3 voiced_unvoiced_mfcc_asymmetry or any geometry variant
+    (1st-order paired-diff, no intra baseline); NOT 49bd0b1 voiced_mfcc
+    (1st-order single distance, no intra baseline); NOT any 1D-scalar
+    asymmetry (RMS/ZCR/bandwidth/rolloff/flatness); NOT F0 distribution;
+    NOT voicing_transition_rate_delta; NOT detector post-filter. FIRST
+    voicing-masked second-order feature in the 80-feature set.
+
+    Blast radius: 1 new block (~55 lines, fusion of _block_voiced_mfcc
+    mask logic with 9064eec-style intra/cross structure) + 1
+    FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost: 6 slices + 6 voiced-masked means on 13-dim vectors + 3
+    cosines + 2 subtractions + 1 average, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech preserved (voiced
+    MFCC 2s vs 4s drift matches cross on chord cycles — intra-baseline
+    cancels the chord-cycle signal too aggressively because voiced
+    vowel content shifts with lyrics even within one song) → fallback
+    to voiced_chroma_cross_intra_contrast (chroma is key-signature,
+    stable within song's key even across lyric phrases). (2) Speech
+    regresses (voiced vowel identity varies enough across 4s spans
+    that cross > intra on speech too) → narrow template to ±3s / 1.5s
+    sub-windows. (3) combined matches 0.589282 exactly → feature
+    fires but GBM assigns ~zero SHAP (redundant with existing
+    voiced_mfcc_cosine_dist); pivot to per-side asymmetry of 2nd-order
+    signals.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 50+
+    iterations — cannot verify whether the 3 singing FPs sit in
+    regions where voiced-mean MFCC intra drift is actually small
+    (mechanism assumption) or whether lyric-driven vowel turnover
+    already dominates intra. (ii) SHAP rollup STILL empty for 14
+    keeps — cannot verify whether 9064eec's 0.544 hit truly came
+    from 2nd-order signal or from some unrelated splits. (iii) 0.4907
+    identical-streak root cause still unknown. (iv) 99081f5 4/16
+    capacity ghost still at HEAD per prior reflections.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 50+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, voiced_mfcc_cosine_dist,
+    voicing_prob_pre, voicing_prob_post, top-5 |SHAP|). Would turn
+    every voicing-masked hypothesis into a data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without per-
+    feature attribution I pick "theoretically orthogonal" not "what
+    GBM actually uses."
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
+    with joblib-mtime sanity check post-retrain. Would isolate the
+    0.4907 identical-streak root cause.
+
