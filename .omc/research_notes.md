@@ -5605,3 +5605,100 @@ per-domain: combined_english=0.850000 combined_korean=0.537313 combined_singing=
     persistence-feature mechanism directly). (2) SHAP ROLLUP REPAIR.
     (3) RETRAIN-ACTUALLY-FIRED TRACE with joblib-mtime sanity check.
 
+## 2026-04-21T01:20:50+09:00 — e2ad8b0 (discard, combined=0.503369)
+subject: add onset_tempo_peak_lag_delta (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.850000 combined_korean=0.633333 combined_singing=0.236923
+
+# 2026-04-21 — hypothesis: add onset_tempo_peak_lag_delta (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot to a
+    RHYTHMIC/TEMPO-PERIODICITY axis via the autocorrelation peak-lag
+    (tempo estimate) of the onset-strength envelope. For windows
+    clipped to [t-4, t] and [t, t+4], smooth the onset envelope with
+    a ~100 ms uniform filter, compute normalized ACF over lags
+    0.25–1.5 s (≈ 40–240 BPM), and take the argmax lag on each side:
+        pre_peak  = argmax_ACF( onset_env[t-4:t] )
+        post_peak = argmax_ACF( onset_env[t:t+4] )
+        feature   = |post_peak − pre_peak|  (seconds)
+    Reuses cached feat_onset (librosa.onset.onset_strength, hop 512).
+    ZERO new librosa calls, ZERO new caches. Edge guard t-4<0 OR
+    t+4>duration OR frames<16 OR ACF zero-lag underflow → 0.0.
+    FEATURE_NAMES 80→81 forces retrain via US-505 sha gate.
+
+    Smoke note: smoothed peak-lag delta fires 0.05–0.64 s across
+    various positions on real spliced-singing audio, and 0.05–0.89 s
+    on clean audio — not a clean discriminator at the per-position
+    level but the hope is GBM can exploit the population-level shift
+    (splice positions tend higher) in conjunction with other features.
+    If SHAP is zero / feature is pure noise, the wrapper discards
+    this as a harmless null hypothesis.
+
+(b) WHY this over recent failures. 28+ content-axis variants exhausted
+    (MFCC/spec_contrast/chroma/spec_flatness/RMS-dB/ZCR/spec_bandwidth/
+    spec_rolloff; 1st-order paired-diff + 2nd-order cross-intra + voiced
+    mask + unvoiced mask + all-frame + F-statistic variance + future
+    persistence). Every 2nd-order variant collapsed on the 3 singing
+    chord-cycle FPs because within-song content drift fills intra
+    windows with the same scale of mean shift as the cross boundary.
+    The genuinely untried structural axis is **tempo/rhythm
+    periodicity** — the beat-period signature encoded by onset-strength
+    autocorrelation. Within one song the tempo is a SOLID invariant:
+    drummer, metronome, rhythm section hold a constant BPM across
+    verse→chorus→bridge → ACF peak sits at the same lag before AND
+    after t → pre-ACF and post-ACF highly correlated → feature silent,
+    chord-cycle FP NOT boosted. Cross-song splice typically crosses
+    tempos (80-BPM ballad → 140-BPM up-tempo; even same-artist albums
+    rarely share BPM exactly) → ACF peak shifts lag → feature fires.
+    Speech self-gating: onset envelope on speech is syllable-burst
+    aperiodic noise (no stable tempo); ACF is flat-ish on both sides
+    of any within-recording position → feature ≈ 0 → GBM low per-domain
+    SHAP on english/korean. Cross-speaker splice: still mostly flat
+    both sides, feature ≈ 0, handled by 1eda8e3 voiced_unvoiced_mfcc
+    asymmetry (+0.054 biggest keep).
+
+    Orthogonal. NOT any content axis (not MFCC/chroma/spec_contrast/
+    spec_flatness/RMS/ZCR/bandwidth/rolloff/tonnetz); NOT voicing mask;
+    NOT 8fc7169 voicing_transition_rate_delta (counts of
+    voiced↔unvoiced transitions on the vp mask — scalar delta, not ACF
+    of onset env); NOT any 1st-order paired-diff / 2nd-order cross-
+    intra / variance-ratio / persistence-ratio; NOT detector post-
+    filter. FIRST rhythmic/tempo-structure feature; FIRST
+    autocorrelation-based feature on any cached 1D envelope.
+
+    Blast radius. Pure features.py change — 1 new block (~40 lines:
+    slice + mean-center + np.correlate + cosine distance on normalized
+    lag vector) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) +
+    1 call. ZERO new caches, ZERO new librosa calls. Per-t cost: 2
+    slices of ~172 frames + 2 np.correlate (O(n²) ~30k ops) + 1
+    cosine, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (within-song tempo is
+    drifty enough at 4s that ACF peaks walk, OR cross-song tempos
+    happen to match within 5%) → widen window to ±6s for stabler ACF
+    sampling. (2) Speech regresses (syllable-burst rate is stable
+    enough per speaker that ACF peaks at ~1/syl-rate lag, and
+    cross-speaker splice shifts syl-rate) → restrict lag range to
+    [0.25, 1.5]s (excludes sub-250ms syllable scale). (3) Combined
+    matches the 0.4907 identical-streak → features.py sha bump fails
+    to force retrain; escalate as systemic wrapper cache-coherence.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 58+
+    iterations — cannot verify whether the 3 singing FPs sit in
+    regions with strong tempo ACF or in less rhythmic outro/intro
+    sections. (ii) SHAP rollup STILL empty for 14 keeps — still
+    blind to which features GBM actually uses. (iii) No diagnostic
+    emits for onset-envelope statistics at eval time; will need to
+    theorize whether the feature even fires meaningfully.
+
+(e) Wrapper enhancements (unchanged 3 highest-priority asks):
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, onset_env_mean_pm4s,
+    onset_env_acf_peak_lag_pm4s, top-5 |SHAP|).
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; axis choice
+    remains theory-only without per-feature attribution.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
+    with joblib-mtime sanity check.
+
