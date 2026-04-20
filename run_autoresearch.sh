@@ -710,6 +710,12 @@ run_loop() {
         _check_disk_space soft
         [ -f "$STOP_FILE" ] && { _log INFO wrapper stop_signal; break; }
 
+        # US-518b: after a discard streak, OMC_FEATURES_PY_SHA points at a sha
+        # _guarded_reset already purged from features.py; unset so the prune
+        # guard (L47-50) falls back to git hash-object on the reset file.
+        unset OMC_FEATURES_PY_SHA
+        _prune_feature_cache_gb
+
         # Run one iteration via claude
         _log INFO wrapper iteration.start consecutive_discards="$consecutive_discards"
         _reset_iter_timers

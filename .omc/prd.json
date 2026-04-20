@@ -340,13 +340,30 @@
       "id": "US-518R",
       "title": "Restart the loop + verify first iteration runs without SIGPIPE",
       "priority": 71,
-      "passes": false,
+      "passes": true,
+      "note": "Validated T+1h15min post-restart (2026-04-20T02:07:29Z T0 → 03:22:49Z): 0 loop.crash, 0 signal=141, 3 complete iterations + 1 in-flight, feature_cache drifted to 14 GB due to separate discard-path prune gap (addressed in US-518B).",
       "acceptanceCriteria": [
         "Loop restarted via `./run_autoresearch.sh start`; tmux session `autoresearch` alive",
         "First iteration post-restart produces `iteration.start` + `tunable.frontier.snapshot` + retrain + eval events without any new `loop.crash` event within the first 15 minutes",
         "Wrapper.loop.started event is present in .omc/logs/autoresearch.jsonl after the restart moment",
         "No `signal=141` or any `loop.crash` event emitted since the restart",
         "feature_cache stays below 8 GB cap across the first post-restart iteration"
+      ]
+    },
+    {
+      "id": "US-518B",
+      "title": "Prune feature_cache on discard path — prevent runaway growth during discard streaks",
+      "priority": 72,
+      "passes": false,
+      "note": "Discovered during the 24h-stability monitor: with 9 consecutive discards post-SIGPIPE-fix, feature_cache grew 8 GB → 25 GB (disk 16 GB → 4.2 GB, below preflight 5 GB floor). Root cause: existing _prune_feature_cache_gb only fires at loop-start + post-keep. Each discarded hypothesis that bumps features.py sha adds ~4 GB cache that never gets reclaimed until the next keep. Fix: invoke _prune_feature_cache_gb at top of while-loop (post-disk-check, pre-iteration.start), with OMC_FEATURES_PY_SHA unset so the guard uses post-reset (baseline) sha via git hash-object fallback. Idempotent no-op when cache ≤ 8 GB cap.",
+      "acceptanceCriteria": [
+        "run_autoresearch.sh has a _prune_feature_cache_gb invocation at the top of the run_loop while loop (between _check_disk_space soft and iteration.start)",
+        "The invocation unsets OMC_FEATURES_PY_SHA first so the guard uses the post-reset baseline sha (L48-50 git hash-object fallback), NOT the stale hypothesis sha from prior eval phase",
+        "`bash -n run_autoresearch.sh` passes (no syntax regression)",
+        "`./run_autoresearch.sh selftest` still passes 3/3 (prune correctness + preflight gate unchanged)",
+        "`PYTHONPATH=$PWD uv run python scripts/validate_logs.py --audit` reports 0 violations",
+        "After loop restart with 25 GB cache, first iteration observes cache ≤ 8 GB (prune fires at L692 loop-start, before any new sha work)",
+        "Over ≥ 3 consecutive discard iterations post-restart, feature_cache stays ≤ 10 GB (demonstrates the new top-of-loop prune reclaims discard-added shas)"
       ]
     }
   ]
