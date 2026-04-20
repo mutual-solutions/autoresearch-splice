@@ -3690,3 +3690,125 @@ per-domain: combined_english=0.825000 combined_korean=0.530882 combined_singing=
     is still in-effect. Three unchanged highest-priority requests across
     45+ iterations.
 
+## 2026-04-20T20:56:02+09:00 — c006d52 (discard, combined=0.490700)
+subject: add voiced_unvoiced_rms_asymmetry_db feature (FEATURE_NAMES 80->81) -- STRUCTURAL pivot from spectral-envelope cosine distance to ENERGY-LEVEL dB. Apply proven voiced/unvoiced paired-difference template (1eda8e3 NEAR MFCC +0.054 biggest keep, 7972a98 NEAR spec_contrast +0.005) to a genuinely NEW content axis: log-RMS dB level rather than cepstral/mastering/pitch-class cosine. pre[t-2,t] post[t,t+2]. For each window compute voiced-mean RMS and unvoiced-mean RMS in dB, then asymmetry = (unvoiced_post_db - unvoiced_pre_db) - (voiced_post_db - voiced_pre_db). Reuses cached feat_rms (per-frame RMS, 512 hop) + feat_vp (voicing probability, same 512 hop) -- ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when any mask empty OR any sub-window mean <= 1e-10 (log-safe). FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Last 12+ iterations exhausted GEOMETRY variation on the asymmetry template across MFCC/spec_contrast/chroma/spec_flatness content axes (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span/gap-geometry -- all discarded); CLAUDE.md mandates structural change after 5+ same-axis failures. Untried structural dimension is the CONTENT AXIS itself: energy-level paired-differencing on voiced/unvoiced split (GBM never saw rms asymmetry form, existing rms_db_delta is all-frame no split). Mechanism on 3 surviving singing chord-cycle FPs: within-song vocal bus + drum bus + master limiter are FROZEN; chord transitions don't change mastering -> voiced_delta and unvoiced_delta both ~0 -> asymmetry ~0 silent, FP not boosted. Same-singer cross-song: vocal bus adapts so voiced_delta small 1-3 dB, mastering jumps so unvoiced_delta LARGE 3-8 dB -> asymmetry POSITIVE, real TP boosted. Different-singer cross-song: both shift -> existing 1eda8e3 MFCC asymmetry fires. Speech self-gating via paired differencing (proven 1eda8e3 mechanism): voiced RMS (vowels) and unvoiced RMS (consonants + pauses) both vary with phoneme density and sentence context -- but co-vary within same recording (continuous preamp gain / speaker intensity) -> voiced_delta and unvoiced_delta both track phoneme drift -> DIFFERENCE is zero-mean noise -> GBM low per-domain SHAP on english/korean -> feature functionally invisible on speech domains. FIRST ENERGY-LEVEL (log-RMS dB) asymmetry on any mask split. Orthogonal: NOT 1eda8e3 (cepstral cosine); NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac (spec_contrast cosine variants); NOT f4148cc (chroma cosine); NOT 0c3bf76 (spec_flatness scalar abs-delta, NOT dB-ratio); NOT rms_db_delta (all-frame scalar, no mask); NOT any MFCC geometry variant; NOT percussive/harmonic mask family; NOT F0/rhythm/tempo features. Pure features.py change -- 1 new block (~45 lines cloned from _block_voiced_unvoiced_mfcc_asymmetry with scalar-mean + dB conversion replacing vector-cosine) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 4 slices + 4 masked means + 4 log10 + 2 subtractions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_rms_asymmetry_db', direct block test at splice boundary with unvoiced mastering jump yields +9.5 dB asymmetry, stationary windows return 0.0, empty unvoiced mask returns sentinel 0.0, zero-rms sentinel 0.0, end-to-end extract_features returns 81 finite features on synthetic audio, idempotent on repeated calls.
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_rms_asymmetry_db (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot: apply
+    the proven voiced/unvoiced paired-difference template (1eda8e3 NEAR
+    MFCC asymmetry kept +0.054, biggest win; 7972a98 NEAR spec_contrast
+    asymmetry kept +0.005) to a genuinely NEW content axis — **log-RMS
+    ENERGY LEVEL in dB** rather than spectral-shape cosine distance. For
+    pre=[t-2,t] and post=[t,t+2], compute voiced-frame-mean RMS in dB and
+    unvoiced-frame-mean RMS in dB. Then
+        voiced_delta  = voiced_post_db  - voiced_pre_db
+        unvoiced_delta = unvoiced_post_db - unvoiced_pre_db
+        feature = unvoiced_delta - voiced_delta
+    Reuses cached feat_rms (512-hop per-frame RMS) + feat_vp (voicing
+    probability, same 512 hop) — ZERO new librosa calls, ZERO new caches.
+    Sentinel 0.0 when any mask is empty OR any sub-window mean ≤ 1e-10
+    (log-safe). FEATURE_NAMES 80→81 forces wrapper auto-retrain via
+    US-505 sha gate.
+
+(b) WHY this over recent failures. The voiced/unvoiced asymmetry template
+    is provably the most productive axis in loop history (1eda8e3 +0.054,
+    7972a98 +0.005). The last 12+ iterations have exhausted GEOMETRY
+    variation on that template across SPECTRAL content axes: NEAR/MID/
+    WIDE/FAR/narrow-gap/balanced-span on MFCC, spec_contrast, chroma,
+    spec_flatness — every one discarded. Recent 10 iterations all
+    combined < baseline 0.589. CLAUDE.md mandates structural change after
+    5+ same-axis failures. The untried structural dimension is the
+    **content axis itself**, not geometry: move paired differencing onto
+    the ENERGY-LEVEL signal (log-RMS dB) instead of spectral-envelope
+    cosine distance. Prior rms_db_pre/post/delta (block 6) are
+    ALL-FRAME, no voiced/unvoiced split — GBM has never seen the
+    asymmetry form on this signal.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song the
+    vocal bus compressor + drum bus compressor + master limiter are all
+    FROZEN; chord transitions don't change mastering chain. voiced-frame
+    RMS stays within ~1-2 dB of its within-song baseline (singer's steady
+    vocal level held by the bus compressor); unvoiced-frame RMS stays
+    equally flat (same kit, same bus comp). Both deltas ≈ 0 →
+    asymmetry ≈ 0, feature silent on the chord-cycle FPs, so these FPs
+    are not boosted.
+
+    Same-singer cross-song splice. Singer continues in similar register
+    (vocal bus adapts within ~2s so voiced_delta is small, 1-3 dB).
+    Mastering chain jumps: different drum bus compression / master EQ /
+    limiter threshold / LUFS target → unvoiced_delta can be LARGE (3-8
+    dB). asymmetry = unvoiced_delta − voiced_delta is strongly positive.
+    Different-singer cross-song: both deltas could be large; asymmetry
+    partially cancels, but existing 1eda8e3 MFCC asymmetry already fires
+    on that case.
+
+    Speech self-gating via paired-difference (proven mechanism). On
+    english/korean, voiced RMS (vowels) and unvoiced RMS (consonants +
+    pauses) both vary with phoneme density, word boundaries, and prosodic
+    stress — but they CO-VARY within the same recording (continuous
+    microphone gain / preamp / speaker intensity). voiced_delta and
+    unvoiced_delta both respond to the same sentence-context shift, so
+    their DIFFERENCE is zero-mean noise → GBM low per-domain SHAP on
+    english/korean → feature functionally invisible on speech domains.
+    Same self-gating that made 1eda8e3 speech-safe.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (cepstral cosine);
+    NOT 7972a98 / d290101 / 177d641 / 88adb49 / 6c6c254 / 347c0ac
+    (spec_contrast variants); NOT f4148cc (chroma cosine); NOT 0c3bf76
+    (spec_flatness scalar abs-delta, NOT dB-ratio); NOT rms_db_delta
+    (all-frame scalar, no mask); NOT any MFCC geometry variant; NOT
+    percussive/harmonic mask family; NOT F0/rhythm/tempo features.
+    FIRST ENERGY-LEVEL (log-RMS dB) asymmetry on ANY mask split.
+
+    Blast radius: 1 new block function (~45 lines cloned from
+    _block_voiced_unvoiced_mfcc_asymmetry with scalar-mean + dB conversion
+    replacing vector-cosine) + 1 FEATURE_NAMES append + 2 assert bumps
+    (80→81) + 1 call in extract_features. ZERO new caches, ZERO new
+    librosa calls. Per-t cost: 4 slices + 4 masked means + 4 log10 +
+    2 subtractions, sub-ms.
+
+(c) IF THIS FAILS. (1) Speech regresses (voiced/unvoiced RMS do NOT
+    co-vary tightly on prosodic speech — pauses vs peaks have different
+    voiced/unvoiced balance that doesn't cancel) → fallback to
+    voiced_unvoiced_rms_ratio_delta using ratio voiced/unvoiced in linear
+    (non-dB) units, which cancels multiplicative preamp gain shifts on
+    speech but exposes mastering chain differences on singing. (2) Singing
+    unchanged (mastering shifts are not big enough in dB at 2s windows —
+    auto-leveling within each track flattens differences) → extend
+    windows to pre[t-4,t] post[t,t+4] (WIDE-adjacent on RMS, same template
+    but 4s spans for statistical robustness of per-window mean). (3)
+    combined matches 0.589282 exactly → feature fires but GBM assigns
+    zero SHAP (signal structurally identical to existing rms_db_delta
+    once voicing-split is irrelevant under the ghost max_depth=4/
+    max_leaf=16) → escalate with structural pivot: F0 jitter asymmetry
+    voiced_f0_jitter_asymmetry (untried F0-shape content axis per
+    d49284c/c3).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 45+
+    iterations — cannot verify the 3 surviving singing FPs' t_sec or
+    chunk_duration so every hypothesis is theory-calibrated. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite 14
+    keeps — rollup writer broken. No per-feature attribution; picking
+    feature axes is theory-only. (iii) 99081f5 capacity ghost in-tree
+    (max_depth=4, max_leaf_nodes=16) per 347c0ac(d)(iii) — any feature-
+    add retrains against 4/16 but compares against baseline possibly set
+    under different config; attribution contaminated. (iv) 920dcdb US-505b
+    fix for train_classifier.py sha-gate presumed live but unverified —
+    no wrapper log line confirms hyperparam-only retrains now fire.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — 45+-iteration blocker cited in every reflection. Per-FP
+    (domain, file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|,
+    voiced_rms_db_pre, unvoiced_rms_db_pre). Would turn every
+    voiced/unvoiced asymmetry hypothesis from theory bet into
+    data-driven decision. (2) SHAP ROLLUP REPAIR — rollup empty for 14
+    keeps is long-standing bug; without per-feature attribution the
+    feature-selection policy is blind. (3) US-505b VERIFICATION TRACE —
+    wrapper log line at retrain decision point ("features.py sha Δ →
+    retrain" vs "train_classifier.py sha Δ → retrain" vs "no Δ → skip")
+    confirms 920dcdb works.
+
