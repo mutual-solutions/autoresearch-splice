@@ -3534,3 +3534,111 @@ per-domain: combined_english=0.888889 combined_korean=0.696970 combined_singing=
     into the next iteration's classifier (voiced_spec_contrast dragging
     confounds every subsequent attribution).
 
+## 2026-04-20T10:26:27+09:00 — 7972a98 (keep, combined=0.589282)
+subject: add voiced_unvoiced_spec_contrast_asymmetry feature (FEATURE_NAMES 79->80) — third entry in the asymmetric voiced/unvoiced series after 1eda8e3 MFCC (keep +0.054) and f4148cc chroma (discard -0.004). Signed asymmetry unvoiced_spec_contrast_cosine_dist minus voiced_spec_contrast_cosine_dist on +-2s pre/post window. Reuses cached feat_contrast + feat_vp (existing for spec_contrast_delta and e7ca9eb voiced_spec_contrast) — ZERO new librosa calls, ZERO new caches. Per-t cost 4 slices + 4 masked means + 2 cosines on 7-dim vectors, sub-ms. Sentinel 0.0 when either mask empty or either sub-norm underflows, matching 1eda8e3 safety pattern. Targets 1eda8e3 current-keep (0.586244) singing 0.340 weakest-domain plateau where MFCC asymmetry lifted english 0.732->0.889 and korean 0.526->0.667 but singing stayed FLAT, and chroma asymmetry failed (singing 0.340->0.319 because singer sings new note in new key across real splice so voiced_chroma_dist also high and asymmetry cancels). Spec_contrast targets a genuinely orthogonal axis: MASTERING SIGNATURE — per-band peak-to-valley amplitude ratio is a compressor/limiter fingerprint. Within one mastered track the profile is fixed; cross-song splice crosses masters (different compression ratio, different EQ, different limiter). Mechanism on singing: (i) real same-singer cross-song splice — voiced contrast stable (same formant structure), unvoiced contrast SHIFTS (different mastering on drums/bass) -> asymmetry LARGE POSITIVE. (ii) intra-song chord cycle — voiced contrast shifts (different vowel formants per phrase), unvoiced contrast stable (same drums, same mastering) -> asymmetry NEGATIVE. (iii) different-singer cross-song — both shift -> asymmetry ~0. The SIGN carries discriminating info that chord-cycle FPs cannot mimic. Paired differencing on speech: voiced and unvoiced contrast co-vary with phoneme context (plosive burst + vowel land on similar band peaks) -> difference is zero-mean noise -> GBM low SHAP on english/korean. Cited escalation (3) from f4148cc(c)(3): 'add voiced_unvoiced_spec_contrast_asymmetry so GBM sees accompaniment-vs-voice asymmetry in cepstral + pitch-class + mastering-signature spaces simultaneously'. e7ca9eb voiced_spec_contrast_cosine_dist is still in-tree (wrapper failed to revert on discard) so adding the asymmetric companion completes the pair — GBM can learn the (voiced_single, asymmetry) joint that single-mask alone couldn't surface. GBM max_depth=3 CANNOT synthesize this subtraction interaction from voiced_spec_contrast alone. Orthogonal to every prior axis: NOT 1eda8e3 voiced_unvoiced_mfcc_asymmetry (13-dim cepstral smooth envelope); NOT f4148cc voiced_unvoiced_chroma_asymmetry (12-dim pitch-class); NOT e7ca9eb voiced_spec_contrast (single-mask, no sign); NOT 32cac36 voiced_chroma (single-mask, pitch-class); NOT 308aa5a tonnetz (6-dim linear projection of chroma); NOT 49bd0b1 voiced_mfcc (single-mask cepstral). First ASYMMETRIC/DIFFERENTIAL feature in the 7-dim MASTERING-SIGNATURE axis. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==80, last name 'voiced_unvoiced_spec_contrast_asymmetry', end-to-end extract_features returns 80 finite features on synthetic audio, sentinel 0.0 triggers correctly when voicing-mask empty (pure-sine probe).
+per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=0.345312
+
+# 2026-04-20 — hypothesis: voiced_unvoiced_spec_contrast_asymmetry (FEATURE_NAMES 79→80)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `voiced_unvoiced_spec_contrast_asymmetry`. Third entry in the asymmetric
+    voiced/unvoiced series (MFCC=keep 1eda8e3 +0.054, chroma=fail f4148cc
+    −0.004, spec_contrast=untried). Per position t_sec compute (1)
+    voiced_contrast_dist = cosine distance between VOICED-mean 7-dim
+    spectral_contrast on pre=[t−2, t] vs post=[t, t+2]; (2)
+    unvoiced_contrast_dist = same on UNVOICED frames; (3) return
+    `unvoiced_contrast_dist − voiced_contrast_dist`. Reuses feat_contrast
+    + feat_vp (ZERO new librosa calls, ZERO new caches — feat_contrast is
+    already built for the existing spec_contrast_delta feature and the
+    e7ca9eb voiced_spec_contrast single-mask block). Sentinel 0.0 when
+    either mask empty or sub-norm underflows.
+
+(b) WHY this over recent failures. f4148cc's chroma asymmetry post-mortem
+    explicitly cited this as escalation (3): "voiced_unvoiced_spec_
+    contrast_asymmetry so GBM sees accompaniment-vs-voice asymmetry in
+    cepstral + pitch-class + mastering-signature spaces simultaneously."
+    MFCC asymmetry (1eda8e3) lifted speech dramatically (english
+    0.732→0.889, korean 0.526→0.667) but singing stayed FLAT 0.340 —
+    MFCC captures VOCAL-TRACT timbre, and intra-song chord cycles also
+    have stable voiced-MFCC + shifting unvoiced-MFCC (drums hit at every
+    chord) giving FALSE-POSITIVE asymmetry. Chroma asymmetry (f4148cc)
+    failed because on real cross-song splice the SINGER sings a new
+    note in the new key → voiced_chroma_dist ALSO high → asymmetry
+    cancels. Spec_contrast attacks a genuinely orthogonal axis:
+    MASTERING SIGNATURE. Spec_contrast measures peak-to-valley
+    amplitude ratio per frequency band — a compressor/limiter
+    fingerprint. Within one mastered track the per-band contrast
+    profile is fixed; cross-song splice crosses masters (different
+    compression ratio, different EQ, different limiter threshold).
+    Mechanism on singing: (i) real SAME-singer cross-song splice —
+    voiced contrast stable (same formant structure), unvoiced contrast
+    SHIFTS (different mastering on drums/bass) → asymmetry LARGE
+    POSITIVE. (ii) intra-song chord cycle — voiced contrast shifts
+    (different vowel per phrase, different formant peaks), unvoiced
+    contrast stable (same drums, same mastering) → asymmetry NEGATIVE.
+    (iii) real different-singer cross-song — both shift → asymmetry
+    ~0. The SIGN carries discriminating information that chord-cycle
+    FPs don't produce in the same direction as real splices. Paired
+    differencing on speech: voiced and unvoiced contrast co-vary with
+    phoneme context (plosive burst + vowel land on similar band peaks)
+    → difference is zero-mean noise → GBM low SHAP on english/korean.
+    Note that e7ca9eb voiced_spec_contrast_cosine_dist is STILL in the
+    codebase (79-feature baseline includes it — wrapper failed to
+    revert on discard); adding the asymmetric companion completes the
+    pair so GBM can learn the (voiced_single, asymmetry) joint that
+    single-mask alone couldn't surface.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (13-dim MFCC cepstral
+    envelope); NOT f4148cc (12-dim chroma pitch-class); NOT e7ca9eb
+    voiced_spec_contrast (single-mask, no sign); NOT 32cac36 voiced_chroma
+    (single-mask, pitch-class); NOT 308aa5a tonnetz (linear chroma
+    projection). First asymmetry in the 7-dim MASTERING-SIGNATURE
+    axis. Blast radius: features.py only — 1 block + 1 FEATURE_NAMES
+    append + assert bump. Zero new caches. Per-t cost: 4 slices + 4
+    masked means + 2 cosines on 7-dim vectors, sub-ms. Risk-bounded:
+    sentinel-0.0 safety; paired differencing is self-cancelling on
+    domains where both masks co-vary with phoneme noise.
+
+(c) IF THIS FAILS. (1) If asymmetry signal collapses on singing because
+    chord-transition voiced contrast shifts are small enough that
+    asymmetry looks positive too, CLIP sign to the positive side only
+    and add a companion `voiced_unvoiced_spec_contrast_symmetry` =
+    unvoiced+voiced (jointly-big vs jointly-small), giving GBM both
+    axes. (2) If GBM assigns ~0 SHAP because feat_contrast is too
+    correlated with feat_rolloff/centroid/bandwidth already in the
+    feature set, drop to a SPARSIFIED 3-band asymmetry (low 100-500Hz,
+    mid 500-4k, high 4k+) targeting drum/bass vs mastering-tail
+    separately. (3) Final escalation: shift off features entirely —
+    try ANALYSIS_STRIDE_S=0.06 (denser scan, only 0.11 failed) or
+    GBM_MIN_SEP_S=2.0 (below current 2.5, catch clustered singing TPs).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 18+
+    iterations — I cannot verify the 3 surviving singing FPs have
+    BOTH voiced AND unvoiced frames in ±2s windows (all-voiced sung
+    phrases → empty unvoiced mask → sentinel 0.0 → feature no-op).
+    (ii) SHAP rollup STILL "no keeps yet — rollup empty" for 1eda8e3
+    — the claim "MFCC asymmetry couldn't bite singing because chord
+    cycles look like accompaniment change" is unverifiable. (iii)
+    The voiced_spec_contrast discard-that-wasn't (e7ca9eb in code at
+    79) contaminates attribution — combined delta from this
+    hypothesis will mix the asymmetry's lift with whatever
+    voiced_spec_contrast currently contributes.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 18+ iterations; per-FP (domain, file,
+    t_sec, label_id, p_splice, vp_pre_frac, vp_post_frac,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, voiced_chroma_dist,
+    unvoiced_chroma_dist, voiced_spec_contrast_dist,
+    unvoiced_spec_contrast_dist, top-5 |SHAP| features with values).
+    Every asymmetry / mask hypothesis is calibrated from theory; this
+    block flips the entire loop to data-driven. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that retrains
+    once and reports per-domain OOF-F1 delta vs current — turns "is
+    this feature worth a 3-min retrain" into a numeric preview. (3)
+    DISCARD-REVERT SYNC auditor: the wrapper's discard path should
+    diff features.py vs baseline-sha features.py and ABORT / restore
+    if they differ — e7ca9eb's voiced_spec_contrast_cosine_dist is
+    STILL in-tree post-discard, confounding every subsequent
+    attribution.
+[auto] (no SHAP data for either 1eda8e3 or 7972a98)
+
