@@ -4415,3 +4415,77 @@ per-domain: combined_english=0.729730 combined_korean=0.516129 combined_singing=
     GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. Not tracking DSP
     gates means the agent has to git-log grep to know axis state.
 
+## 2026-04-21T03:24:07+09:00 — b5b1a0d (discard, combined=0.556428)
+subject: add mfcc_post_retrospective_match (FEATURE_NAMES 80->81) -- min cos_dist from post[t,t+2] to past pre-context windows [t-k-2,t-k] for k in {3,6,9,12}s. STRUCTURAL pivot off the 60+ PRE-vs-POST-at-single-boundary family onto RETROSPECTIVE CONTEXT MATCHING. Chord-cycle FP: post chord already appeared at some past k -> min small -> silent, FP not boosted. Cross-song splice: post is song B absent from entire pre-history -> min large -> fires. Speech self-gating: within-recording past and post share speaker+mic+room so all distances small -> min small -> feature ~0 on non-splice -> GBM low per-domain SHAP. Reuses cached feat_mfcc; ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration -> sentinel 0.0. FEATURE_NAMES 80->81 forces retrain via US-505 sha gate. Orthogonal: NOT any paired-diff/voicing-masked single-boundary feature; NOT 9064eec cross-intra (intra sub-windows on SAME span, no past-history bank, no MIN aggregator); NOT 4e67946 persistence (future horizons); NOT 4314449 cross-scale; NOT 1b4fe7c corr-matrix; NOT 1b3eb06 trajectory velocity; NOT 1e57702 histogram; NOT DSP-gate. FIRST min-over-past-context feature in 80-set, FIRST feature using past pre-history as comparison bank. Smoke-verified: len(FEATURE_NAMES)==81 last-name correct; synthetic chord-cycle A(3s period) + song-B splice at t=30 yields 0.018437 vs within-A chord-cycle t=18 yields 0.000005 (~3700x discrimination); edge guards t-14<0 and t+2>duration both return 0.0 sentinel correctly; real singing train audio 200 calls = 0.82ms/call; all 81 features finite; idempotent on repeated calls.
+per-domain: combined_english=0.835443 combined_korean=0.582353 combined_singing=0.354098
+
+# 2026-04-21 — hypothesis: add mfcc_post_retrospective_match (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot off
+    the "PRE-vs-POST contrast at single boundary t" family onto
+    RETROSPECTIVE CONTEXT MATCHING. For post[t, t+2] against a bank of
+    past pre-context windows [t-k-2, t-k] for k ∈ {3, 6, 9, 12}, take
+    the MINIMUM cosine distance over all k. Reuses cached feat_mfcc —
+    ZERO new librosa calls, ZERO new caches. Edge guard t-14 < 0 OR
+    t+2 > duration_s → sentinel 0.0. FEATURE_NAMES 80→81 forces
+    auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. Last 60+ iterations (1st-order paired-
+    diff, 2nd-order cross-intra, F-statistic variance, persistence,
+    cross-scale, trajectory velocity, correlation-matrix structure,
+    onset-strength asymmetry, full-window histogram, DSP-gate
+    tightening) all asked "how does POST at t differ from PRE at t?"
+    Every one collapsed on 3 singing chord-cycle FPs because
+    within-song drift makes PRE[t-2,t] and POST[t,t+2] carry
+    similar-magnitude shifts as a cross-song boundary. The genuinely
+    untried axis is comparing POST to EARLIER PRE-HISTORY with a MIN
+    aggregator: chord-cycle FPs in song A have post at t = a chord
+    that ALREADY appeared at some past window (cycle period 2-3s, so
+    one of k ∈ {3, 6, 9, 12} s into the past holds that chord); min
+    distance collapses to small → feature silent → FP not boosted.
+    Cross-song splice has post = entirely song B absent from the
+    whole pre-history → all past distances large → min large → fires.
+
+    Speech self-gating: within-recording all past contexts and post
+    share speaker+mic+room → all distances small → min small →
+    feature ~0 on non-splice positions → GBM low per-domain SHAP on
+    english/korean. Cross-speaker splice (TP): past all speaker A,
+    post speaker B → all distances large → min large → fires, helps
+    speech TPs too.
+
+    Orthogonal: NOT any paired-diff or voicing-masked single-boundary
+    feature; NOT 9064eec cross-intra (intra sub-windows on SAME span,
+    no past-history bank, no MIN aggregator); NOT 4e67946 persistence
+    (future horizons, same pre reference); NOT 4314449 cross-scale
+    (two scales at same boundary); NOT 1b4fe7c correlation-matrix; NOT
+    1b3eb06 trajectory-velocity; NOT 1e57702 histogram cosine; NOT
+    DSP-gate. FIRST min-over-past-context feature in the 80-set,
+    FIRST feature using past pre-history as a comparison bank.
+
+(c) IF THIS FAILS. (1) Singing unchanged (chord period in the 3 FPs is
+    not aligned with {3, 6, 9, 12} — e.g., sustained pad bridges with
+    no chord cycle, or 5-7s cycles) → expand offsets to {2, 4, 6, 8,
+    10, 12, 14} for denser coverage. (2) Speech regresses (within-
+    recording phoneme sequences at 3-12s lag have different vowel
+    centroids → min distance not small on non-splice speech) → switch
+    to voiced-masked variant. (3) Feature fires but zero SHAP
+    (redundant with voiced_mfcc_cosine_dist via GBM correlated splits)
+    → pivot to chroma axis (key-signature-level match retrieves
+    chord-class identity more directly than cepstral envelope).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent — cannot
+    verify whether the 3 singing FPs sit at chord-cycle periods
+    matching {3, 6, 9, 12} s (mechanism assumption); could be
+    verse→chorus transitions (10-30s scale, well beyond offset bank)
+    or sustained-pad bridges. (ii) SHAP rollup STILL empty for 14
+    keeps. (iii) tunable frontier still does not track DSP_*.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z/t2_z/cpe_z, voicing,
+    mfcc_post_retrospective_match, top-5 |SHAP|). Would settle every
+    retrospective/past-history hypothesis data-driven.
+    (2) SHAP ROLLUP REPAIR.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
+    DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot.
+
