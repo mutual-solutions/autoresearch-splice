@@ -3703,3 +3703,119 @@ per-domain: combined_english=0.790123 combined_korean=0.529412 combined_singing=
     (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
     decision with joblib-mtime sanity check.
 
+## 2026-04-21T01:53:03+09:00 — 1b3eb06 (discard, combined=0.500951)
+subject: add mfcc_trajectory_velocity_log_ratio (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.888889 combined_korean=0.565714 combined_singing=0.250000
+
+# 2026-04-21 — hypothesis: add mfcc_trajectory_velocity_log_ratio (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot off the
+    entire "distance between sub-window MEAN VECTORS" family onto
+    TRAJECTORY VELOCITY: mean frame-to-frame MFCC L2 delta magnitude,
+    ratio pre vs post on log scale.
+        for a side (pre or post) on ±2s:
+            v_side = mean_i ||mfcc[i] - mfcc[i-1]||_2
+        feature = |log((post_v + eps) / (pre_v + eps))|
+    Reuses cached feat_mfcc — ZERO new librosa calls, ZERO new caches.
+    Edge guard fewer than 4 frames per side → sentinel 0.0. FEATURE_NAMES
+    80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY over recent failures. The last 10 iterations tried "distance between
+    sub-window MEAN VECTORS" in many forms — cross-intra contrast (9064eec
+    MFCC, 26a3687 spec_contrast, c5040d7 voiced MFCC, 8170784 voiced chroma,
+    3bcec76 unvoiced spec_contrast), F-statistic variance-ratio (2557d2a),
+    persistence horizons (4e67946), cross-scale (4314449), onset ACF tempo
+    (e2ad8b0), detector margin (d4d35b1 catastrophic 0.287). Every one
+    collapsed on chord-cycle FPs because within-song drift fills both intra
+    baselines and the cross boundary with similar-magnitude mean shifts, AND
+    because variance around those means ALSO co-varies (F-stat failed for
+    the same reason).
+
+    Trajectory VELOCITY is a structurally different statistic. Arc length
+    = Σ||mfcc[i]−mfcc[i−1]|| integrates the frame-to-frame change RATE
+    regardless of where the trajectory goes. Smooth ramps and noisy clusters
+    can share the same mean AND the same variance-around-mean yet have very
+    different arc lengths. Ratio pre/post is a SCALE-INVARIANT comparison
+    of arrangement DENSITY / ACTIVITY LEVEL on each side.
+
+    Mechanism on 3 singing chord-cycle FPs. Within one song, arrangement
+    density (singer + drums + chord progression activity) is roughly
+    constant across the chord cycle — one chord transition every 2-3s
+    keeps per-frame MFCC flux at a steady rate on both sides of t.
+    pre_v ≈ post_v → ratio ≈ 1 → |log| ≈ 0 silent, FP NOT boosted.
+
+    Cross-song splice. Song A and song B typically differ in arrangement
+    density: ballad verse (low flux) → up-tempo chorus (high flux);
+    sparse intro → full mix; different drummers with different groove
+    intensity; different mastering drive compressing dynamics
+    differently. pre_v / post_v ≠ 1 → |log| positive → feature fires.
+
+    Speech self-gating. Within a recording a speaker holds roughly
+    constant speech rate and prosody, so syllable-to-syllable MFCC
+    flux is steady on any 2s slice. pre_v ≈ post_v → feature ≈ 0 on
+    non-splice positions → GBM low per-domain SHAP on english/korean.
+    Cross-speaker splice with matched rate also silences this feature —
+    fine, because existing 1eda8e3 voiced_unvoiced_mfcc_asymmetry
+    (+0.054 biggest keep) handles that TP class.
+
+    Why LOG-RATIO not subtraction. Scale-invariant: a 2x flux difference
+    reads the same whether both sides are loud or quiet. Absolute
+    subtraction gets dominated by absolute level (e.g. loud singing
+    saturates vs quiet speech hovers near zero).
+
+    Why MFCC axis. 9064eec (MFCC 2nd-order 0.544) was the CLOSEST-to-
+    baseline recent failure; the axis carries real content-shift signal,
+    the prior failure was in the statistic shape, not the axis.
+
+    Orthogonal. NOT any cos_dist-of-means feature (whole 2nd-order
+    family); NOT 2557d2a F-statistic RSS-around-mean (variance of
+    residuals vs mean, not of consecutive deltas); NOT 4e67946 or
+    4314449 (distance at multiple horizons/scales); NOT block-2
+    mfcc_delta_NN (frame-local single-delta at boundary, NOT window
+    mean of delta magnitudes); NOT e2ad8b0 onset ACF tempo (1D signal,
+    autocorrelation, not trajectory integral); NOT any voicing-masked
+    variant; NOT detector post-filter. FIRST trajectory-velocity
+    feature; FIRST ratio-based statistic over frame-to-frame delta
+    magnitudes in the 80-feature set.
+
+    Blast radius. Pure features.py — 1 new block (~30 lines) + 1
+    FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call in
+    extract_features + 1 extra feats.update. ZERO new caches, ZERO
+    new librosa calls. Per-t cost: 2 slices + 2 diff + 2 norm-means +
+    1 log, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (chord-cycle FPs sit in
+    sections where within-song flux actually DIFFERS verse vs bridge
+    within same song; hypothesis wrong) → widen to ±4s so flux
+    averages over multiple phrases, smoothing arrangement variation.
+    (2) Speech regresses (sentence transitions within a recording
+    change syllable rate enough to cause log-ratio >0 on non-splice
+    speech) → fallback to voiced-masked version (voiced-frame flux
+    within-speaker is prosody-stable). (3) Feature fires but GBM
+    assigns zero SHAP (mfcc_delta_NN block already captures this
+    signal) → pivot to spec_contrast trajectory velocity (mastering
+    activity rate, truly untouched signal).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 60+
+    iterations — cannot verify whether the 3 singing FPs sit in
+    within-song flux-stable sections (mechanism assumption) or in
+    verse→chorus flux-transition sections (where this feature would
+    fire and create a new FP). (ii) SHAP rollup STILL empty for 14
+    keeps — cannot verify whether mfcc_delta_NN block-2 already
+    carries a trajectory-velocity-like signal via correlated splits.
+    (iii) 99081f5 4/16 capacity ghost status unclear at HEAD. (iv)
+    0.4907 identical-streak root cause still unknown.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks
+    across 60+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE — per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, mfcc_frame_flux_pre_2s,
+    mfcc_frame_flux_post_2s, top-5 |SHAP|). Would decide every
+    trajectory-velocity / variance / mean-based hypothesis
+    data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision with joblib-mtime sanity check.
+
