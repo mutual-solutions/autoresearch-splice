@@ -76,7 +76,9 @@
     "mel_pca_19",
     "mel_pca_20",
     "voiced_mfcc_cosine_dist",
-    "voiced_chroma_cosine_dist"
+    "voiced_chroma_cosine_dist",
+    "voiced_spec_contrast_cosine_dist",
+    "voiced_unvoiced_mfcc_asymmetry"
   ],
   "label_names": [
     "not_splice",
@@ -101,6 +103,6 @@
       "2": 300
     }
   },
-  "features_py_sha": "6760a00c1ee70f92c7d4112eaf2385f7e009d835",
-  "training_timestamp": "2026-04-19T17:57:36Z"
+  "features_py_sha": "258007a89ce9b8e749bedf4f9877adc5e7eef9ca",
+  "training_timestamp": "2026-04-20T00:45:10Z"
 }

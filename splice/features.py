@@ -25,8 +25,9 @@ Feature blocks (77 dims):
     Block 11: Voiced-MFCC cosine dist   (1)
     Block 12: Voiced-chroma cosine dist (1)
     Block 13: Voiced-spec-contrast cos  (1)
+    Block 14: Voiced/unvoiced MFCC asym (1)
 
-Total: 4+13+6+6+8+6+3+5+4+20+1+1+1 = 78
+Total: 4+13+6+6+8+6+3+5+4+20+1+1+1+1 = 79
 
 Performance model:
     _ensure_feat_cache() runs ONCE per chunk, precomputing all expensive
@@ -143,9 +144,10 @@ FEATURE_NAMES: list[str] = (
     + ["voiced_mfcc_cosine_dist"]
     + ["voiced_chroma_cosine_dist"]
     + ["voiced_spec_contrast_cosine_dist"]
+    + ["voiced_unvoiced_mfcc_asymmetry"]
 )
 
-assert len(FEATURE_NAMES) == 78, f"Expected 78, got {len(FEATURE_NAMES)}"
+assert len(FEATURE_NAMES) == 79, f"Expected 79, got {len(FEATURE_NAMES)}"
 
 # Shared hop/fft constants
 _HOP = 512
@@ -944,6 +946,60 @@ def _block_voiced_spec_contrast(ctx: dict, t_sec: float) -> dict[str, float]:
 
 
 # ---------------------------------------------------------------------------
+# Block 14: Voiced/unvoiced MFCC asymmetry (accompaniment vs voice)
+# ---------------------------------------------------------------------------
+
+def _block_voiced_unvoiced_mfcc_asymmetry(ctx: dict, t_sec: float) -> dict[str, float]:
+    # Signed asymmetry between unvoiced and voiced pre/post MFCC cosine
+    # distances. Positive = accompaniment changed more than voice (the
+    # same-singer-cross-song signature); ~0 = either same-source (both low)
+    # or different-singer-cross-song (both high and cancel). Paired
+    # differencing cancels phoneme-correlated noise on speech where both
+    # voiced and unvoiced MFCC vary together with context.
+    mfcc = ctx["feat_mfcc"]
+    vp = ctx["feat_vp"]
+    hop = ctx["feat_frame_hop"]
+    sr = ctx["feat_sr"]
+
+    def _masked_mean(t_lo: float, t_hi: float, voiced: bool):
+        m = _slice_frames(mfcc, hop, sr, t_lo, t_hi)        # (13, n_m)
+        v = _slice_frames(vp, hop, sr, t_lo, t_hi)          # (n_v,)
+        n = min(m.shape[1], v.shape[0])
+        if n <= 0:
+            return None
+        m = m[:, :n]
+        mask = v[:n].astype(bool)
+        if not voiced:
+            mask = ~mask
+        if not mask.any():
+            return None
+        return np.mean(m[:, mask], axis=1)
+
+    def _cos_dist(pre, post):
+        if pre is None or post is None:
+            return None
+        np_pre = float(np.linalg.norm(pre))
+        np_post = float(np.linalg.norm(post))
+        if np_pre < 1e-10 or np_post < 1e-10:
+            return None
+        cs = float(np.dot(pre, post) / (np_pre * np_post))
+        cs = max(-1.0, min(1.0, cs))
+        return float(1.0 - cs)
+
+    pre_v = _masked_mean(t_sec - 2.0, t_sec, voiced=True)
+    post_v = _masked_mean(t_sec, t_sec + 2.0, voiced=True)
+    pre_u = _masked_mean(t_sec - 2.0, t_sec, voiced=False)
+    post_u = _masked_mean(t_sec, t_sec + 2.0, voiced=False)
+
+    voiced_dist = _cos_dist(pre_v, post_v)
+    unvoiced_dist = _cos_dist(pre_u, post_u)
+    if voiced_dist is None or unvoiced_dist is None:
+        return {"voiced_unvoiced_mfcc_asymmetry": 0.0}
+
+    return {"voiced_unvoiced_mfcc_asymmetry": float(unvoiced_dist - voiced_dist)}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -993,6 +1049,7 @@ def extract_features(
     feats.update(_block_voiced_mfcc(chunk_ctx, t_sec))
     feats.update(_block_voiced_chroma(chunk_ctx, t_sec))
     feats.update(_block_voiced_spec_contrast(chunk_ctx, t_sec))
+    feats.update(_block_voiced_unvoiced_mfcc_asymmetry(chunk_ctx, t_sec))
 
     assert len(feats) == len(FEATURE_NAMES), (
         f"Feature count mismatch: {len(feats)} != {len(FEATURE_NAMES)}"
@@ -1033,9 +1090,9 @@ if __name__ == "__main__":
     feats1 = extract_features(chunk, sr, t, chunk_ctx=ctx)
 
     # 1. Length check
-    assert len(feats1) == 78, f"FAIL: got {len(feats1)} features"
-    assert len(FEATURE_NAMES) == 78, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
-    print("PASS: len(dict) == len(FEATURE_NAMES) == 78")
+    assert len(feats1) == 79, f"FAIL: got {len(feats1)} features"
+    assert len(FEATURE_NAMES) == 79, f"FAIL: FEATURE_NAMES has {len(FEATURE_NAMES)}"
+    print("PASS: len(dict) == len(FEATURE_NAMES) == 79")
 
     # 2. Bit-identical
     feats2 = extract_features(chunk, sr, t, chunk_ctx=ctx)
