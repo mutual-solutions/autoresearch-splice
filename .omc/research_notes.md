@@ -3930,3 +3930,138 @@ per-domain: combined_english=0.875000 combined_korean=0.555882 combined_singing=
     mtime vs features.py mtime) would surface the c006d52-style
     identical-output case.
 
+## 2026-04-20T21:29:40+09:00 — 1d1144d (discard, combined=0.507516)
+subject: add voiced_f0_median_shift_cents (FEATURE_NAMES 80->81) -- STRUCTURAL pivot to log-scale F0 CENTRAL-TENDENCY shift. feature = |1200*log2(post_median/pre_median)| on voiced frames (vp==1 AND ~isnan(f0)) in pre[t-2,t] vs post[t,t+2]. Reuses cached feat_f0 + feat_vp + feat_f0_hop + feat_sr, ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when either window has <3 valid voiced frames OR either median <1 Hz (log-safe + perceptually meaningless). FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Explicit cited fallback from 27ddbf7(c)(1). Block 5 has f0_mean_pre/post/delta in LINEAR Hz, f0_jitter std/mean, f0_continuity edge 100ms |delta| -- but NOTHING log-scale, NOTHING median-based, NOTHING perceptually-normalized. GBM max_depth=3 cannot synthesize |1200*log2(post/pre)| from (f0_mean_pre, f0_mean_post) via threshold combinations. Different from 27ddbf7 IQR (SPREAD); this is LOCATION -- orthogonal statistical moment. Median robust to yin octave-errors; cents normalization register-invariant (male 150->160 Hz == female 300->320 Hz == 112 cents). Mechanism on 3 singing chord-cycle FPs: within one song singer holds bounded melodic center, 2s voiced-median F0 stays within ~50-150 cents of baseline -> pre/post medians similar -> |cents shift| <= 50 silent, FP not boosted. Cross-song same-singer: different melodies have different central tendencies (B3~247 -> F4~349 = 600 cents LARGE). Different-singer: register + melody shift combined, even larger. Speech self-gating: within-speaker prosodic range 3-5 semitones total spread, but MEDIAN converges to ~50-150 cents habitual band across 2s window -> GBM low per-domain SHAP on english/korean, same mechanism as existing linear f0_mean_delta. Why log-scale median cents beats linear Hz mean: (1) linear biased by F0 level (male 20 Hz != female 20 Hz perceptually); (2) mean sensitive to yin octave-error outliers, median robust; (3) |abs| removes sign noise; (4) GBM threshold splits work cleanly on bounded positive scalars. NOT a paired-difference template; single scalar log-scale location-shift. Classifier hyperparam axis verifiably broken (5+ iterations IDENTICAL 0.490700); only features.py-sha bumps force retrain. Orthogonal: NOT 1eda8e3 MFCC cosine, NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac spec_contrast, NOT f4148cc chroma, NOT 0c3bf76 flatness, NOT c006d52 RMS dB, NOT 27ddbf7 F0 IQR (SPREAD not LOCATION), NOT block-5 f0_mean linear Hz, NOT f0_jitter std/mean, NOT f0_continuity edge, NOT any mask variant, NOT any voiced/unvoiced paired-diff. FIRST log-scale F0 LOCATION-SHIFT, FIRST cents-normalized feature. Pure features.py change -- 1 new block (~25 lines) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost 2 slices + 2 nan-mask + 2 medians + 1 log2 + 1 abs, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_f0_median_shift_cents', synthetic 220->247 Hz yields 200.4 cents (matches 1200*log2(247/220)=200.41), stationary 220->220 yields 0.0, all-unvoiced sentinel 0.0, all-NaN f0 sentinel 0.0, end-to-end extract_features returns 81 finite features, idempotent on repeated calls.
+per-domain: combined_english=0.835443 combined_korean=0.542857 combined_singing=0.288235
+
+# 2026-04-20 — hypothesis: add voiced_f0_median_shift_cents (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot to
+    log-scale F0 CENTRAL-TENDENCY shift. feature =
+    |1200 * log2(post_median / pre_median)| computed over voiced frames
+    (vp==1 ∧ ~isnan(f0)) in pre=[t-2,t] vs post=[t,t+2]. Reuses cached
+    feat_f0 + feat_vp + feat_f0_hop + feat_sr — ZERO new librosa calls,
+    ZERO new caches. Sentinel 0.0 when either window has <3 valid voiced
+    frames OR either median < 1 Hz (log-safe + perceptually meaningless).
+    FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Explicit cited fallback from 27ddbf7(c)(1):
+    "voiced_f0_median_shift_cents = |1200*log2(post_median/pre_median)|
+    (untried log-scale F0-center shift feature)". Block 5 carries
+    f0_mean_pre/post/delta in LINEAR Hz, f0_jitter (std/mean), and
+    f0_continuity_score (edge 100ms linear Hz |Δ|) — but NOTHING
+    log-scale, NOTHING median-based, NOTHING perceptually-normalized.
+    GBM max_depth=3 / max_leaf=8 cannot synthesize
+    |1200*log2(post/pre)| from (f0_mean_pre, f0_mean_post) via threshold
+    combinations — it can only threshold each independently and learn
+    monotone functions. Log-ratio compresses large absolute shifts and
+    expands small shifts near-baseline, which is a fundamentally
+    different signal surface from linear delta.
+
+    Different from 27ddbf7 voiced_f0_iqr_log_ratio (which failed): IQR is
+    SPREAD, this is LOCATION. Orthogonal statistical moments of the F0
+    distribution. 27ddbf7 measured how wide the melodic range is; this
+    measures where the melodic center sits. Median robust to yin
+    octave-errors (unlike existing f0_mean_delta); cents normalization
+    register-invariant (male 150→160 Hz ≡ female 300→320 Hz = 112 cents).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song
+    the singer holds a bounded melodic center (usually within ±2-3
+    semitones around the key tonic across one phrase). 2s voiced-median
+    F0 stays within ~50-150 cents of within-song baseline; pre/post
+    medians similar → |cents shift| ≤ 50 silent, FP not boosted. Cross-
+    song splice same-singer: different song melodies have different
+    central tendencies (ballad around B3 ≈ 247 Hz, pop bridge around
+    F4 ≈ 349 Hz → shift 600 cents LARGE). Different-singer cross-song:
+    register shift combines with melodic shift → even larger cents
+    shift. Log-scale captures this range-invariant because a singer at
+    220 Hz to 247 Hz (~200 cents) and one at 440 Hz to 494 Hz
+    (~200 cents) are both similar-sized melodic moves in cents.
+
+    Speech self-gating. Within-speaker prosodic pitch range across 2s
+    ≈ 3-5 semitones (~300-500 cents TOTAL spread), but MEDIAN stays
+    within a much narrower band (~50-150 cents) because median averages
+    prosodic excursions. 2s window samples enough voiced vowels that
+    median converges to speaker's habitual pitch. Sentence boundaries
+    can shift median more, but still bounded → pre/post median cents
+    shift modest → GBM low per-domain SHAP on english/korean, same
+    self-gating mechanism as linear f0_mean_delta already enjoys.
+
+    Why log-scale median cents beats linear Hz mean:
+    (1) Linear Hz mean delta is F0-level-biased — a male singer's
+    20 Hz shift and a female singer's 20 Hz shift are perceptually
+    different, GBM sees them as identical Hz.
+    (2) Mean is sensitive to yin octave-error outliers; median is
+    robust.
+    (3) |abs value| removes sign noise — either direction of shift is
+    equally discriminative.
+    (4) GBM threshold-based splits work more cleanly on bounded
+    positive scalars than on signed linear-Hz deltas.
+
+    Why voiced-mask not all-frames: unvoiced f0 is np.nan so must mask
+    anyway; voiced-only median is the only well-defined computation.
+    This is NOT a paired-difference template (single scalar, not
+    asymmetry); it's a pure log-scale location-shift statistic.
+
+    Classifier hyperparam axis verifiably broken (5+ train_classifier.py-
+    only iterations IDENTICAL 0.490700); only features.py-sha bumps
+    force retrain. Every prior paired-difference asymmetry variant on
+    spectral axes exhausted.
+
+    Orthogonal: NOT 1eda8e3 (MFCC cosine); NOT 7972a98/d290101/177d641/
+    88adb49/6c6c254/347c0ac (spec_contrast variants); NOT f4148cc
+    (chroma cosine); NOT 0c3bf76 (spec_flatness abs-delta); NOT c006d52
+    (RMS dB asymmetry); NOT 27ddbf7 (F0 IQR = spread, this is location);
+    NOT block-5 f0_mean_pre/post/delta (linear Hz); NOT f0_jitter
+    (std/mean); NOT f0_continuity (edge 100ms); NOT any mask/
+    percussive/harmonic variant; NOT any voiced/unvoiced paired-diff
+    template. FIRST log-scale F0 LOCATION-SHIFT in any form, FIRST
+    cents-normalized feature in the 80-feature set.
+
+    Pure features.py change — 1 new block (~25 lines) + 1 FEATURE_NAMES
+    append + 2 assert bumps (80→81) + 1 call in extract_features. ZERO
+    new caches, ZERO new librosa calls. Per-t cost: 2 slices + 2 nan-
+    mask + 2 medians + 1 log2 + 1 abs, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech preserved (cents-shift
+    signal sits in same discrimination range as linear f0_mean_delta
+    already captures — GBM not learning new surface) → fallback to
+    voiced_f0_p10_shift_cents (10th-percentile = F0 floor / chest
+    register, more speaker-stable than median; cited 27ddbf7/c2).
+    (2) Speech regresses (2s voiced-median NOT speaker-stable enough
+    — sentence prosodic context large enough to push median cents shift
+    past threshold on non-splice positions) → pivot to
+    voiced_unvoiced_spectral_tilt_asymmetry (log-log regression slope
+    asymmetry on mic/preamp-signature axis, genuinely new content).
+    (3) Combined matches 0.589282 exactly → feature fires identically
+    to linear f0_mean_delta within GBM's learning capacity; pivot to
+    pure detector-level post-filter (e.g., local-periodicity emit
+    suppression within ±8s).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 46+
+    iterations — cannot verify f0 medians at the 3 singing FPs'
+    positions to sanity-check the cents-shift hypothesis. Every F0
+    hypothesis remains theory-calibrated. (ii) SHAP rollup STILL
+    "no keeps yet — rollup empty" for 7972a98 despite 14 keeps —
+    rollup writer broken; no per-feature attribution. (iii) c006d52
+    per-domain EXACTLY matches hyperparam-only iterations (0.8395/
+    0.4765/0.2954) — ambiguous whether US-505 retrain failed or
+    feature fired sentinel-0 everywhere. No wrapper log confirms.
+    (iv) 99081f5 4/16 capacity ghost status unclear at HEAD after
+    960113c "REVERT" that wrapper discarded.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 46+-iteration blocker. Per-FP (domain, file,
+    t_sec, p_splice, dsp_*, chunk_duration_s, f0_mean_pre, f0_mean_post,
+    voiced_unvoiced_mfcc_asymmetry, top-5 |SHAP|). Would turn every
+    F0/singing hypothesis from theory bet into data-driven decision.
+    (2) SHAP ROLLUP REPAIR — 14 keeps, 0 rollup entries is a
+    long-standing bug; without per-feature attribution claude cannot
+    see which features GBM actually uses. (3) US-505b VERIFICATION
+    TRACE — wrapper log line at retrain decision ("features.py sha
+    Δ → retrain" vs "no Δ → skip" vs "train_classifier.py sha Δ →
+    retrain") with joblib-mtime sanity check closes feedback-loop
+    verification gap and surfaces the c006d52-style identical-output
+    case. Three unchanged highest-priority requests across 46+
+    iterations.
+
