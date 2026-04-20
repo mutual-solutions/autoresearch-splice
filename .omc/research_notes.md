@@ -4798,3 +4798,156 @@ per-domain: combined_english=0.860759 combined_korean=0.623881 combined_singing=
     0.4907 identical-streak root cause. Three unchanged highest-
     priority requests across 49+ iterations.
 
+## 2026-04-20T23:28:05+09:00 — 26a3687 (discard, combined=0.493112)
+subject: add spec_contrast_cross_intra_contrast (FEATURE_NAMES 80->81) -- SECOND-ORDER spec_contrast consistency feature, cited fallback from 9064eec(c)(1). cross_dist - 0.5*(intra_pre + intra_post) over +-4s span clipped to [t-4,t+4]; edge guard t-4<0 or t+4>duration -> 0.0. intra_pre=cos_dist(mean_contrast(t-4,t-2), mean_contrast(t-2,t)); intra_post=cos_dist(mean_contrast(t,t+2), mean_contrast(t+2,t+4)); cross=cos_dist(mean_contrast(t-4,t), mean_contrast(t,t+4)). Transplants 9064eec MFCC second-order template onto 7-dim spec_contrast (mastering-fingerprint axis). Reuses cached feat_contrast, ZERO new librosa calls, ZERO new caches. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. 9064eec MFCC version produced 0.544 (closer to baseline than every 1st-order failure in 20+ iterations) but speech regressed (english 0.889->0.861, korean 0.667->0.624) because MFCC cepstral envelope is phoneme-correlated so 4s-mean cross overshoots 2s-sub-mean intra. spec_contrast is the cited content-axis swap: (i) d290101 proved spec_contrast intrinsically speech-safe (english 0.889->0.897 at 3s spans, peak-RATIO phoneme-stable); (ii) 7972a98 NEAR asymmetry kept +0.005 proving singing mastering-fingerprint signal; (iii) intra-side on within-song +-4s is dominated by FROZEN mastering chain (drum-bus comp + master EQ + limiter) whose per-band peak/valley signature does NOT shift with chord cycles -> intra_pre~intra_post~cross~0.02-0.08 -> feature~0 silent on chord-cycle FP. Cross-song splice: intra small per side (self-consistent mastering), cross LARGE (A->B mastering jump 0.20-0.45) -> feature +0.25+ STRONGLY POSITIVE. Sign-and-magnitude separation chord-cycle (~0) vs real splice (+0.25+) is binary discriminator GBM cannot synthesize from existing feature set because no existing spec_contrast feature carries intra-side baseline (block-2 all-frame scalar; 7972a98 voicing-masked single-boundary; e7ca9eb single-mask single-boundary). Speech self-gating: spec_contrast peak-RATIO phoneme-stable so intra and cross co-vary in similar 0.04-0.08 range on english/korean -> subtraction zeros CLEANER than 9064eec MFCC where cepstral envelope drift made cross overshoot intra. CLAUDE.md mandates structural change after 5+ same-axis failures; 26+ iterations exhausted 1st-order paired-diff. 2nd-order on speech-safe axis is the cited next move. Orthogonal: NOT 9064eec (MFCC 13-dim content -- this is 7-dim spec_contrast); NOT 7972a98 (voicing-masked paired-diff, no intra baseline); NOT d290101/177d641/88adb49/6c6c254/347c0ac (first-order voicing-masked spec_contrast); NOT 1eda8e3 / any voiced_unvoiced_mfcc variant; NOT block-2 spec_contrast_delta (1D all-frame); NOT e7ca9eb voiced_spec_contrast (single-mask no intra); NOT any 1D-scalar / F0 / ZCR / bandwidth / rolloff / flatness / chroma variant; NOT 60196aa detector peak-width. FIRST spec_contrast second-order consistency feature, complementary to 9064eec MFCC second-order. Pure features.py change -- 1 new block (~50 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost: 6 slices + 6 means on 7-dim vectors + 3 cosines + 2 subtractions + 1 average, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'spec_contrast_cross_intra_contrast', synthetic A(440Hz sine)/B(220Hz saw) splice at t=10 yields 0.129408 LARGE, within-A t=5 yields -0.000001 sentinel (~100000x discrimination), edge guard t=1 (t-4<0) returns 0.0, edge guard t=17 with 20s audio (t+4>20) returns 0.0, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.783750 combined_korean=0.517808 combined_singing=0.295455
+
+# 2026-04-20 — hypothesis: add spec_contrast_cross_intra_contrast (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — transplant 9064eec's
+    SECOND-ORDER consistency template (cross vs intra distances on
+    ±4s span, 2s sub-windows) from MFCC onto spec_contrast. 7-dim
+    per-band peak-to-valley cosines instead of 13-dim cepstral
+    cosines. For windows clipped to [t-4, t+4]:
+        intra_pre  = cos_dist(mean_contrast(t-4,t-2), mean_contrast(t-2,t))
+        intra_post = cos_dist(mean_contrast(t,t+2),   mean_contrast(t+2,t+4))
+        cross      = cos_dist(mean_contrast(t-4,t),   mean_contrast(t,t+4))
+        feature    = cross - 0.5*(intra_pre + intra_post)
+    Reuses cached feat_contrast — ZERO new librosa calls, ZERO new
+    caches. Edge guard t-4<0 OR t+4>duration returns sentinel 0.0.
+    FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505 sha
+    gate.
+
+(b) WHY this over recent failures. Explicit cited fallback from
+    9064eec(c)(1): "fallback to same formula on spec_contrast axis
+    (d290101 proved speech-safe at 3s spans; intra-side baseline on
+    spec_contrast mastering-fingerprint cancels chord-cycle drift
+    more cleanly)". 9064eec MFCC second-order produced combined=
+    0.544 — CLOSER to baseline than every 1st-order failure in the
+    last 20+ iterations — but speech regressed (english 0.889 →
+    0.861, korean 0.667 → 0.624) because MFCC is phoneme-correlated
+    and the 4s-mean-vs-4s-mean cross picked up cross-sentence
+    phoneme drift. On singing it produced 0.300 (below 0.345
+    baseline) because the 4s-sub-windows averaged ~2 chord cycles
+    on BOTH intra AND cross, so the subtraction zeroed on chord-
+    cycle FPs AND on real splices.
+
+    Three empirical facts make spec_contrast the right content axis
+    for second-order:
+    (i) d290101 FAR-gap spec_contrast IMPROVED english 0.889 → 0.897
+    at 3s spans proving the axis is intrinsically speech-safe —
+    peak-RATIO is phoneme-stable where MFCC cepstral envelope is
+    not.
+    (ii) 7972a98 NEAR spec_contrast asymmetry (current keep +0.005)
+    proves the mastering-fingerprint signal exists on singing.
+    (iii) Intra-side spec_contrast on within-song ±4s is dominated
+    by the FROZEN mastering chain (drum-bus comp + master EQ +
+    limiter) whose per-band peak/valley signature does not shift
+    with chord cycles — so intra_pre and intra_post on a within-
+    song chord-cycle FP should sit NEAR ZERO (mastering frozen →
+    ≈same 7-dim vector across every 2s sub-window).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Master limiter
+    + EQ + drum-bus compression are FROZEN within one song. 2s-mean
+    spec_contrast on mixed-voicing frames is dominated by drum bus
+    + master limiter (broadband compression signature) which are
+    chord-invariant. intra_pre ≈ intra_post ≈ cross ≈ 0.02-0.08
+    (per-band peak/valley signature held). feature ≈ 0.05 − 0.05 ≈
+    0, silent, FP NOT boosted.
+
+    Real cross-song splice. Pre-side [t-4, t] reflects song A
+    mastering (intra_pre ≈ 0.02-0.04 self-consistent). Post-side
+    [t, t+4] reflects song B mastering (intra_post ≈ 0.02-0.04
+    self-consistent). cross captures A→B mastering jump dominated
+    by different compressor ratio + different limiter threshold +
+    different EQ curve → 0.20-0.45. feature ≈ 0.30 − 0.03 = +0.27
+    STRONGLY POSITIVE, TP boosted. Sign-and-magnitude separation
+    chord-cycle (≈0) vs real splice (+0.25+) is a binary
+    discriminator GBM cannot synthesize from the existing feature
+    set because no existing spec_contrast feature carries an intra-
+    side baseline (block-2 spec_contrast_delta is 1D all-frame;
+    7972a98 paired-diff is voicing-masked single-boundary; e7ca9eb
+    voiced_spec_contrast is single-mask single-boundary).
+
+    Speech self-gating. spec_contrast peak-RATIO is phoneme-stable
+    (d290101 mechanism). On english/korean, 4s pre samples ~6-8
+    syllables, 4s post samples next ~6-8 syllables. intra_pre ≈
+    0.04-0.08 (within-recording peak-ratio drift across phoneme
+    mix). intra_post ≈ 0.04-0.08. cross ≈ 0.04-0.08 (longer 4s-
+    mean averaging smooths phoneme variation to same magnitude as
+    intra). feature ≈ 0 across non-splice positions → GBM low per-
+    domain SHAP on english/korean. Critically, because spec_
+    contrast intra-values on speech SIT AT SIMILAR MAGNITUDE as
+    cross (both driven by phoneme-ratio drift, not by cepstral
+    formant shape), the subtraction zeros on speech much more
+    cleanly than 9064eec MFCC where cross tended to over-shoot
+    intra due to cepstral envelope drift.
+
+    Why ±4s span retained. Same template as 9064eec for clean A/B
+    on the content-axis swap. ±3s would produce 1.5s sub-windows
+    too narrow for stable 7-dim vector means. ±6s would break
+    speech self-gating (spans two sentences).
+
+    Orthogonal. NOT 9064eec (MFCC 13-dim content, this is 7-dim
+    spec_contrast mastering-fingerprint); NOT 7972a98 (voicing-
+    masked paired-diff single boundary, no intra baseline); NOT
+    d290101/177d641/88adb49/6c6c254/347c0ac (all first-order
+    voicing-masked on spec_contrast); NOT 1eda8e3 / any voiced_
+    unvoiced_mfcc geometry; NOT block-2 spec_contrast_delta (1D
+    all-frame); NOT e7ca9eb voiced_spec_contrast (single-mask
+    single-boundary, no intra baseline); NOT any 1D-scalar / F0 /
+    ZCR / bandwidth / rolloff / flatness / chroma variant; NOT
+    60196aa detector peak-width. FIRST spec_contrast second-order
+    consistency feature — complementary to 9064eec MFCC second-
+    order on the proven speech-safe axis.
+
+    Blast radius. Pure features.py change — 1 new block function
+    (~45 lines cloned from 9064eec template but on 7-dim contrast
+    vector with no voicing mask) + 1 FEATURE_NAMES append + 2
+    assert bumps (80 → 81) + 1 call in extract_features. ZERO new
+    caches, ZERO new librosa calls. Per-t cost: 6 slices + 6 means
+    on 7-dim vectors + 3 cosines + 2 subtractions + 1 average,
+    sub-ms.
+
+(c) IF THIS FAILS. (1) Speech regresses (cross > intra on speech
+    because 4s-sub-window phoneme mix differs enough from 2s-sub-
+    window mix to break self-gating on spec_contrast too) →
+    NORMALIZED fallback cross / (0.1 + max(intra_pre, intra_post))
+    capped at 10. (2) Singing unchanged (chord-cycle FPs actually
+    drive intra_pre/post HIGH because chord transitions shift per-
+    band peak/valley on the voiced side — mastering-frozen
+    hypothesis wrong) → narrow window to ±3s / 1.5s sub-windows
+    (d290101 proved 3s span speech-safe). (3) combined matches
+    0.589 exactly OR lands at 0.4907 identical-streak → wrapper
+    retrain gate broken across features.py sha bump; escalate as
+    systemic cache-coherence bug.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after
+    49+ iterations — cannot verify whether the 3 singing FPs sit
+    in regions where intra-side spec_contrast is in fact flat
+    (mastering-frozen hypothesis) or whether they carry intra-
+    drift already. Every 2nd-order hypothesis remains theory-
+    calibrated. (ii) SHAP rollup STILL empty for 14 keeps. (iii)
+    99081f5 4/16 capacity ghost STILL at HEAD (grep
+    train_classifier.py: max_depth=4, max_leaf_nodes=16); baseline
+    0.589282 set against whichever config was live at retrain.
+    (iv) 0.4907 identical-streak root cause still unknown.
+
+(e) Wrapper enhancements. Three unchanged highest-priority
+    requests across 49+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, spec_contrast_delta,
+    top-5 |SHAP|). Would turn every 2nd-order-consistency
+    hypothesis into a data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without
+    per-feature attribution I pick "theoretically orthogonal" not
+    "what GBM actually uses." Emit per-iteration SHAP top-K to
+    .omc/classifier/shap_rollup.json on every keep; aggregate
+    rolling-5 in wrapper.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at
+    retrain decision ("features.py sha Δ XX→YY → retrain" vs
+    "no Δ → skip") with joblib-mtime sanity check post-retrain.
+    Would isolate the 0.4907 identical-streak root cause.
+
