@@ -4384,3 +4384,122 @@ per-domain: combined_english=0.814815 combined_korean=0.604545 combined_singing=
     root cause. Three unchanged highest-priority requests across 47+
     iterations.
 
+## 2026-04-20T22:37:39+09:00 — 8fc7169 (discard, combined=0.471813)
+subject: add voicing_transition_rate_delta (FEATURE_NAMES 80->81) -- STRUCTURAL pivot onto VOICING-MASK TEMPORAL STRUCTURE itself, not content of voiced/unvoiced split. feature = |post_rate - pre_rate| where rate = count of voiced<->unvoiced transitions per second on binary mask (feat_vp > 0.5) in pre[t-2,t] vs post[t,t+2]. Reuses feat_vp only, ZERO new librosa calls, ZERO new caches. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. 20+ iterations exhausted voiced/unvoiced paired-diff template across MFCC/spec_contrast/chroma/spec_flatness/RMS-dB/ZCR/spec_bandwidth content axes + F0 distribution shape+location + detector peak-width. CLAUDE.md mandates structural change after 5+ same-axis failures. Every prior voiced/unvoiced asymmetry uses the voicing mask to SELECT FRAMES for content computation; the VOICING MASK ITSELF as a signal (its TEMPORAL PATTERN) is genuinely untried. Block 5 has voicing_prob_pre/post/delta but these are MEANS (duty cycle), NOT RATE of transitions. GBM max_depth=3 cannot synthesize transition count from mean alone; vp_mean=0.7 can arise from one long voiced run (0 transitions) or 5 alternating runs (8 transitions) and mean collapses them identically. Mechanism on 3 surviving singing chord-cycle FPs: singer's phrasing rhythm (syllables/s, breath pattern, consonant density) is a habitual style held constant across verse/chorus; chord transitions do NOT change phrasing rhythm -> pre_rate ~ post_rate -> |delta| ~ 0 silent, FP not boosted. Cross-song: different tempos/styles (ballad 80 BPM legato vs up-tempo 140 BPM staccato) -> transitions/s shifts meaningfully 2.0 -> 3.5, feature POSITIVE, TP boosted. Speech self-gating: within-recording speaker speech rate consistent, pre/post rates within +-0.5/s -> feature small -> GBM low per-domain SHAP on english/korean. Cross-speaker splice (TP) crosses different speech rates -> feature fires contributing to discrimination. Why rate over alternatives: duty cycle (mean vp) already in-set; longest-run inversely proportional to rate for fixed mean; run-length variance noisy on 2s (few runs). Transition count/s is simplest robust rhythm signature absent from feature set. Orthogonal: NOT 1eda8e3 (MFCC content cosine); NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac (spec_contrast content variants); NOT f4148cc (chroma content); NOT 0c3bf76 (spec_flatness content); NOT c006d52 (RMS dB content); NOT 0cdd87e (ZCR content); NOT 7a170b0 (spec_bandwidth content); NOT 27ddbf7/1d1144d (F0 distribution); NOT block-5 voicing_prob_pre/post/delta (voicing MEAN not RATE); NOT 60196aa detector peak-width; NOT block-1 dsp_pairwise_proximity. FIRST voicing-mask-TEMPORAL-STRUCTURE feature, FIRST rhythm feature derived from voicing mask itself. Pure features.py change -- 1 new block (~20 lines) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 2 slices + 2 boolean casts + 2 diff+sum ops on ~172-frame arrays + 2 divisions, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voicing_transition_rate_delta', synthetic alternating voiced/unvoiced 0.5s segments yields delta=1.0 finite non-trivial, stationary all-voiced returns 0.0, all 81 features finite on synthetic mixed audio, idempotent on repeated calls, voicing_prob_pre~0.99 vs voicing_transition_rate_delta=1.0 confirm they measure distinct aspects of voicing mask.
+per-domain: combined_english=0.804878 combined_korean=0.485714 combined_singing=0.268657
+
+# 2026-04-20 — hypothesis: add voicing_transition_rate_delta (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot onto the
+    VOICING MASK TEMPORAL STRUCTURE itself (not the content of voiced/
+    unvoiced frames). Feature = |post_rate − pre_rate| where rate = count
+    of voiced↔unvoiced transitions per second in [t−2,t] vs [t,t+2],
+    computed on binary mask (feat_vp > 0.5). Reuses cached feat_vp only —
+    ZERO new librosa calls, ZERO new caches. FEATURE_NAMES 80→81 forces
+    wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 20+ consecutive iterations have failed
+    on the voiced/unvoiced PAIRED-DIFFERENCE template across MFCC /
+    spec_contrast / chroma / spec_flatness / RMS-dB / ZCR / spec_bandwidth
+    content axes, F0 distribution shape+location (27ddbf7 IQR, 1d1144d
+    median-cents), and detector-side peak-width (60196aa). CLAUDE.md
+    mandates structural change after 5+ same-axis failures. Every prior
+    voiced/unvoiced asymmetry uses the voicing mask to SELECT FRAMES for
+    content computation; the VOICING MASK ITSELF as a signal (its
+    TEMPORAL PATTERN across time, not content of masked frames) is
+    genuinely untried. Block 5 carries voicing_prob_pre/post/delta — but
+    these are MEANS of feat_vp over the window (voicing density), NOT the
+    RATE of voiced↔unvoiced TRANSITIONS. GBM max_depth=3 cannot synthesize
+    transition count from mean alone; vp_mean=0.7 can arise from one long
+    voiced segment (0 transitions) or from 5 alternating voiced/unvoiced
+    segments (8 transitions), and the mean collapses them identically.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song the
+    singer's phrasing style (syllable rate, breath pattern, consonant
+    density) is a LEARNED HABITUAL RHYTHM — a pop singer produces ~2-3
+    voiced↔unvoiced transitions per second consistently across verse /
+    chorus / bridge, dominated by syllable boundaries and word-internal
+    plosives. Chord transitions do NOT change the singer's phrasing
+    rhythm; the drummer and rhythm section stay in the same tempo;
+    transitions/s is continuous across chord boundaries → pre_rate ≈
+    post_rate → |delta| ≈ 0, feature silent, FP not boosted.
+
+    Cross-song splice: different songs have different tempos (80 BPM
+    ballad vs 140 BPM up-tempo), different vocal phrasing styles (legato
+    vs staccato), different syllable-per-measure ratios → transitions/s
+    shifts meaningfully (e.g., 2.0 → 3.5). Same-singer cross-song still
+    sees rate shift because tempo differs. Different-singer cross-song:
+    phrasing style plus tempo compound.
+
+    Speech self-gating. Within-recording speech rate is speaker-
+    consistent; 2s windows span ~4-8 syllables giving stable voicing
+    transition rates per speaker (English ~4-6 tr/s; Korean ~3-5 tr/s).
+    Sentence boundaries add a brief unvoiced region but don't change the
+    sustained speech rate. Pre/post from same speaker at same rate →
+    rates within ±0.5/s → feature small → GBM low per-domain SHAP on
+    english/korean. Cross-speaker splice (TP) would cross speakers with
+    different speech rates → fires meaningfully — contributing to
+    discrimination, not FP regression.
+
+    Why rate over other mask-structure statistics. (1) Duty cycle (mean
+    vp) already exists as voicing_prob_delta. (2) Longest-run length is
+    correlated with rate (inverse for fixed mean). (3) Run-length variance
+    is noisy on 2s windows. Transition count per second is the simplest,
+    most robust RHYTHM signature the existing feature set doesn't expose.
+
+    Orthogonal. NOT 1eda8e3 (MFCC content cosine); NOT 7972a98 / d290101
+    / 177d641 / 88adb49 / 6c6c254 / 347c0ac (spec_contrast content
+    variants); NOT f4148cc (chroma content); NOT 0c3bf76 (spec_flatness
+    content abs-delta); NOT c006d52 (RMS dB content); NOT 0cdd87e (ZCR
+    content); NOT 7a170b0 (spec_bandwidth content); NOT 27ddbf7 / 1d1144d
+    (F0 distribution); NOT block-5 voicing_prob_pre/post/delta (voicing
+    MEAN, not RATE); NOT block-1 dsp_pairwise_proximity; NOT detector-
+    side (pure features.py add). FIRST voicing-mask-TEMPORAL-STRUCTURE
+    feature; FIRST rhythm feature derived from the voicing mask itself.
+
+    Blast radius: 1 new block function (~20 lines) + 1 FEATURE_NAMES
+    append + 2 assert bumps (80→81) + 1 call in extract_features. ZERO
+    new caches, ZERO new librosa calls. Per-t cost: 2 slices + 2 boolean
+    comparisons + 2 diff+sum ops on ~172-frame arrays + 2 divisions,
+    sub-ms.
+
+(c) IF THIS FAILS. (1) Speech regresses (voicing transition rate varies
+    with sentence prosodic stress enough that within-recording
+    fluctuation exceeds cross-source shift) → fallback to
+    voicing_longest_run_delta (longest contiguous voiced stretch length,
+    more robust against burst-noise flipping the mask). (2) Singing flat
+    (within-song transition rate already stable AND cross-song shifts are
+    too small at 2s windows — ~2 tr/s gives ~8 transitions per window,
+    small counting resolution) → pivot to voicing_transition_rate_delta
+    with wider 4s windows (more counts for stable statistics). (3)
+    Combined matches 0.490700 identical-streak AGAIN → features.py-sha
+    bump fails to force retrain on feature-count changes too; escalate
+    as systemic wrapper cache-coherence bug spanning features.py AND
+    detector.py.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 48+
+    iterations — cannot inspect the 3 singing FPs' voicing-mask
+    transition rates to verify they're continuous across chord boundaries
+    (as theory predicts) vs already differ. Every mask-statistic
+    hypothesis theory-calibrated. (ii) SHAP rollup STILL "no keeps yet —
+    rollup empty" for 7972a98 despite 14 keeps — rollup writer broken;
+    no per-feature attribution so axis picks are blind. (iii) 0.490700
+    identical streak crosses features.py AND detector.py changes without
+    any wrapper signal distinguishing "feature silent" from "classifier
+    stale" from "wrapper cache hit." (iv) 99081f5 4/16 capacity ghost
+    status unclear at HEAD after 960113c "REVERT".
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 48+-iteration blocker cited in every reflection.
+    Per-FP (domain, file, t_sec, p_splice, dsp_*, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, voicing_prob_pre,
+    voicing_prob_post, top-5 |SHAP|). Transforms every hypothesis from
+    theory bet to data-driven decision. (2) SHAP ROLLUP REPAIR — rollup
+    empty for 14 keeps; without per-feature attribution feature-selection
+    is blind. (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at
+    retrain decision: "features.py sha Δ XX→YY → retrain" vs "no Δ →
+    skip" with joblib-mtime sanity check after retrain. Would isolate
+    the 0.4907 identical-streak root cause. Three unchanged highest-
+    priority requests across 48+ iterations.
+
