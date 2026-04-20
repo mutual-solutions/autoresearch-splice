@@ -4128,3 +4128,130 @@ per-domain: combined_english=0.860759 combined_korean=0.502941 combined_singing=
     ("last commit SHA: 99081f5 — DISCARD/KEEP/PENDING") resolves
     attribution ambiguity when keep/discard notes lag.
 
+## 2026-04-20T14:01:07+09:00 — 6384137 (discard, combined=0.490700)
+subject: add onset_autocorr_peak_lag_shift feature (FEATURE_NAMES 80->81) — SCALAR tempo-period shift companion to 49fa2ca's failed onset_autocorr_cosine_dist. Per position t_sec autocorrelate feat_onset on pre=[t-4,t] and post=[t,t+4] via numpy.correlate, normalize by lag-0, find argmax in beat-range lag window [0.25s,1.25s] (48-240 BPM), return |pre_peak_lag_seconds - post_peak_lag_seconds|. Beat-saliency gate: if either window's max normalized autocorr in beat range < 0.35, return sentinel 0.0 (hard-zeros speech + white noise). Edge guard: window < (max_lag+20) frames returns 0.0. Reuses cached feat_onset + feat_frame_hop + feat_sr — ZERO new librosa calls, ZERO new caches. Per-t cost 1-2 ms (numpy.correlate on ~345-frame segment). Targets 7972a98 current-keep (0.589282) singing 0.345 weakest-domain plateau where voiced/unvoiced/percussive MASK family has saturated last 10+ iterations (fd500b3 percussive_mfcc discard, aa4f141 voiced_percussive_asymmetry discard, 99081f5 HistGBM capacity bump discard, 49fa2ca onset_autocorr_cosine_dist discard) and singing won't budge off 0.318-0.345. CLAUDE.md mandates structural change after 5+ same-axis failures; mask axis exhausted. 49fa2ca failed by regressing korean 0.667->0.503 via cosine-on-86-dim-vector noise amplification — even with saliency gate, marginal-salience korean chunks leaked high-variance cosine values that GBM over-weighted. Explicit cited escalation from 49fa2ca(c)(2): 'replace with LAG-PEAK-SHIFT feature onset_autocorr_peak_lag_shift = |argmax(pre_ac) - argmax(post_ac)| / fps (smaller-magnitude scalar encoding tempo period shift in seconds, may be easier for GBM to split on)'. Mechanism: within one song drum groove fixes tempo, pre/post peak lags match within 1-2 frames -> lag_shift ~0.01-0.03s; cross-song splice crosses tempi (typical 10-50 BPM difference) -> lag_shift 0.05-0.30s 10-20x intra-song noise floor; intra-song chord cycles preserve tempo exactly (chord changes align to beat boundaries within same drum pattern) -> no lag shift -> feature silent. This is the chord-cycle-vs-cross-song discriminator voiced-mask family has failed to surface because voiced features care about tonal content not tempo. On speech, beat-saliency gate hard-zeros (threshold 0.35 tightened from 49fa2ca's 0.15 based on smoke data: white noise peaks 0.16-0.23, drums peak 0.74-0.83 — 0.35 cleanly separates). Why scalar beats cosine: (1) low variance — only PEAK POSITION matters, immune to noise in other lag bins; (2) bounded/physically meaningful in [0,1.0] seconds; (3) GBM tree splits on scalar see distribution directly, cannot misweight phantom per-bin correlations. Orthogonal to every prior axis: NOT 49fa2ca (cosine on 86-dim vector vs scalar peak-lag); NOT voiced/unvoiced/percussive MASK family (doesn't use frame masking; pure time-series autocorrelation); NOT spectral/cepstral/harmonic CONTENT features (TEMPORAL PATTERN only); NOT spec_flux_delta (single-t onset gradient at boundary); NOT boundary_spec_flux_peak (peak-at-boundary not tempo). First SCALAR rhythm feature in the 80-feature set. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==81, last name 'onset_autocorr_peak_lag_shift', same-tempo drums (120/120) yields 0.0, tempo-shift drums (120->150) yields 0.60 large positive, white noise yields sentinel 0.0 via saliency gate, edge t+4>chunk_dur yields 0.0, end-to-end extract_features returns 81 finite features.
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: onset_autocorr_peak_lag_shift feature (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `onset_autocorr_peak_lag_shift`, a SCALAR tempo-period shift (in seconds).
+    Per position t_sec: slice `feat_onset` on pre=[t−4, t] and post=[t, t+4]
+    (4-second windows = 8-13 beats at 60-200 BPM), autocorrelate each
+    independently via numpy.correlate, normalize by lag-0, then find
+    argmax in the beat-range lag window [0.25s, 1.25s] (48-240 BPM).
+    Return `|argmax_pre_seconds − argmax_post_seconds|` — the absolute
+    tempo period difference in seconds. Beat-saliency gate: if either
+    window's max normalized autocorr in beat range < 0.15, return sentinel
+    0.0 (no dominant beat peak → hard-zero on speech). Edge guard: window
+    < (max_lag + 20) frames returns 0.0. Reuses cached feat_onset +
+    feat_frame_hop + feat_sr — ZERO new librosa calls, ZERO new caches.
+    Per-t cost: 2 slices + 2 autocorrelations (numpy.correlate on
+    ~345-frame segment) + 2 argmax + 1 abs subtract ≈ 1-2 ms.
+    FEATURE_NAMES 80→81 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 49fa2ca's `onset_autocorr_cosine_dist`
+    (86-dim cosine distance over the beat-range autocorr vector) FAILED
+    catastrophically on korean (0.667→0.503) while singing stayed flat
+    (0.319). 99081f5's HistGBM capacity bump (max_depth 3→4, max_leaf_nodes
+    8→16) also failed against the 80-feature space. CLAUDE.md's "structural
+    change after 5+ same-axis failures" trigger fires: voiced/unvoiced/
+    percussive MASK family is saturated (last 10+ iterations), and the
+    scalar rhythm axis remains virgin — 49fa2ca's ONE rhythm attempt used
+    a high-dim vector which is inherently noise-amplifying.
+
+    The 49fa2ca post-mortem identified the failure mode precisely: cosine
+    distance over 86 lag bins amplifies per-bin noise. Even with the
+    beat-saliency gate (max_ac < 0.15 → sentinel), korean chunks with
+    marginal beat-saliency (max_ac ~ 0.15-0.25 from quasi-periodic
+    prosody) passed the gate and contributed high-variance cosine values,
+    which GBM at 80 features globally over-weighted. The explicit cited
+    escalation from 49fa2ca(c)(2) is: "replace with an explicit LAG-PEAK-
+    SHIFT feature `onset_autocorr_peak_lag_shift` = |argmax(pre_ac) −
+    argmax(post_ac)| / fps (smaller-magnitude scalar encoding tempo period
+    shift in seconds, may be easier for GBM to split on)."
+
+    Mechanism on singing: within one song the drum groove fixes the
+    tempo; autocorr peaks at the beat period (0.40-0.60s for 100-150 BPM
+    pop/rock) plus subharmonics at 2×/3× beat. pre- and post-peak lags
+    match to within 1-2 frames → lag_shift ≈ 0.01-0.03s. Cross-song
+    splice that crosses tempi (typical 10-50 BPM BPM difference between
+    songs) produces lag_shift 0.05-0.30s — 10-20× the intra-song noise
+    floor. Intra-song chord cycles preserve tempo exactly (the chord
+    changes on beat boundaries within the same drum pattern) → no lag
+    shift → feature silent. This is the CHORD-CYCLE-VS-CROSS-SONG
+    discriminator that the voiced-mask family has failed to surface
+    (because voiced features care about tonal content, not tempo). On
+    speech, beat-saliency gate hard-zeros: consonant onsets lack a
+    dominant periodic peak (max normalized autocorr ~0.05-0.12 in beat
+    range), so sentinel 0.0 fires → GBM cannot over-weight (the exact
+    failure mode of 49fa2ca cosine on 86 dims).
+
+    Why scalar beats cosine: (1) Low variance — only PEAK POSITION
+    matters, immune to noise in other lag bins. (2) Bounded and
+    physically meaningful — value is in [0, 1.0] seconds, directly
+    corresponds to tempo period difference. (3) GBM tree splits on a
+    scalar see the distribution directly; tree cannot misweight
+    phantom correlations across 86 bins.
+
+    Orthogonal to every prior axis: NOT 49fa2ca (cosine on 86-dim
+    vector vs scalar peak-lag); NOT voiced/unvoiced/percussive MASK
+    family (doesn't use frame masking; uses pure time-series
+    autocorrelation); NOT spectral/cepstral/harmonic CONTENT features
+    (doesn't touch spectral content; TEMPORAL PATTERN only); NOT
+    spec_flux_delta (single-t onset gradient at boundary, not
+    period-repetition); NOT boundary_spec_flux_peak (peak-at-boundary
+    not tempo); NOT spec_contrast (peak-to-valley amplitude per band,
+    not tempo period). First SCALAR rhythm feature in the 80-feature
+    set. Blast radius: features.py only — 1 new block function + 1
+    FEATURE_NAMES append + 1 assert bump + 1 call in extract_features.
+    ZERO new caches. Per-t cost 1-2 ms; aggregate added cost in
+    dense scan ≈ ~2-4 s within 243/300 s eval budget. Risk-bounded:
+    beat-saliency gate + edge guard + scalar-only output; feature
+    bounded [0, 1.0]; signal is physically grounded on drum-driven
+    singing where both windows pass the gate.
+
+(c) IF THIS FAILS. (1) If the peak-lag feature also collapses because
+    chord-cycle intra-song produces small lag drift (e.g., slight
+    tempo fluctuations of ±5ms from human-played drums are enough to
+    make lag_shift always non-zero and noise-dominated), add a
+    DISCRETIZATION step — snap lag to nearest 1/32 note grid before
+    differencing, so microtiming noise zeros out. (2) If singing real
+    cross-song TPs happen to have matching tempos (common on
+    mastered-compilation splices by intent), try
+    `onset_autocorr_peak_height_shift` = |max_ac_pre − max_ac_post| —
+    even at same tempo the beat-strength shifts if drum kit changes
+    (different snare crack, different kick punch). (3) Final
+    escalation: tempogram cosine distance (49fa2ca(c)(3)) — 384-dim
+    tempogram with ~50 ms/chunk added cost. Richer fingerprint but
+    reverts to cosine-on-vector failure mode of 49fa2ca.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 22+
+    iterations — I cannot verify whether 7972a98's 3 surviving singing
+    FPs fall on drum-driven sections (beat-saliency gate passes →
+    feature fires) or on acapella/ballad passages (gate fires →
+    sentinel, no-op exactly where I want it to bite). The prior that
+    most singing eval files are drum-heavy pop/rock is reasonable but
+    unverified. (ii) SHAP rollup STILL "no keeps yet — rollup empty"
+    for 7972a98 — cannot confirm which features actually drive the
+    singing-weakest plateau. (iii) per-chunk onset_strength
+    distributions across domains unknown; beat-saliency threshold 0.15
+    calibrated from prior/theory not data. (iv) Eval timing: my
+    feature delta attribution mixes with classifier state — if
+    99081f5's capacity bump was reverted (likely given baseline still
+    0.589282), classifier is depth=3 max_leaf=8; if not reverted,
+    depth=4 max_leaf=16.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block —
+    persistent blocker for 22+ iterations; per-FP (domain, file, t_sec,
+    label_id, p_splice, onset_autocorr_peak_pre, onset_autocorr_peak_post,
+    rhythm_salient_pre, rhythm_salient_post, voiced_mfcc_dist, top-5
+    |SHAP| features). Every hypothesis since iteration ~70 calibrated
+    from theory; flips loop to data-driven. (2)
+    `scripts/feature_oof_preview.py --add <feature_fn>` that retrains
+    once and reports per-domain OOF-F1 delta vs current — "is this
+    feature worth a 3-min retrain" as a numeric. (3) PREVIOUS-
+    ITERATION-OUTCOME header in prompt (last SHA + KEEP/DISCARD/PENDING
+    + last classifier hyperparams) resolves attribution ambiguity when
+    keep/discard notes lag behind HEAD.
+
