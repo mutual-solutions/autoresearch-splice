@@ -4001,3 +4001,130 @@ per-domain: combined_english=0.878049 combined_korean=0.687500 combined_singing=
     this one. A 3-line shell guard after the discard decision would
     prevent this.
 
+## 2026-04-20T12:50:18+09:00 — 49fa2ca (discard, combined=0.516753)
+subject: add onset_autocorr_cosine_dist feature (FEATURE_NAMES 80->81) — first RHYTHM/BEAT-PATTERN feature, genuinely new physical axis orthogonal to every prior voiced/unvoiced/percussive MASK variant and every spectral/cepstral/harmonic CONTENT feature. Autocorrelate feat_onset on pre=[t-4,t] and post=[t,t+4] (4-second windows = 8-13 beats at 60-200 BPM), normalize each by lag-0, extract beat-range slice [0.25s,1.25s] (= 48-240 BPM), return cosine distance between the two autocorr vectors. Reuses cached feat_onset — ZERO new librosa calls, ZERO new caches. Per-t cost 1-3 ms (numpy.correlate on ~345-frame segment). Beat-saliency gate: if either window's max normalized autocorr in beat range < 0.15, return sentinel 0.0 — hard-zeros speech where consonant onsets lack a dominant beat peak. Edge guard: window < max_lag+20 frames returns 0.0. FEATURE_NAMES 80->81 triggers wrapper auto-retrain via US-505 sha gate.
+per-domain: combined_english=0.860759 combined_korean=0.502941 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: onset_autocorr_cosine_dist feature (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `onset_autocorr_cosine_dist`, a RHYTHM/BEAT-PATTERN fingerprint.
+    Compute autocorrelation of `feat_onset` independently on pre=[t−4, t]
+    and post=[t, t+4] (4-second windows = 8-13 beats at 60-200 BPM),
+    normalize each by its lag-0 value, extract the beat-range slice
+    [0.25s, 1.25s] (= 48-240 BPM), and return cosine distance between the
+    two beat-range autocorr vectors. Reuses cached `feat_onset` +
+    `feat_frame_hop` + `feat_sr` — ZERO new librosa calls, ZERO new caches.
+    Per-t cost: 2 slices + 2 autocorrelations via numpy.correlate on
+    ~345-frame segments + 2 normalizations + 1 cosine on ~86-element
+    vectors ≈ 1-3 ms. Beat-saliency gate: if either window's max
+    normalized autocorr in the beat range < BEAT_SALIENCY_MIN=0.15 (no
+    dominant beat peak), return sentinel 0.0 — intrinsically hard-zeros
+    speech where onsets are irregular consonant transients. Edge guard:
+    window < (max_lag + 20) frames returns sentinel 0.0. FEATURE_NAMES
+    80→81 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Last 8+ hypotheses since 1eda8e3 keep
+    (0.586) iterated the voiced/unvoiced/percussive MASK family (ff65865,
+    308aa5a, df6fc0a, e7ca9eb, 1eda8e3 keep, f4148cc, 7972a98 keep,
+    de0be6f, fd500b3, aa4f141) — multi-dim cosine distances in
+    MFCC/chroma/tonnetz/spec_contrast spaces with single-mask /
+    paired-diff / paired-sum variants. Singing plateau 0.340-0.345
+    held throughout; latest feature discards REGRESSED singing.
+    99081f5 (latest commit, outcome uncertain — baseline_metrics.json
+    still reflects 7972a98=0.589282 so likely DISCARDED) tried
+    classifier capacity bump (max_depth 3→4, max_leaf 8→16) — first
+    NON-feature structural move. CLAUDE.md mandates structural change
+    after 5+ same-axis failures; voiced/unvoiced/percussive mask axis
+    is exhausted on spectral/cepstral/harmonic CONTENT. Rhythm/tempo
+    is a wholly new physical axis untouched by every prior feature in
+    the 80-feature set. Within one song the drum kit plays at a fixed
+    tempo; onset_strength autocorrelation has a STRONG peak at the
+    beat period (typically 0.4-0.6s for 100-150 BPM pop/rock) plus
+    subharmonic peaks at 2×/3× beat (bar boundaries). Cross-song
+    splices cross drum grooves — new song often has different BPM OR
+    different beat subdivision OR different syncopation. The autocorr
+    VECTOR in the beat range encodes the full rhythm fingerprint (not
+    just peak lag) — primary beat peak, bar-level subharmonics, and
+    overall shape. Same song pre/post = near-identical vectors →
+    cos_dist ~0.02-0.10. Different song = shifted peaks → cos_dist
+    ~0.30-0.70. On chord-cycle intra-song FPs (exactly the singing
+    population I'm targeting): voiced_mfcc stable (same singer),
+    voiced_chroma moderate (chord transitions share pitch classes),
+    voiced_unvoiced_spec_contrast_asymmetry ~0 (chord cycle is
+    symmetric across voiced/unvoiced) — but drum pattern IDENTICAL
+    before and after, so onset_autocorr_cosine_dist ~0. Tree splits
+    learn "chord-cycle-FP = multiple spectral features fire moderately
+    AND onset_autocorr_cosine_dist near-zero" vs "real-splice = same
+    spectral pattern AND onset_autocorr shows rhythm shift". Self-
+    gating on speech via beat-saliency gate: speech onset peaks are
+    irregular consonant transients; autocorr in 0.25-1.25s range has
+    NO dominant peak (max normalized autocorr ~0.05-0.12), gate fires
+    → sentinel 0.0 hard-zero on english/korean. This gate is
+    STRUCTURALLY different from voicing-mask self-gating (which still
+    fires on speech with high-variance values): hard-zero means GBM
+    sees the feature as literally non-informative on speech and
+    CANNOT over-weight it globally (neutralizes the df6fc0a/fd500b3
+    failure mode where high-variance noise feature regressed singing
+    via GBM global mis-weighting).
+
+    Orthogonal to every prior axis: NOT voiced/unvoiced/percussive
+    MASK family (those use onset threshold as a FRAME MASK on
+    spectral content; this uses the onset WAVEFORM for temporal
+    autocorrelation); NOT cepstral (MFCC) / pitch-class (chroma) /
+    tonal-centroid (tonnetz) / mastering-signature (spec_contrast) —
+    these measure SPECTRAL content, rhythm is TEMPORAL pattern; NOT
+    spec_flux_delta (single-t onset gradient); NOT
+    boundary_spec_flux_peak (peak-at-boundary not period-repetition).
+    First RHYTHM / BEAT-PATTERN feature — genuinely new physical axis.
+    Blast radius: features.py only — 1 new block function + 1
+    FEATURE_NAMES append + 2 assert bumps + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost 1-3 ms; aggregate added cost in dense scan ≈ ~3-5 s within
+    243/300 s eval budget. Risk-bounded: sentinel-0.0 safety +
+    beat-saliency gate hard-zeros speech; feature bounded [0, 2];
+    signal physically-grounded on the singing subset where both
+    sides pass the gate.
+
+(c) IF THIS FAILS. (1) If beat-saliency gate fires too often on
+    singing (intro/outro / ballad passages without drums), widen lag
+    range to [0.15, 1.5]s (40-400 BPM) OR lower BEAT_SALIENCY_MIN
+    to 0.08 to catch sparse rhythmic signatures. (2) If GBM assigns
+    ~0 SHAP (autocorr_cosine_dist is too correlated with
+    spec_flux_delta because both are sensitive to transient density),
+    replace with an explicit LAG-PEAK-SHIFT feature
+    `onset_autocorr_peak_lag_shift` = |argmax(pre_ac) −
+    argmax(post_ac)| / fps (smaller-magnitude scalar encoding tempo
+    period shift in seconds, may be easier for GBM to split on).
+    (3) Final escalation: tempogram cosine distance
+    (librosa.feature.tempogram averaged over pre/post windows, cosine
+    on 384-dim vectors) — richer rhythm fingerprint including meter
+    /subdivision structure, ~50 ms/chunk added cost.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 22+
+    iterations — I cannot verify whether 7972a98's 3 surviving
+    singing FPs fall on drum-driven sections (beat-saliency gate
+    passes → feature fires) or quiet vocal passages (gate fires →
+    sentinel, no-op for exactly the population I'm targeting).
+    Betting on the prior that most singing eval files are drum-heavy
+    pop/rock. (ii) SHAP rollup STILL "no keeps yet — rollup empty"
+    so I cannot see how 7972a98's features weigh per-domain.
+    (iii) 99081f5 (HistGBM capacity bump) has NO keep/discard note
+    commit yet but baseline_metrics.json reflects 7972a98 — outcome
+    ambiguous. My feature delta attribution mixes with whatever
+    classifier hyperparams currently live at HEAD (may be depth=3
+    max_leaf=8 if discarded and reverted, or depth=4 max_leaf=16 if
+    still pending).
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block —
+    persistent blocker for 22+ iterations; per-FP (domain, file,
+    t_sec, label_id, p_splice, onset_autocorr_peak_pre,
+    onset_autocorr_peak_post, rhythm_salient_pre, rhythm_salient_post,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, top-5 |SHAP|). Every
+    hypothesis since iteration ~70 calibrated from theory;
+    flips loop to data-driven. (2) `scripts/feature_oof_preview.py
+    --add <feature_fn>` that retrains once and reports per-domain
+    OOF-F1 delta. (3) PREVIOUS-ITERATION-OUTCOME header in prompt
+    ("last commit SHA: 99081f5 — DISCARD/KEEP/PENDING") resolves
+    attribution ambiguity when keep/discard notes lag.
+
