@@ -78,9 +78,9 @@ def make_pipeline():
     return Pipeline([
         ("scaler", StandardScaler()),
         ("clf", HistGradientBoostingClassifier(
-            max_iter=200,
-            max_depth=4,
-            max_leaf_nodes=16,
+            max_iter=300,
+            max_depth=5,
+            max_leaf_nodes=32,
             learning_rate=0.07,
             l2_regularization=1.0,
             min_samples_leaf=20,
