@@ -519,22 +519,30 @@ _do_ensure_classifier_fresh() {
     # When this function retrains successfully AND a `hypothesis:` HEAD is
     # present, callers (the loop) own commit policy; this function only
     # stages the artifacts so the caller can amend or commit separately.
-    local features_sha_now features_sha_trained
+    # US-505b: gate on BOTH features.py AND train_classifier.py shas so
+    # hyperparam-only edits (no features.py change) also trigger retrain.
+    local features_sha_now features_sha_trained train_sha_now train_sha_trained
     features_sha_now=$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")
-    features_sha_trained=$(python3 -c "
-import json, sys
+    train_sha_now=$(git hash-object "$PROJECT_DIR/splice/classifier/train_classifier.py" 2>/dev/null || echo "")
+    read -r features_sha_trained train_sha_trained <<<"$(python3 -c "
+import json
 try:
     d = json.load(open('splice/classifier/fp_classifier.meta.json'))
-    print(d.get('features_py_sha') or '')
+    print(d.get('features_py_sha') or '_', d.get('train_classifier_py_sha') or '_')
 except Exception:
-    print('')
-" 2>/dev/null)
-    if [ -z "$features_sha_now" ] || [ "$features_sha_now" = "$features_sha_trained" ]; then
-        _log INFO wrapper retrain.fresh sha="$features_sha_now"
+    print('_ _')
+" 2>/dev/null)"
+    if [ -z "$features_sha_now" ] || [ -z "$train_sha_now" ]; then
+        _log INFO wrapper retrain.fresh features_sha="$features_sha_now" train_sha="$train_sha_now" reason=unhashable
+        return 0
+    fi
+    if [ "$features_sha_now" = "$features_sha_trained" ] && [ "$train_sha_now" = "$train_sha_trained" ]; then
+        _log INFO wrapper retrain.fresh features_sha="$features_sha_now" train_sha="$train_sha_now"
         return 0
     fi
     _log INFO wrapper retrain.drift \
-        was="$features_sha_trained" now="$features_sha_now"
+        features_was="$features_sha_trained" features_now="$features_sha_now" \
+        train_was="$train_sha_trained" train_now="$train_sha_now"
     local retrain_cmd=()
     if command -v timeout >/dev/null 2>&1; then
         retrain_cmd=(timeout 300 uv run python splice/classifier/train_classifier.py)
@@ -1087,18 +1095,25 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
         # silent-skew bug class where claude edits features.py but
         # forgets to retrain; evaluate.py would then use a classifier
         # whose feature dims or semantics mismatch the detector.
+        # US-505b: also gate on train_classifier.py sha so hyperparam-only
+        # edits trigger retrain — closes the silent-skip bug where 5
+        # consecutive hyperparam iterations produced identical
+        # combined=0.490700 because the gate missed the source of change.
         _features_sha_now=$(git hash-object "$PROJECT_DIR/splice/features.py" 2>/dev/null || echo "")
-        _features_sha_trained=$(python3 -c "
-import json, sys
+        _train_sha_now=$(git hash-object "$PROJECT_DIR/splice/classifier/train_classifier.py" 2>/dev/null || echo "")
+        read -r _features_sha_trained _train_sha_trained <<<"$(python3 -c "
+import json
 try:
     d = json.load(open('splice/classifier/fp_classifier.meta.json'))
-    print(d.get('features_py_sha') or '')
+    print(d.get('features_py_sha') or '_', d.get('train_classifier_py_sha') or '_')
 except Exception:
-    print('')
-" 2>/dev/null)
-        if [ -n "$_features_sha_now" ] && [ "$_features_sha_now" != "$_features_sha_trained" ]; then
+    print('_ _')
+" 2>/dev/null)"
+        if { [ -n "$_features_sha_now" ] && [ "$_features_sha_now" != "$_features_sha_trained" ]; } \
+            || { [ -n "$_train_sha_now" ] && [ "$_train_sha_now" != "$_train_sha_trained" ]; }; then
             _log INFO wrapper retrain.auto.start \
-                was="$_features_sha_trained" now="$_features_sha_now" \
+                features_was="$_features_sha_trained" features_now="$_features_sha_now" \
+                train_was="$_train_sha_trained" train_now="$_train_sha_now" \
                 caller=loop
             # Portable 300s timeout: GNU `timeout` or brew's `gtimeout`
             # when present, else unguarded. macOS ships neither by default.
@@ -1154,7 +1169,7 @@ except Exception:
                     _log WARN wrapper retrain.amend_warning \
                         head_subject="$_head_subj" \
                         action="separate retrain commit"
-                    git commit -m "retrain: auto-refresh classifier for features.py sha $_features_sha_now" \
+                    git commit -m "retrain: auto-refresh classifier (features.py=$_features_sha_now, train_classifier.py=$_train_sha_now)" \
                         >>"$CHILD_STDERR_LOG" 2>&1 || true
                     ;;
             esac

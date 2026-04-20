@@ -421,15 +421,20 @@ def train() -> dict:
 
     # US-505: record the git-blob sha of features.py at train time so
     # the wrapper can detect drift and auto-retrain before evaluate.py.
+    # US-505b: also record train_classifier.py sha so hyperparam-only
+    # edits (no features.py change) trigger the same auto-retrain gate.
     import subprocess as _sp
+    def _hash_object(p):
+        try:
+            return _sp.check_output(
+                ["git", "hash-object", str(p)],
+                text=True, stderr=_sp.DEVNULL, timeout=2,
+            ).strip()
+        except Exception:
+            return None
     _features_path = _HERE.parent.parent / "features.py"
-    try:
-        _features_sha = _sp.check_output(
-            ["git", "hash-object", str(_features_path)],
-            text=True, stderr=_sp.DEVNULL, timeout=2,
-        ).strip()
-    except Exception:
-        _features_sha = None
+    _features_sha = _hash_object(_features_path)
+    _train_classifier_sha = _hash_object(_HERE)
     import datetime as _dt
     with open(meta_out, "w") as f:
         json.dump({
@@ -442,6 +447,7 @@ def train() -> dict:
                 "class_counts": counts,
             },
             "features_py_sha": _features_sha,
+            "train_classifier_py_sha": _train_classifier_sha,
             "training_timestamp": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }, f, indent=2)
     print(f"Saved model → {MODEL_OUT}")
