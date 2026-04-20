@@ -1,6 +1,6 @@
 {
   "n_samples": 1360,
-  "n_features": 75,
+  "n_features": 80,
   "feature_names": [
     "dsp_phase_z",
     "dsp_t2_z",
@@ -76,7 +76,12 @@
     "mel_pca_17",
     "mel_pca_18",
     "mel_pca_19",
-    "mel_pca_20"
+    "mel_pca_20",
+    "voiced_mfcc_cosine_dist",
+    "voiced_chroma_cosine_dist",
+    "voiced_spec_contrast_cosine_dist",
+    "voiced_unvoiced_mfcc_asymmetry",
+    "voiced_unvoiced_spec_contrast_asymmetry"
   ],
   "label_names": [
     "not_splice",
