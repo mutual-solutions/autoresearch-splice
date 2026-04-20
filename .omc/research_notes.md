@@ -4255,3 +4255,110 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     + last classifier hyperparams) resolves attribution ambiguity when
     keep/discard notes lag behind HEAD.
 
+## 2026-04-20T14:15:24+09:00 — ea1636c (discard, combined=0.455183)
+subject: REMOVE voiced_spec_contrast_cosine_dist ghost feature (FEATURE_NAMES 80->79) — first ABLATION in 23+ iterations of pure adds. e7ca9eb introduced this feature and was DISCARDED (singing regressed 0.341->0.316) but the wrapper failed to revert features.py so it persisted 15+ iterations contaminating attribution. Every reflection since 1eda8e3 flagged this as a blocker. Remove list entry at line 146, extract_features call at line 1107, update both len(FEATURE_NAMES)==80 asserts to 79. Leaves dead _block_voiced_spec_contrast function in-file (minimal diff, zero runtime cost). The kept asymmetry feature voiced_unvoiced_spec_contrast_asymmetry (7972a98) computes voiced_dist + unvoiced_dist INLINE from feat_contrast + feat_vp so removing the voiced-only raw feature does NOT break the asymmetry — it forces GBM to route spec_contrast signal through the paired-difference discriminator only, eliminating the chord-cycle noise channel that e7ca9eb's per-vowel formant shifts create on within-song singing. Targets 7972a98 current-keep (0.589282) singing 0.345 plateau. Self-diagnostic: if ablation HELPS (>=0.589, singing >=0.345), confirms the 5+-iteration attribution-contamination theory; if HURTS (<0.574), proves the voiced-only feature was providing signal the asymmetry missed — information either way. Orthogonal to EVERY prior axis: ZERO prior feature-removal attempts — 50+ feature hypotheses since iteration 1 all ADDS. Not primary-tunable (detector.py unchanged), not hyperparam (train_classifier.py unchanged), not DSP post-filter, not ensemble/calibration/class_weight/audio-mutation. Pure features.py REMOVAL. Blast radius: 4 line edits. FEATURE_NAMES length change triggers wrapper auto-retrain via US-505. Smoke-verified: import OK, len(FEATURE_NAMES)==79, ghost feature absent from list AND from extract_features output, asymmetry feature preserved, 79 finite features on synthetic audio.
+per-domain: combined_english=0.775000 combined_korean=0.405634 combined_singing=0.300000
+
+# 2026-04-20 — hypothesis: REMOVE voiced_spec_contrast_cosine_dist ghost feature (FEATURE_NAMES 80→79)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — REMOVE one feature
+    (the first ablation in 23+ iterations of pure additions). Delete the
+    entry `+ ["voiced_spec_contrast_cosine_dist"]` from FEATURE_NAMES
+    (drop 80→79), remove the `feats.update(_block_voiced_spec_contrast(...))`
+    call in `extract_features`, update the two `assert len(FEATURE_NAMES)`
+    checks 80→79. Leave the dead `_block_voiced_spec_contrast` function
+    in-file as dead code (minimal diff). FEATURE_NAMES length change
+    triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. This feature was introduced by e7ca9eb
+    which was DISCARDED (singing REGRESSED 0.341→0.316) but the wrapper
+    failed to revert features.py — the block + FEATURE_NAMES entry +
+    extract_features call have remained in-tree for ~15+ iterations.
+    Every reflection since 1eda8e3 has explicitly flagged this: "e7ca9eb's
+    voiced_spec_contrast_cosine_dist is STILL in-tree post-discard,
+    contaminating every subsequent attribution." Grep confirms: line 146
+    FEATURE_NAMES, line 1107 extract_features call, 937/942/946 function
+    body. The asymmetry feature `voiced_unvoiced_spec_contrast_asymmetry`
+    (kept 7972a98, in-tree at block 15, line 1007-1055) computes its own
+    voiced_dist + unvoiced_dist INLINE from feat_contrast + feat_vp — it
+    does NOT reference `voiced_spec_contrast_cosine_dist` as a feature.
+    So removing the ghost feature does not break the asymmetry. Every
+    other discard since feature-additions began (f4148cc chroma-asym,
+    fd500b3 percussive_mfcc, aa4f141 voiced_percussive_asymmetry, 49fa2ca
+    autocorr_cosine, 6384137 autocorr_peak_lag, de0be6f sym, df6fc0a
+    unvoiced_mfcc, 308aa5a tonnetz, ff65865 far-chroma) WAS correctly
+    reverted — only e7ca9eb slipped through.
+
+    Expected mechanism: the ghost feature fires on within-song chord
+    transitions (each vowel phrase shifts the voiced-frame 7-dim contrast
+    mean by ~0.10-0.20) so acts as a chord-cycle NOISE channel that GBM
+    partially up-weights into p_splice, inflating singing clean_fp. Its
+    complement signal (unvoiced contrast on the same ±2s window) now lives
+    EXCLUSIVELY in the asymmetry feature where paired differencing
+    cancels the chord-cycle noise. Removing the raw voiced-only feature
+    forces GBM to route the spec_contrast signal through the asymmetry
+    ONLY — the clean splice-vs-chord-cycle discriminator. The e7ca9eb
+    discard evidence is direct (singing 0.341→0.316 when added), but
+    attribution was contaminated because at e7ca9eb's eval the
+    asymmetry (7972a98) didn't exist yet — now that it does, the
+    voiced-only single-mask version is redundant noise.
+
+    Self-diagnostic character: if removing the ghost HELPS (combined ≥
+    0.589 with singing ≥ 0.345), it confirms the attribution-
+    contamination theory that 5+ prior reflections have cited as a
+    blocker; if it HURTS (combined drops), it falsifies the theory and
+    proves the feature was actually providing signal the asymmetry
+    missed, informing future additions. Either outcome is information.
+
+    Orthogonal to every prior axis: ZERO feature-removal attempts in the
+    loop (all 50+ feature hypotheses since iteration 1 have been ADDS);
+    NOT a primary-tunable bracket (detector.py unchanged), NOT a
+    classifier hyperparam (train_classifier.py unchanged), NOT an
+    asymmetry/symmetry/mask companion (no new feature block), NOT a
+    DSP post-filter, NOT a calibration / ensemble / class_weight /
+    audio-mutation. Pure features.py REMOVAL. Blast radius: 3 edits
+    to features.py (line 146 remove list entry, line 151 & 1151 update
+    asserts 80→79, line 1107 remove extract call). Zero librosa / numpy
+    cost change (the function body stays dead but isn't called).
+
+(c) IF THIS FAILS. (1) If combined stays flat or drops marginally (e.g.,
+    0.585-0.589), the ghost was functionally inert and the failure
+    confirms the plateau is NOT attribution contamination but genuine
+    feature-space saturation — next axis is primary tunables
+    (GBM_MIN_SEP_S = 2.5 untried below-tried range; ANALYSIS_STRIDE_S =
+    0.08 untried above 0.11 failed). (2) If combined drops significantly
+    (>0.015 hit), the ghost was providing real signal despite being a
+    discard — then RESTORE it and pivot to asymmetry + symmetry joint
+    structural use, e.g., add tonnetz asymmetry variant instead. (3)
+    Final escalation: per-domain classifier routing (singing model
+    trained ONLY on spliced/clean singing, speech model trained on
+    english+korean together) — HistGBM × 2 with a file-HPR gate to
+    choose which predict_proba to use at eval time.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 23+
+    iterations — I cannot verify whether the 3 singing FPs correlate
+    with high voiced_spec_contrast_cosine_dist values (direct evidence
+    the ghost inflates them) or are orthogonal (ghost is inert).
+    (ii) SHAP rollup STILL "no keeps yet — rollup empty" for 7972a98 —
+    I cannot see the ghost feature's per-domain SHAP to predict the
+    sign of the ablation effect. (iii) Classifier state: baseline
+    reflects 7972a98 but commits since (99081f5 capacity bump, 49fa2ca,
+    6384137 both rhythm, 4b7f27b/aea6d05 notes) may or may not have
+    left the classifier at 7972a98's state — the wrapper's retrain
+    cycle is atomic per iteration so CURRENT HEAD classifier must be
+    trained on the 80-feature set including the ghost.
+
+(e) Wrapper enhancements. (1) DISCARD-REVERT SYNC auditor — the
+    wrapper's discard path should diff features.py vs baseline-sha
+    features.py and ABORT / restore-and-retry if they differ. This
+    prevents exactly the e7ca9eb situation where a discarded
+    hypothesis's code persists for 15+ iterations contaminating every
+    subsequent attribution. ~20 lines of shell guard after the discard
+    decision. (2) CLEAN_FP_POSITIONS JSON block in CURRENT STATE (persistent
+    blocker for 23+ iterations; per-FP feature vector + top-5 |SHAP|
+    values) — flips the loop from theory-calibrated to data-driven
+    feature design. (3) `scripts/feature_oof_preview.py --add <fn>`
+    AND `--remove <name>` modes — retrains once, reports per-domain
+    OOF-F1 delta. "Is this feature ADD/REMOVE worth a 3-min retrain"
+    becomes a numeric preview instead of a bet.
+
