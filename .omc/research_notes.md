@@ -5031,3 +5031,98 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     domain). Would directly justify gate thresholds for any music-
     gated feature.
 
+## 2026-04-21T05:13:05+09:00 — 1cded37 (discard, combined=0.410922)
+subject: add NEAR-PEAK cluster-count filter (detector.py, pure primary tunable, no retrain) -- drop emits whose +-12s p_splice neighborhood (excluding +-1.5s) contains >=2 OTHER grid points with p_splice > GBM_THRESHOLD. STRUCTURAL pivot off 60+ iterations of features/DSP-gate/retrospective-match failures on 3 singing chord-cycle FPs onto p_splice TIME-SERIES STRUCTURE across a wide neighborhood. Chord cycles are PERIODIC: chord transitions recur at 2-3s intervals so p_splice shows 4-6 other elevated peaks per +-12s window on chord-cycle FPs. Real cross-source splices are ISOLATED (1 splice per file in ground truth) so p_splice is locally peaked and nearby grid points sit well below 0.982 -> count=0 pass. Mechanism on 3 singing chord-cycle FPs: each chord transition in the 2-3s cycle produces p_splice>GBM_THRESHOLD, excluding +-1.5s around emit expect 4-6 other hits -> count>=2 reject FPs drop. Real singing TP cross-song splice: post and pre different songs no within-song periodicity either side -> count~0 pass. Speech: korean/english clean_fp=0 already so filter only acts on speech real-splice files which are also isolated (1 speaker change per file) count~0 -> TPs pass. Orthogonal: NOT 60196aa peak-width neighbor-support (required >=1 NEAR neighbor within +-stride to SUPPORT the peak -- OPPOSITE direction 'wide peak=real'), NOT d4d35b1 p_splice local-background-margin (margin-based on local mean catastrophic 0.287). Mine counts DISCRETE OTHER CANDIDATES in a WIDER neighborhood with EXCLUSION of emit's own vicinity -- neither margin nor peak-width; explicit cluster-count semantics. NOT any DSP gate (applies AFTER DSP), NOT feature addition, NOT GBM_THRESHOLD/GBM_MIN_SEP_S/ANALYSIS_STRIDE_S. FIRST wide-window cluster-count filter using p_splice time-series repetition structure in detector history. Filter only DROPS emits -- can never create new FPs or TPs. Pure detector.py change: 3 new constants + 7-line check inserted after DSP confirm + 1 new kv in diag.gbm.chunk_scan_done. Feature set unchanged (len(FEATURE_NAMES)=80 stable), classifier byte-identical, no retrain. Per-emit cost: 2 np slices on hit_mask + 2 sums, sub-us. Edge guard: skip when lookback_n<=exclude_n (short chunks). Smoke-verified: AST parse OK 915 lines, NEAR_PEAK_LOOKBACK_S=12.0 NEAR_PEAK_EXCLUDE_S=1.5 MAX_NEAR_PEAKS=2, other tunables unchanged (GBM_THRESHOLD=0.982 DSP_SUM_MIN=5.0 DSP_CONFIRMATION_MIN=2.0 GBM_MIN_SEP_S=3.5 ANALYSIS_STRIDE_S=0.12), FEATURE_NAMES stable at 80.
+per-domain: combined_english=0.542373 combined_korean=0.413115 combined_singing=0.309677
+
+# 2026-04-21 — hypothesis: p_splice NEAR-PEAK cluster-count filter (detector.py)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — reject emits whose
+    ±12s p_splice neighborhood (excluding ±1.5s around the emit)
+    contains ≥ 2 OTHER grid points with p_splice > GBM_THRESHOLD.
+    Add NEAR_PEAK_LOOKBACK_S=12.0, NEAR_PEAK_EXCLUDE_S=1.5,
+    MAX_NEAR_PEAKS=2 constants; enforce a simple cluster count from
+    the existing hit_mask slice. No retrain, no feature change,
+    feature count stable at 80, classifier byte-identical.
+
+(b) WHY over recent failures. 60+ features.py additions collapsed on
+    3 singing chord-cycle FPs (combined 0.47-0.55). Every DSP-gate
+    axis tried (MAX, SUM, SECOND-HIGHEST, PHASE channel-floor) and
+    every retrospective-match variant (7 masks/aggregators/axes)
+    regressed either singing or speech. The one axis nobody has
+    touched is the p_splice TIME-SERIES STRUCTURE across a WIDE
+    neighborhood. Chord cycles are periodic: chord transitions recur
+    at 2-3s intervals within a song, so within a ±12s window around
+    one chord-cycle FP there are ~4-6 other chord-transition p_splice
+    peaks. Real cross-source splices are ISOLATED: single transition
+    per file, no other elevated p_splice within ±12s of the true
+    boundary (ground-truth dataset has 1 splice per file). Counting
+    other hit_mask points in the window is a direct, orthogonal
+    measure of "repetition" vs "isolation" that the GBM itself
+    cannot synthesize because it sees only feature context at time t,
+    not the p_splice series across ±12s.
+
+    Mechanism on 3 singing chord-cycle FPs: each chord transition in
+    the 2-3s cycle produces an elevated p_splice. In a ±12s window
+    (excluding ±1.5s to avoid counting the emit's own narrow peak),
+    expect 4-6 other points > GBM_THRESHOLD. Count ≥ 2 → reject.
+    FPs drop.
+
+    Real singing TP (cross-song splice): post and pre are from
+    different songs, no within-song periodicity on either side. The
+    elevated p_splice is localized at the true boundary; other
+    grid points in ±12s have p_splice well below 0.982 → count ≈ 0
+    → pass.
+
+    Speech: korean/english already have clean_fp=0, so the filter
+    only acts on speech real-splice files. Speech splices are also
+    isolated (single speaker change per file), count ≈ 0 → TPs pass.
+
+    Orthogonal. NOT 60196aa peak-width neighbor-support (required
+    ≥1 NEAR neighbor within ±stride to SUPPORT the peak — OPPOSITE
+    direction, "wide peak = real"); NOT d4d35b1 p_splice
+    local-background-margin (required peak to EXCEED local
+    background by a margin; catastrophic 0.287 — margin-based on
+    local mean). Mine counts DISCRETE OTHER CANDIDATES in a WIDER
+    neighborhood with EXCLUSION of the emit's own vicinity. Neither
+    margin nor peak-width; explicit cluster-count semantics. NOT
+    any DSP gate (applies AFTER DSP); NOT a feature addition; NOT
+    GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S. FIRST
+    wide-window cluster-count filter using p_splice time-series
+    repetition structure.
+
+    Blast radius. detector.py only, 3 new constants + ~6 lines in
+    the gate loop. Per-emit cost: 2 np slices + 2 sums, sub-us. No
+    retrain, feature set unchanged, features.py sha stable. Filter
+    only DROPS emits — can never create new FPs or new TPs.
+
+(c) IF THIS FAILS. (1) Threshold 2 too strict (real TPs sometimes
+    have 1-2 noise hits nearby from dense scan imperfection) →
+    raise to 3, keep the mechanism. (2) The 3 singing FPs sit in
+    3 DIFFERENT clean files (1 FP each, no cluster) → filter
+    does nothing, discard neutral; pivot to per-file file-level
+    cluster detection or MULTI-FILE-AWARE gating. (3) Chord-cycle
+    period exceeds 12s (verse→chorus transitions at 20-30s) →
+    widen LOOKBACK_S to 20.0 and lower count threshold.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent — cannot
+    verify whether the 3 singing FPs are in 1 file clustered or 3
+    files isolated (decides whether this filter bites). (ii) No
+    visibility into the p_splice distribution around an FP —
+    whether nearby chord transitions produce > GBM_THRESHOLD peaks
+    or only moderate elevations. (iii) SHAP rollup STILL empty for
+    14 keeps.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, near_peak_count_in_pm12s,
+    dsp_phase_z/t2_z/cpe_z, voicing_fraction, top-5 |SHAP|). Would
+    directly settle whether the 3 singing FPs are clustered or
+    isolated and validate cluster-count thresholds.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD a p_splice-NEIGHBORHOOD snapshot to CURRENT STATE: for
+    each FP, the full p_splice vector in ±12s around the emit
+    (or summary stats: count > thr, count > thr*0.95, max outside
+    ±1.5s). Would enable data-driven tuning of any wide-window
+    post-filter.
+
