@@ -5074,3 +5074,97 @@ per-domain: combined_english=0.774074 combined_korean=0.555385 combined_singing=
     with joblib-mtime sanity check post-retrain. Would isolate the
     0.4907 identical-streak root cause.
 
+## 2026-04-21T00:02:45+09:00 — 8170784 (discard, combined=0.494106)
+subject: add voiced_chroma_cross_intra_contrast (FEATURE_NAMES 80->81) -- voicing-masked SECOND-ORDER consistency feature on CHROMA (pitch-class / key-signature) axis. Explicit cited fallback from c5040d7(c)(1). For +-4s span clipped to [t-4,t+4]: intra_pre=cos_dist(voiced_mean_chroma(t-4,t-2), voiced_mean_chroma(t-2,t)); intra_post=cos_dist(voiced_mean_chroma(t,t+2), voiced_mean_chroma(t+2,t+4)); cross=cos_dist(voiced_mean_chroma(t-4,t), voiced_mean_chroma(t,t+4)); feature=cross-0.5*(intra_pre+intra_post). Voiced mask uses feat_vp>0 on feat_chroma; ZERO new librosa calls, ZERO new caches. Edge guard t-4<0 OR t+4>duration_s OR any mask empty OR any norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. 26+ iterations exhausted 1st-order voiced/unvoiced paired-diff across every content axis; three 2nd-order variants tried: 9064eec (all-frame MFCC 0.544 closest-to-baseline but speech regressed), 26a3687 (all-frame spec_contrast 0.493), c5040d7 (voicing-masked MFCC 0.513 but english 0.774 regressed via cepstral drift). Untried axis is CHROMA 2nd-order with voicing mask -- fundamentally different signal: chroma is 12-dim pitch-class probability, within one song's key every 2s voiced-mean chroma slice converges to SAME key-signature vector because every chord shares 3-5 of 12 pitch classes -> intra_pre~intra_post~cross~0.02-0.08 tiny -> feature~0 silent on chord-cycle FP, NOT boosted. Cross-song splice crosses keys: intra small per side (song A/B key-consistent), cross LARGE (A-key vs B-key 0.25-0.60) -> feature +0.2 to +0.5 STRONGLY POSITIVE. Sign-and-magnitude separation chord-cycle (~0) vs real splice (+0.25+) is binary discriminator GBM cannot synthesize from existing chroma features (32cac36 voiced_chroma_cosine_dist is 1st-order no intra; f4148cc asymmetry 1st-order no intra). Speech self-gating: voiced-chroma on speech is per-vowel prosodic pitch-class noise that averages to near-uniform over any window >=1s -> voiced-chroma intra+cross both sit at ~0.08-0.15 on english/korean -> feature~0 across non-splice -> GBM low per-domain SHAP; same mechanism that made 32cac36 voiced_chroma a keep. Orthogonal: NOT 9064eec (all-frame MFCC no mask); NOT 26a3687 (all-frame spec_contrast no mask); NOT c5040d7 (voicing-masked MFCC 13-dim cepstral -- this is 12-dim pitch-class); NOT f4148cc voiced_unvoiced_chroma_asymmetry (1st-order no intra); NOT 32cac36 voiced_chroma (1st-order no intra); NOT block-5 voicing features; NOT any 1D scalar / F0 / ZCR / bandwidth / rolloff / flatness / tonnetz variant; NOT 60196aa detector peak-width. FIRST voicing-masked 2nd-order on chroma axis, FIRST key-signature-axis 2nd-order feature in 80-feature set. Pure features.py change -- 1 new block (~55 lines fusing _block_voiced_chroma mask logic with 9064eec intra/cross structure on 12-dim chroma) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost 6 slices + 6 voiced-masked means on 12-dim vectors + 3 cosines + 2 subtractions + 1 average, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_chroma_cross_intra_contrast', synthetic A(220/277/330 Hz)/B(175/208/262 Hz) key-shift splice at t=10 yields +0.421 LARGE, within-A t=5 yields -6e-8 sentinel-near-zero (~7M x discrimination), edge guard t=2 (t-4<0) returns 0.0, edge guard t=18 with 20s audio (t+4>20) returns 0.0, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.850000 combined_korean=0.485714 combined_singing=0.292187
+
+# 2026-04-20 — hypothesis: add voiced_chroma_cross_intra_contrast (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — voicing-masked 2nd-order
+    consistency feature on CHROMA (pitch-class / key-signature content
+    axis). Explicit cited fallback from c5040d7(c)(1). For ±4s span
+    clipped to [t-4, t+4]:
+        intra_pre  = cos_dist(voiced_mean_chroma(t-4,t-2), voiced_mean_chroma(t-2,t))
+        intra_post = cos_dist(voiced_mean_chroma(t,t+2),   voiced_mean_chroma(t+2,t+4))
+        cross      = cos_dist(voiced_mean_chroma(t-4,t),   voiced_mean_chroma(t,t+4))
+        feature    = cross − 0.5 * (intra_pre + intra_post)
+    Reuses cached feat_chroma + feat_vp — ZERO new librosa calls, ZERO
+    new caches. Edge guard t-4<0 OR t+4>duration_s OR any masked sub-
+    window empty OR any norm underflow → sentinel 0.0. FEATURE_NAMES
+    80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 26+ iterations exhausted 1st-order
+    voiced/unvoiced paired-diff across every content axis. Three
+    2nd-order variants tried: 9064eec (all-frame MFCC → 0.544 closest-
+    to-baseline but speech regressed), 26a3687 (all-frame spec_contrast
+    → 0.493), c5040d7 (voicing-masked MFCC → 0.513, singing 0.313,
+    english 0.774). Untried axis is CHROMA for 2nd-order with voicing
+    mask — fundamentally different signal from MFCC/spec_contrast:
+    chroma = 12-dim pitch-class probability. Within one song's key the
+    voiced-mean chroma at any ≥2s slice converges to the SAME key-
+    signature vector because every chord shares 3-5 of 12 pitch classes
+    → intra_pre, intra_post, cross all tiny → feature ≈ 0 silent →
+    chord-cycle FP NOT boosted. Real cross-song splice: different keys
+    → intra small per side (self-consistent key), cross LARGE (A-key
+    vs B-key cosine distance 0.25-0.60) → feature +0.2 to +0.5
+    STRONGLY POSITIVE. Sign-and-magnitude separation chord-cycle (≈0)
+    vs real splice (+0.25+) is a binary discriminator GBM cannot
+    synthesize from existing chroma features (32cac36
+    voiced_chroma_cosine_dist is 1st-order no intra; f4148cc asymmetry
+    is 1st-order masked no intra).
+
+    Why chroma 2nd-order succeeds where MFCC 2nd-order (c5040d7)
+    regressed speech. Voiced MFCC carries vowel identity so 4s-mean
+    samples different centroid than 2s-mean; cross overshoots intra on
+    speech due to cepstral drift. Voiced chroma on speech is per-vowel
+    prosodic pitch-class noise that averages to near-uniform over any
+    window ≥ 1s (vowels span multiple pitches in natural prosody). So
+    voiced-chroma intra and cross both sit near-uniform on english/
+    korean → feature ≈ 0 across non-splice positions → GBM low per-
+    domain SHAP → feature functionally invisible on speech. Same self-
+    gating mechanism that made 32cac36 voiced_chroma a KEEP despite
+    chroma's notorious speech noise.
+
+    Orthogonal. NOT 9064eec (all-frame MFCC, no mask); NOT 26a3687
+    (all-frame spec_contrast, no mask); NOT c5040d7 (voicing-masked
+    MFCC cepstral, 13-dim); NOT f4148cc voiced_unvoiced_chroma_
+    asymmetry (1st-order, no intra); NOT 32cac36 voiced_chroma (1st-
+    order, no intra); NOT any voiced_unvoiced_mfcc / spec_contrast /
+    F0 / ZCR / bandwidth / rolloff variant; NOT 60196aa peak-width.
+    FIRST voicing-masked 2nd-order feature on chroma axis; FIRST
+    key-signature-axis 2nd-order feature in the 80-feature set.
+
+    Blast radius. Pure features.py change — 1 new block (~50 lines,
+    _block_voiced_chroma mask + 9064eec-style intra/cross on 12-dim
+    chroma) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1
+    call. ZERO new caches, ZERO new librosa calls. Per-t cost: 6
+    slices + 6 voiced-masked means on 12-dim + 3 cosines + 2 subs
+    + 1 avg, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (2s voiced-chroma sub-windows
+    don't converge to key-signature, intra dominates) → wider ±6s /
+    3s sub-windows. (2) Speech regresses (voiced-chroma cross>intra
+    on 4s vs 2s scales due to prosody-driven pitch-class drift) →
+    normalize by per-window chroma entropy. (3) combined matches
+    0.589282 exactly → feature redundant with 32cac36 per GBM SHAP;
+    pivot to 1st-order WIDE chroma pre[t-4,t] post[t,t+4] single
+    cosine (no intra baseline).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 50+
+    iterations — cannot verify voiced-chroma drift at the 3 singing
+    FPs. (ii) SHAP rollup STILL empty for 14 keeps — no per-feature
+    attribution. (iii) 0.4907 identical-streak root cause unknown.
+    (iv) 99081f5 capacity-ghost status unclear at HEAD.
+
+(e) Wrapper enhancements (3 unchanged highest-priority requests
+    across 50+ iterations):
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE per-FP
+    (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    voiced_chroma_cosine_dist, voiced_mfcc_cosine_dist, top-5 |SHAP|).
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log at retrain decision
+    ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip") with
+    joblib-mtime sanity check.
+
