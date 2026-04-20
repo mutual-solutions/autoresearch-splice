@@ -83,7 +83,7 @@ def make_pipeline():
             max_leaf_nodes=32,
             learning_rate=0.07,
             l2_regularization=2.0,
-            min_samples_leaf=20,
+            min_samples_leaf=40,
             random_state=RANDOM_STATE,
         )),
     ])
