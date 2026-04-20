@@ -3748,3 +3748,132 @@ per-domain: combined_english=0.925000 combined_korean=0.676923 combined_singing=
     drift — e7ca9eb's voiced_spec_contrast_cosine_dist is still in-tree
     post-discard contaminating every subsequent attribution.
 
+## 2026-04-20T11:39:15+09:00 — fd500b3 (discard, combined=0.567821)
+subject: add percussive_mfcc_cosine_dist feature (FEATURE_NAMES 80->81) — third mask type orthogonal to the voiced/unvoiced family that saturated the last 10+ iterations. Percussive frames = onset_strength > chunk-median*1.2 (top ~40% by onset energy = transient-rich frames dominated by drum hits + attacks). Per position t_sec: slice feat_onset + feat_mfcc on +-2s pre/post, keep onset-dominant frames, return cosine distance of percussive-mean 13-dim MFCC vectors. Reuses cached feat_mfcc + feat_onset — ZERO new librosa calls. Per-chunk cost: one scalar median (cached lazily). Per-t cost: 2 slices + 1 boolean compare + 1 masked mean + 1 cosine on 13-dim vectors, sub-ms. Sentinel 0.0 when either mask empty or either sub-norm underflows, matching 1eda8e3/7972a98 safety pattern. Targets 7972a98 current-keep (0.589282) singing 0.345 weakest-domain plateau. Last 4 keeps (0.506->0.532->0.586->0.589) all voiced/unvoiced variants; most recent discards (f4148cc chroma-asym, de0be6f spec_contrast-symmetry) both failed to move singing off 0.318-0.345. CLAUDE.md mandates structural change after 5+ same-axis failures; voiced/unvoiced mask axis is exhausted. Root-cause singing plateau is that real cross-song splices often land on held vocal notes where voiced_mfcc AND voiced_chroma stay similar (singer holds new note's pitch class too), so voiced-mask features fire weakly on these TPs. The signal that CONSISTENTLY shifts across cross-song splices is accompaniment — and drum/bass attack frames (percussive-dominant) carry that signature most cleanly. Within one song drum kit + mic + mastering + limiter is FIXED so percussive-frame mean MFCC stays stable across chord transitions (cos_dist 0.05-0.15). Cross-song splice: different drum kit/mic/mastering/compression -> percussive-frame MFCC shifts (0.25-0.60). Unlike the unvoiced MASK (any non-vowel including breath/silence/sibilants, dominated by phoneme-correlated variance on speech), percussive is tighter transient-driven subset — plosive onsets land in the mask on speech (phoneme-dependent noise) so feature self-gates via GBM low per-domain SHAP on english/korean, same mechanism as voiced_mfcc (1eda8e3 pattern). Unlike the VOICED mask (sustained tones where same-singer cross-song has low distance), percussive mask sees drum/accompaniment ONLY so held-note cross-song splices light it up cleanly. Crucially NOT re-introducing df6fc0a unvoiced_mfcc (failed -0.025 on singing): unvoiced = EVERY non-voiced frame across phoneme distribution; percussive = TOP 40% BY ONSET STRENGTH, much tighter transient-focused subset. Orthogonal to every prior axis: NOT 49bd0b1 voiced_mfcc (voiced mask, sustained tones); NOT df6fc0a unvoiced_mfcc (complement mask); NOT 32cac36 voiced_chroma (voiced+pitch-class); NOT 308aa5a tonnetz; NOT e7ca9eb voiced_spec_contrast; NOT 1eda8e3/f4148cc/7972a98 asymmetries (voiced vs unvoiced pairwise); NOT de0be6f symmetry (pairwise sum); NOT mfcc_delta (all frames). First PERCUSSIVE/TRANSIENT-DOMINANT mask feature — genuinely new physical axis. Pure features.py change; FEATURE_NAMES count gate triggers wrapper auto-retrain via US-505 sha gate. Smoke-verified: len(FEATURE_NAMES)==81, last name 'percussive_mfcc_cosine_dist', synthetic cross-source splice yields 0.025 at boundary vs 0.002 within pre (12x discrimination), end-to-end extract_features returns 81 finite features, idempotent, sentinel 0.0 fires correctly on silence.
+per-domain: combined_english=0.888889 combined_korean=0.646154 combined_singing=0.318750
+
+# 2026-04-20 — hypothesis: percussive_mfcc_cosine_dist feature (FEATURE_NAMES 80→81)
+
+(a) HYPOTHESIS. Structural `splice/features.py` change — add ONE new feature
+    `percussive_mfcc_cosine_dist` on a THIRD mask type (percussive-dominant
+    frames) orthogonal to the voiced/unvoiced mask family that has saturated
+    the last 10+ iterations. Per chunk, cache a single scalar threshold
+    `perc_threshold = median(feat_onset) * 1.2`. Per position t_sec: slice
+    feat_onset + feat_mfcc on pre=[t−2, t] and post=[t, t+2]; keep frames
+    where `onset_strength > perc_threshold` (top ~40% by onset energy =
+    transient-rich frames dominated by drum hits / attacks); return cosine
+    distance of percussive-mean 13-dim MFCC vectors. Reuses cached
+    feat_mfcc + feat_onset — ZERO new librosa calls, ZERO new expensive
+    caches (one scalar median). Sentinel 0.0 when either mask empty or
+    either sub-norm underflows, matching 1eda8e3/7972a98 safety pattern.
+    FEATURE_NAMES 80→81 triggers wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. The voiced/unvoiced mask family has
+    hit diminishing returns across the last 4 keeps (0.506 → 0.532 →
+    0.586 → 0.589) and has now plateaued — the most recent discards
+    (f4148cc chroma-asym, de0be6f spec_contrast-symmetry) both failed to
+    move singing off 0.318–0.345. CLAUDE.md mandates structural change
+    after 5+ same-axis failures; voiced/unvoiced is exactly that exhausted
+    axis. The singing plateau's root cause (per prior reflections) is
+    that real cross-song splices often land on held vocal notes where
+    voiced_mfcc stays similar AND voiced_chroma stays similar (singer
+    holds the new note's pitch class too), so every voiced-mask feature
+    fires weakly on these TPs. The signal that CONSISTENTLY shifts
+    across cross-song splices is the ACCOMPANIMENT — and drums/bass
+    attack frames (percussive-dominant) carry that signature most
+    cleanly. Onset_strength peaks on every drum hit and transient;
+    top-40% onset frames exclude sustained vocal tones and sustained
+    instrument notes, isolating the drum/mastering fingerprint. Within
+    one song the drum kit + mic + mastering + limiter is FIXED so
+    percussive-frame mean MFCC stays ~stable across chord transitions
+    (cos_dist ~0.05-0.15). Cross-song splice: different drum kit /
+    mic / mastering / compression → percussive-frame mean MFCC shifts
+    (~0.25-0.60). Unlike the unvoiced MASK (which captures any
+    non-vowel frame including breath + silence + sibilants, with high
+    phoneme-correlated variance on speech), the percussive MASK is
+    specifically transient-driven — plosive onsets DO land in the mask
+    on speech (phoneme-dependent noise) so the feature self-gates via
+    GBM low SHAP on english/korean via the same mechanism as
+    voiced_mfcc (1eda8e3 mask pattern). Unlike the VOICED mask (which
+    captures sustained tones — same singer holds note across cut =
+    low distance), the percussive mask sees the drum/accompaniment
+    ONLY so held-note cross-song splices light it up cleanly.
+
+    Crucially, this is NOT re-introducing unvoiced_mfcc (df6fc0a failed
+    with singing regression 0.341→0.316): unvoiced frames = EVERY
+    non-voiced frame (breath + sibilant + silence + consonant attacks),
+    dominated on speech by phoneme-dependent noise across the whole
+    non-vowel distribution. Percussive frames = TOP 40% BY ONSET
+    STRENGTH, a much tighter transient-focused subset. On singing
+    this excludes breath intakes and sibilants that weren't drum-like;
+    on speech it preferentially catches plosive onsets (not sustained
+    consonants), concentrating the phoneme noise on a narrower
+    frame set that GBM can discount per-domain more cleanly.
+
+    Orthogonal to every prior axis: NOT voiced_mfcc 49bd0b1 (voiced
+    mask, sustained-tone frames); NOT unvoiced_mfcc df6fc0a
+    (unvoiced mask = complement of voiced, includes silence+breath);
+    NOT voiced_chroma 32cac36 (voiced+pitch-class); NOT tonnetz
+    308aa5a; NOT voiced_spec_contrast e7ca9eb; NOT asymmetries
+    1eda8e3/f4148cc/7972a98 (pairwise voiced vs unvoiced diffs);
+    NOT symmetry de0be6f (pairwise sum); NOT mfcc_delta (all
+    frames); NOT remote-half MFCC (long half-chunk means); NOT
+    HPR file-level gates; NOT spec_flux/spec_contrast_delta (all
+    frames). First PERCUSSIVE / TRANSIENT-DOMINANT mask feature —
+    a genuinely new physical axis for the mask family. Blast
+    radius: features.py only — 1 new block + 1 FEATURE_NAMES
+    append + 2 assert bumps + 1 extract_features call + 1 lazy
+    ctx scalar. ZERO new caches beyond a chunk-local median.
+    Per-t cost: 2 slices + 1 mask comparison + 1 masked mean +
+    1 cosine on 13-dim vectors, sub-ms. Risk-bounded: sentinel-0.0
+    safety matches proven 1eda8e3 pattern; chunk-global median
+    threshold is robust to quiet sections (still produces a
+    non-degenerate mask); per-t boolean comparison adds <5μs.
+
+(c) IF THIS FAILS. (1) If the mask is TOO STRICT on quiet singing
+    sections (intro/outro without drums) so the ±2s window has
+    <3 percussive frames and the sentinel fires on exactly the
+    held-note cross-song splice TPs I'm targeting, LOWER the
+    threshold multiplier 1.2 → 1.0 (top-50% onset) or use a
+    hybrid mask (onset > median OR rms > median). (2) If GBM
+    assigns ~0 SHAP on singing because percussive_mfcc is too
+    correlated with mfcc_delta_NN on drum-rich songs, shift the
+    feature to CHROMA (percussive_chroma_cosine_dist) — drums
+    have near-flat chroma so this captures pitched accompaniment
+    (bass line, guitar) at transients, complementary signal.
+    (3) Final escalation: PAIRED ASYMMETRY on the new axis
+    (voiced_percussive_mfcc_asymmetry = percussive_mfcc_dist −
+    voiced_mfcc_dist), making the "accompaniment vs voice"
+    discriminator explicit in the way 1eda8e3's MFCC asymmetry
+    did for voiced/unvoiced.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after
+    20+ consecutive iterations — I cannot verify whether 7972a98's
+    3 surviving singing FPs have enough high-onset frames in
+    ±2s windows (purely-sustained FP regions would zero the mask
+    → sentinel 0.0 → feature no-op exactly where I want it to
+    bite). (ii) SHAP rollup STILL "no keeps yet — rollup empty"
+    for 7972a98 — cannot confirm whether voiced_mfcc_cosine_dist
+    and voiced_unvoiced_mfcc_asymmetry are the top singing-side
+    features or whether they're both low-SHAP and the singing
+    lift came from elsewhere. (iii) Per-chunk onset_strength
+    distribution is not surfaced; the 1.2x median threshold is
+    calibrated from general music-analysis priors not observed
+    onset histograms on the eval population.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent blocker for 20+ iterations;
+    per-FP (domain, file, t_sec, label_id, p_splice,
+    n_voiced_pre, n_unvoiced_pre, n_percussive_pre, onset_median_chunk,
+    voiced_mfcc_dist, unvoiced_mfcc_dist, top-5 |SHAP| features
+    with values). Every mask hypothesis is calibrated from
+    theory; this one block flips the entire loop to data-driven.
+    (2) `scripts/feature_oof_preview.py --add <feature_fn>` that
+    retrains once and reports per-domain OOF-F1 delta vs current
+    — turns "is this feature worth a 3-min retrain" into a
+    numeric preview. (3) DISCARD-REVERT SYNC auditor: the wrapper's
+    discard path should diff features.py vs baseline-sha features.py
+    and ABORT / restore if they differ — e7ca9eb's
+    voiced_spec_contrast_cosine_dist remains in-tree post-discard,
+    contaminating every subsequent attribution including this one.
+
