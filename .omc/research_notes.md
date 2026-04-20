@@ -2917,3 +2917,122 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     at HEAD so ghost state is surfaced explicitly and the
     per-tunable frontier "current ?" rows resolve.
 
+## 2026-04-20T14:51:02+09:00 — 67633f2 (discard, combined=0.421917)
+subject: add DSP_PHASE_MIN=0.5 channel-specific floor
+per-domain: combined_english=0.657534 combined_korean=0.491803 combined_singing=0.232258
+
+# 2026-04-20 — hypothesis: add DSP_PHASE_MIN=0.5 channel-specific floor
+
+(a) HYPOTHESIS. Pure `splice/detector.py` primary tunable — add a new
+    channel-specific DSP floor `DSP_PHASE_MIN = 0.5` stacked on the
+    existing MAX>=2.0 + SUM>=5.0 gates. Drop emits where
+    `dsp_vals[0] < 0.5` (i.e. dsp_phase_z is weak) even when MAX/SUM
+    pass. Phase channel has NEVER been given a dedicated floor in the
+    loop's history (only CPE at 0.449-failed value; phase is untouched).
+    One-line constant + one-clause gate extension, no retrain,
+    features.py sha stable so classifier byte-identical.
+
+(b) WHY this over recent failures. Two consecutive CUMULATIVE DSP-gate
+    tightenings just failed catastrophically — 53d3ea0 (SUM 5.0→5.5
+    combined=0.527) and 0cb551f (MAX 2.0→2.2 combined=0.491). Both dropped
+    legitimate cross-domain TPs whose cumulative DSP signal is marginal
+    (sum in [5.0, 5.8], max in [2.0, 2.2]). Feature-add axis saturated
+    too (aa4f141/49fa2ca/6384137/de0be6f/fd500b3/f4148cc all failed).
+    CLAUDE.md mandates structural change after 5+ same-axis failures;
+    cumulative-DSP axis is that exhausted axis. The channel-specific
+    PHASE floor is a DIFFERENT structural signature than cumulative
+    tightening: it targets emits where the mic/room PHASE channel is
+    silent regardless of T²/CPE magnitude. Explicit cited fallback from
+    0cb551f(c)(1): "fallback to a PHASE-specific floor DSP_PHASE_MIN =
+    0.5 — untried channel-specific axis on phase instead of CPE (the
+    0.449-failed axis). Chord transitions produce phase_z ≈ 0; same-
+    recording same-singer cross-song splices still produce phase_z > 1
+    via mic/mastering differences."
+
+    Mechanism on singing FPs (3 surviving clean FPs at singing=0.345):
+    chord transitions within one song keep mic/room fixed, so phase
+    remains continuous across bin frequencies → dsp_phase_z ≈ 0.0-0.3.
+    They fire via T²_z (spectral distribution change on chord switch)
+    + modest CPE_z (complex-prediction drift), with sum 5.0-5.8 passing
+    current gates. Under the new phase floor they drop cleanly because
+    phase < 0.5 — exactly the chord-cycle FP signature. Real cross-
+    source singing splices (even same-singer-different-song): the new
+    recording has different mic/room/mastering → phase discontinuity
+    across all bins → phase_z > 1 (≥2× the 0.5 floor with safety
+    margin). Speech domains (english/korean clean_fp=0 already): chord-
+    transition FPs irrelevant; any emit with phase_z < 0.5 isn't in the
+    FP set so clean_fp stays 0. No regression expected.
+
+    Why 0.5 specifically: sits in BIMODAL GAP between chord-transition
+    phase (~0) and splice phase (≥1) without biting legitimate TPs that
+    have modest but present phase shift. DIFFERENT from 0cb551f's
+    MAX=2.2 tightening (dropped emits where ALL channels were mediocre,
+    biting splice-adjacent smooth-crossfade TPs). DIFFERENT from
+    53d3ea0's SUM=5.5 tightening (dropped emits where cumulative support
+    was weak, biting same TP type). Phase-specific at 0.5 targets only
+    the CHORD-CYCLE SIGNATURE (phase-silent), not the SMOOTH-CROSSFADE
+    signature (cumulative-weak but phase-present from master difference).
+
+    Orthogonal to every recent axis: NOT DSP_CONFIRMATION_MIN MAX floor
+    (0cb551f 2.2 failed); NOT DSP_SUM_MIN (53d3ea0 5.5 failed); NOT
+    GBM_THRESHOLD (7255ec6 0.980 failed); NOT GBM_MIN_SEP_S dedupe; NOT
+    ANALYSIS_STRIDE_S; NOT class-routed DSP (eb8984e failed on channel
+    mapping at 2.0); NOT HPR-routed DSP (failed); NOT a CPE channel
+    floor (0.449 combined from whatever CPE threshold that attempt
+    used); NOT a feature add/remove (all saturated); NOT a classifier
+    hyperparam (99081f5 discard). First PHASE-specific channel floor.
+    Blast radius: 1 new constant + 1 clause in the 1-line DSP gate.
+    Zero new code paths. Per-emit cost: one extra float compare past
+    the stacked gate, negligible. Risk-bounded: stacked on MAX+SUM so
+    can only DROP emits that already pass both; cannot create TPs.
+    Drops require phase_z in [0, 0.5) narrow band.
+
+(c) IF THIS FAILS. (1) If singing TPs drop (real crossfades between
+    same-mic / same-master recordings preserve phase, phase_z sits in
+    [0.2, 0.8] rather than the theorized bimodal gap), LOWER floor to
+    0.3 (still bites hard-chord-transition FPs at ~0.1 while preserving
+    borderline crossfade TPs). (2) If clean_fp unchanged (the 3 singing
+    FPs actually have phase_z ≥ 0.5 — hypothesis wrong about chord-
+    transition phase signature being silent), pivot to GBM_MIN_SEP_S =
+    2.5 (below-tried primary-tunable axis: MIN_SEP 3.0 kept, 2.5
+    untried below 3.0 floor — allows clustered crossfade TPs in
+    wedge-splice patterns to co-survive dedupe). (3) Final escalation:
+    shift to feature-add axis with voiced_percussive_chroma_asymmetry
+    (untried; percussive-mask chroma isolates pitched accompaniment
+    (bass/guitar riff) at transient frames, complementary to voiced
+    pitch signal — cited in 0cb551f(c)(3)/53d3ea0(c)(3)).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 26+
+    iterations — I cannot verify the 3 surviving singing FPs' actual
+    (phase_z, t2_z, cpe_z) distribution to directly predict whether
+    0.5 bites (phase_z in [0, 0.5)) or misses (phase_z ≥ 0.5). Every
+    DSP-channel hypothesis theory-calibrated on the claim that chord
+    transitions produce phase_z ≈ 0 without eval-corpus verification.
+    (ii) SHAP rollup STILL "no keeps yet — rollup empty" for 7972a98
+    — cannot see how DSP z-scores rank against the 80 classifier
+    features. (iii) Two persistent ghost states contaminate
+    attribution: (a) e7ca9eb's voiced_spec_contrast_cosine_dist still
+    in-tree (ea1636c ablation failed so feature remains at position
+    80); (b) 99081f5's max_depth=4/max_leaf_nodes=16 may still be in
+    train_classifier.py (discard but unclear if reverted). My
+    DSP-channel-floor delta mixes with whatever classifier state is
+    at HEAD.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent blocker for 26+ iterations; per-FP (domain,
+    file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    top-5 |SHAP|). A single block would convert every DSP-channel /
+    feature hypothesis from theory-calibrated bet into data-driven
+    decision. (2) DISCARD-REVERT SYNC auditor — a wrapper guard that
+    diffs features.py + train_classifier.py vs baseline-sha on discard
+    and RESTORE if drift remains. Would have prevented both the
+    e7ca9eb voiced_spec_contrast ghost (15+ iterations) and the
+    99081f5 capacity-bump ghost from contaminating attribution. ~20
+    lines of shell after the discard decision. (3) CURRENT DETECTOR
+    CONSTANTS + CURRENT CLASSIFIER HYPERPARAMS block in prompt —
+    explicit snapshot of (GBM_THRESHOLD, GBM_MIN_SEP_S,
+    ANALYSIS_STRIDE_S, DSP_CONFIRMATION_MIN, DSP_SUM_MIN) +
+    (max_iter, max_depth, max_leaf_nodes, learning_rate, l2,
+    min_samples_leaf) at HEAD, so per-tunable-frontier "current ?"
+    resolves and ghost state surfaces explicitly.
+
