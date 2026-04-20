@@ -4150,3 +4150,81 @@ per-domain: combined_english=0.911392 combined_korean=0.495652 combined_singing=
     with joblib-mtime sanity check would isolate the 0.4907
     identical-streak root cause.
 
+## 2026-04-21T02:53:35+09:00 — e2fc9de (discard, combined=0.527473)
+subject: tighten DSP_SUM_MIN 5.0 -> 5.5 (linear continuation of 29c06cf 4.5->5.0 keep). Pure detector.py change, no retrain, no feature change, feature count stable at 80. 60+ recent iterations exhausted features.py additions on every content axis (1st-order paired-diff + 2nd-order cross-intra + F-statistic variance + persistence + cross-scale + trajectory velocity + correlation matrix + onset + full histogram), every one collapsing on 3 singing chord-cycle FPs (combined 0.47-0.55). CLAUDE.md mandates structural change after 5+ same-axis failures; features.py axis saturated. DSP_SUM_MIN is genuinely untried primary tunable direction not tracked in wrapper frontier output. 29c06cf kept 4.5->5.0 with mechanism 'bumping bites FPs in [4.5, 5.5] band'. If the 3 remaining singing FPs sit in [5.0, 5.5] band by the same chord-transition-with-partial-support logic, 5.0->5.5 bites them. Real cross-source splices 'disrupt multiple physical signals simultaneously yielding sum 6-12' per 865d92f analysis -- real TPs have >=0.5 margin above 5.5. Linear continuation of a proven productive axis (gradient from 4.5->5.0 keep says keep going); small 10%% bump minimizes TP-drop risk. Orthogonal: NOT features.py addition, NOT classifier retrain, NOT MAX-gate DSP_CONFIRMATION_MIN tuning, NOT GBM_THRESHOLD/GBM_MIN_SEP_S/ANALYSIS_STRIDE_S (frontier-tracked), NOT 60196aa detector peak-width, NOT d4d35b1 p_splice margin (catastrophic 0.287). Risk-bounded by stacking with MAX gate: can only DROP emits past MAX, never create new TPs. Blast radius: 1 constant + comment refresh. Feature set unchanged, classifier byte-identical. Smoke: constants load cleanly, DSP_SUM_MIN=5.5, other tunables unchanged, len(FEATURE_NAMES)=80 stable.
+per-domain: combined_english=0.850000 combined_korean=0.531250 combined_singing=0.325000
+
+# 2026-04-21 — hypothesis: tighten DSP_SUM_MIN 5.0 → 5.5
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-constant change: bump
+    `DSP_SUM_MIN` 5.0 → 5.5. Gate is `max(dsp_vals) < DSP_CONFIRMATION_MIN
+    or sum(dsp_vals) < DSP_SUM_MIN` where dsp_vals are the three DSP
+    z-scores (phase_z / T²_z / CPE_z). Current 5.0 is a KEEP (29c06cf
+    bumped 4.5→5.0, combined 0.479→0.488). 5.5 has never been tried.
+    Zero retrain, classifier sha stable, feature count stable. Primary
+    tunable, instant.
+
+(b) WHY over recent failures. Last 60+ iterations exhausted features.py
+    additions on every content axis (1st-order paired-diff + 2nd-order
+    cross-intra + F-statistic variance + persistence + cross-scale +
+    trajectory velocity + correlation matrix + onset + full histogram).
+    Every one collapsed on 3 singing chord-cycle FPs (combined
+    0.47-0.55). CLAUDE.md mandates structural change after 5+ same-axis
+    failures; features.py axis is saturated. DSP_SUM_MIN is a genuinely
+    untried primary tunable direction not tracked in the wrapper's
+    frontier output.
+
+    Mechanism on 3 surviving singing FPs. 29c06cf's reasoning said
+    4.5→5.0 would bite FPs in [4.5, 5.5] band (chord transitions with
+    T²≈3 + partial support). If the 3 remaining FPs sit in [5.0, 5.5]
+    band by the same logic, 5.0→5.5 bites them. Real cross-source
+    splices "disrupt multiple physical signals simultaneously yielding
+    sum 6-12" per 865d92f analysis — real TPs have ≥1 margin above 5.5.
+
+    Linear continuation of a proven productive axis (4.5→5.0 kept,
+    gradient says keep going). Small step (10% bump) minimizes TP-drop
+    risk. Risk-bounded by stacking with MAX gate: can only DROP emits,
+    never create new TPs.
+
+    Orthogonal to every recent attempt. NOT a features.py addition;
+    NOT a classifier retrain; NOT MAX-gate tuning; NOT GBM_THRESHOLD
+    / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S (frontier-tracked axes, all
+    three saturated); NOT detector peak-width (60196aa failed); NOT
+    p_splice margin (d4d35b1 catastrophic 0.287). First DSP_SUM_MIN
+    tick beyond 5.0.
+
+    Blast radius. detector.py only, 1 constant + comment refresh.
+    Feature set unchanged, classifier byte-identical, no retrain.
+    Per-emit cost unchanged (same sum+compare path). Wrapper auto-
+    retrain gate passive (features.py sha stable).
+
+(c) IF THIS FAILS. (1) No change (every FP has sum > 5.5 — 5.0→5.5
+    bite zone empty) → continue to SUM 6.0 or shift to raising MAX
+    gate DSP_CONFIRMATION_MIN 2.0→2.5 (also untried, 3-FP band may sit
+    at MAX≈2.0-2.5). (2) Real TPs regress (borderline weak-DSP
+    crossfades with sum 5.0-5.5) → revert to 5.0 and pivot to MAX gate
+    tightening. (3) Singing improves but english/korean regress
+    (clean_fp already 0, so this means splice_f1 drop from real-TP loss)
+    → revert and try class-specific DSP thresholds.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS still absent after 63+
+    iterations — cannot verify the 3 singing FPs' actual DSP sum
+    values (5.0-5.5 bite zone vs 6+ safe zone); this remains a theory
+    bet. Would turn every DSP-gate tunable into a data-driven choice.
+    (ii) SHAP rollup still empty for 14 keeps. (iii) Wrapper tunable
+    frontier tracks GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S
+    but NOT DSP_SUM_MIN / DSP_CONFIRMATION_MIN — easy to lose track of
+    this untried axis.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks across
+    63+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z, dsp_sum,
+    voiced_unvoiced_mfcc_asymmetry, top-5 |SHAP|). Would make DSP_SUM
+    bite-zone vs safe-zone directly observable.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN to the tunable frontier
+    snapshot alongside GBM_THRESHOLD / GBM_MIN_SEP_S /
+    ANALYSIS_STRIDE_S. Not tracking these gates means the agent has to
+    git-log grep to know the axis state.
+
