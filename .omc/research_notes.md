@@ -3578,3 +3578,112 @@ per-domain: combined_english=0.853659 combined_korean=0.573913 combined_singing=
     combined=0.490700 exactly; this alert would flag potential
     cache-invalidation bugs to the operator.
 
+## 2026-04-20T15:57:39+09:00 — df0ceec (discard, combined=0.490700)
+subject: HistGBM l2_regularization 1.0 -> 2.0 (final untried classifier axis)
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: HistGBM l2_regularization 1.0 → 2.0 (final untried classifier axis)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` one-line change
+    — raise HistGBM `l2_regularization` 1.0 → 2.0, keeping max_iter=200 /
+    max_depth=4 / max_leaf_nodes=16 / learning_rate=0.07 /
+    min_samples_leaf=20. l2_regularization applies an L2 penalty on LEAF
+    WEIGHTS (prediction values, not structure). Doubling shrinks leaf
+    outputs toward 0 → predicted log-odds pulled toward the class prior →
+    borderline p_splice values (currently in [0.982, 1.0]) concentrate
+    slightly lower. features.py sha stable so the wrapper retrains via
+    the US-505 train_classifier.py-change path.
+
+(b) WHY this over recent failures. l2_regularization is the FINAL
+    untried HistGBM hyperparameter axis. Per db59c36(c)(2) explicit
+    cited fallback: "pivot to l2_regularization 1.0 → 2.0 (untried
+    shrinkage axis on the weight side rather than leaf-support side)".
+    Last 10+ iterations exhausted every other classifier knob:
+    max_depth/max_leaf (99081f5 bump + 960113c revert matched baseline
+    — STRUCTURE-axis saturated), learning_rate (17d4aec 0.05 failed —
+    GLOBAL-SHRINKAGE axis saturated), min_samples_leaf (db59c36 20→40
+    failed — LEAF-SUPPORT axis saturated). l2_regularization operates
+    on a physically distinct axis: it penalizes large leaf weights
+    directly during fit. Different from learning_rate (which shrinks
+    tree CONTRIBUTIONS globally without changing the fit objective)
+    and different from min_samples_leaf (which restricts split CREATION
+    by sample count but doesn't constrain the leaf weight magnitude).
+
+    Mechanism targeting the 3 singing FPs at p_splice ∈ [0.982, ~1.0]:
+    doubling λ from 1.0 to 2.0 adds penalty 2·Σ(w²) per tree to the
+    loss. Trees that currently produce high-magnitude leaves on
+    chord-transition training-neighbor regions (where training
+    positives sit densely around the chord-cycle feature space) will
+    shrink those leaves more, producing LOWER predicted log-odds for
+    those same chord-transition configurations at eval. Real cross-
+    source splice TPs sit in regions with broader training-positive
+    support (cross-domain augmentation spreads them across feature
+    space), so each tree's contribution is averaged over many training
+    samples — the MEAN leaf weight is less affected by doubling λ
+    because the unregularized fit was already close to the l2-shrunk
+    optimum. Net: borderline singing FPs (chord-cycle noise) pulled
+    slightly below 0.982 gate; real TPs at p≈1.0 survive.
+
+    Why 2.0 specifically: doubling is the natural first step in a
+    multiplicative regularization sweep. λ=10+ would risk wholesale
+    under-fitting. Orthogonal to every recent axis: NOT feature add
+    (features.py sha stable); NOT primary-tunable (detector.py
+    unchanged); NOT DSP gate; NOT learning_rate (17d4aec); NOT max_depth/
+    max_leaf_nodes (99081f5/960113c); NOT min_samples_leaf (db59c36).
+    First l2_regularization tuning in the loop's history. Blast radius:
+    1-line edit (1.0 → 2.0). Retrain cost absorbed in the wrapper's
+    normal 3-min cycle.
+
+(c) IF THIS FAILS. (1) Under-fit on borderline TPs — raising λ pulls
+    real TPs below gate too → step to max_iter 200 → 280 (untried,
+    more trees compensate for per-tree shrinkage). (2) Inert —
+    l2_regularization has minimal effect at 80-feature HistGBM because
+    early stopping already constrains fit → pivot to
+    voiced_percussive_chroma_asymmetry (cited untried 4+ times;
+    percussive-mask chroma isolates pitched accompaniment at transient
+    frames — bass/guitar riff cross-song key shift, genuinely new
+    mask/content combination). (3) Final escalation: ensemble of 2
+    HistGBMs with different l2 values (1.0 + 2.0) via soft-voting;
+    different from prior same-seed ensemble (failed 0.473) because
+    diversification via regularization axis not random state.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 32+
+    iterations — I cannot verify whether the 3 singing FPs sit at
+    p ∈ [0.982, 0.99] (where l2 shrinkage would bite) or p ≈ 1.0
+    (where l2 shrinkage has negligible effect). Every classifier-side
+    hypothesis remains theory-calibrated. (ii) SHAP rollup STILL "no
+    keeps yet — rollup empty" for 7972a98 despite 4+ keeps — rollup
+    pipeline appears broken. (iii) Persistent IDENTICAL-COMBINED
+    STREAK concern: 4 iterations (17d4aec LR, db59c36 leaf_size,
+    0cb551f MAX floor, 6384137 rhythm feature) all produced EXACTLY
+    combined=0.490700, english=0.839506, korean=0.476471,
+    singing=0.295385. Statistically near-impossible unless wrapper
+    cache/retrain bug masks true attribution. If my l2 change also
+    lands at 0.490700, that's strong evidence of a wrapper-side bug.
+    (iv) 99081f5 capacity ghost still IN-tree at HEAD (max_depth=4 /
+    max_leaf_nodes=16) — my l2 change runs against the 4/16 base,
+    not the 7972a98-keep-time 3/8 base. Absolute comparison to
+    0.589282 mixes with the ghost, but the l2 delta attribution is
+    clean (only l2 changes).
+
+(e) Wrapper enhancements. (1) **IDENTICAL-COMBINED-STREAK DIAGNOSTIC**
+    — now persistent across 2 reflections. Emit
+    `wrapper.suspicious.identical_output_streak` when N ≥ 3
+    consecutive iterations produce IDENTICAL combined ± 1e-5 AND
+    IDENTICAL per-domain. Include predicted-emit-count comparison
+    across the streak — if emit sets are byte-identical across
+    physically different changes, retrain/cache invalidation is
+    broken. ~30 lines of Python in the wrapper's post-eval hook.
+    (2) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent
+    blocker for 32+ iterations. Without it every DSP / classifier /
+    feature hypothesis around singing FPs is a theory-calibrated bet.
+    Per-FP: (domain, file, t_sec, label_id, p_splice, dsp_phase_z,
+    dsp_t2_z, dsp_cpe_z, top-5 |SHAP|, leaf_sample_count). (3)
+    DISCARD-REVERT SYNC auditor — the 99081f5 ghost persists at HEAD
+    (verified: max_depth=4, max_leaf_nodes=16 still in
+    make_pipeline()) after 960113c's revert was itself discarded by
+    the wrapper's symmetry-semantics bug. ~20 lines of shell guard
+    parsing commit subjects for "REVERT" prefix + prior-SHA reference,
+    treating such matches as KEEP not DISCARD when combined matches
+    baseline.
+
