@@ -4766,3 +4766,109 @@ per-domain: combined_english=0.886076 combined_korean=0.532836 combined_singing=
     (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
     DSP_SECOND_HIGHEST_MIN to tunable frontier snapshot.
 
+## 2026-04-21T04:26:50+09:00 — c578d73 (discard, combined=0.518572)
+subject: add voiced_chroma_retrospective_match_max_calibrated (FEATURE_NAMES 80->81) -- MAX-CALIBRATED retrospective-match on voiced chroma. For post[t,t+2] voiced-mean chroma compute min cos_dist to 4 past voiced-mean chromas at [t-k-2,t-k] for k in {3,6,9,12}s (post_novelty) AND MAX cos_dist over all 6 pairwise past-past distances (past_self_sim_max); feature = post_novelty - past_self_sim_max. Reuses cached feat_chroma + feat_vp + feat_audio length; ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration_s OR any voiced mask empty OR any norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. Four prior retrospective-match variants: b5b1a0d (all-frame MFCC) singing 0.354; 3d56d52 (voiced MFCC) singing 0.330; a6cf49d (voiced chroma absolute min) singing 0.377 BEST-in-70+ but speech catastrophic 0.767/0.493; 32ff893 (self-cal with MEAN past-pair baseline) speech recovered to 0.886 but singing gave back to 0.343. Pattern: retrospective-match HAS the singing signal (a6cf49d highest-ever) and self-calibration stabilises speech (32ff893), but MEAN baseline absorbs too much cross-song signal because MEAN averages small adjacent-pair distances alongside the few pairs that cross chord-cycle boundaries. MAX baseline captures CEILING of internal novelty: the single largest past-vs-past distance is by definition the biggest novelty the recording itself supports. Mechanism on 3 singing chord-cycle FPs: past at k in {3,6,9,12} samples different phases of chord cycle; at least one past-past pair crosses chord boundary (past_self_sim_max ~0.15-0.20); post_novelty on chord-cycle FP matches cycle at some k so min-distance ~0.10-0.15; feature ~0 to -0.05 SILENT. Cross-song splice: past song A self-consistent past_self_sim_max ~0.08, post song B post_novelty ~0.40-0.60, feature +0.32-0.52 STRONGLY POSITIVE. Speech non-splice (a6cf49d failure class): past_self_sim_max ~0.15-0.20 phoneme-drift ceiling; post_novelty ~0.15 similar drift; feature ~0 GBM low per-domain SHAP on english/korean. Speech cross-speaker TP: past same-speaker max ~0.10, post speaker-B ~0.30, feature +0.18-0.22 fires. Chroma axis because a6cf49d was single highest singing score in 70+ iterations (0.377 vs baseline 0.345); raw signal is there, only aggregator was wrong; drums/percussion barely register in chroma so voicing mask does not strip productive signal. Orthogonal: NOT a6cf49d (absolute min no self-cal); NOT 32ff893 (MEAN baseline -- MAX is different aggregator GBM max_depth=4 cannot synthesize from threshold splits on same 10 cosines); NOT b5b1a0d/3d56d52 (MFCC axis); NOT 32cac36 single-boundary; NOT 8170784 cross-intra same-span; NOT f4148cc 1st-order paired-diff; NOT 9064eec/26a3687/c5040d7 cross-intra; NOT 4e67946 persistence; NOT 4314449 cross-scale; NOT 1b4fe7c corr-matrix; NOT any DSP-gate. FIRST MAX-self-calibrated retrospective-match feature; FIRST use of max-over-past-pairs as novelty ceiling. Pure features.py change -- 1 new block (~80 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call + self-test assert bumps. Per-t cost: 5 voiced-masked-means on 12-dim chroma + 4 post-past cosines + 6 past-past cosines + min + max + subtract, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81 last-name correct, synthetic C-major chord-cycle A -> F#-major B splice at t=25 yields +0.575 vs within-A t=25 +0.143 (4x discrimination), within-A t=22 chord transition yields +0.135 (chord-cycle not strongly firing), within-A t=18 yields -0.53 (post recurs in past, feature negative), edge guards t-14<0 and t+2>duration both return 0.0 sentinel, real singing_train_001.wav 500 calls = 307ms (0.61ms/call), idempotent, all 81 features finite.
+per-domain: combined_english=0.875000 combined_korean=0.500000 combined_singing=0.318750
+
+# 2026-04-21 — hypothesis: add voiced_chroma_retrospective_match_max_calibrated (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — MAX-CALIBRATED retrospective
+    novelty on voiced chroma. For voiced-mean chroma of post[t, t+2] compute
+    min cos_dist vs 4 past voiced-mean chromas at [t-k-2, t-k] for
+    k ∈ {3, 6, 9, 12}s (post_novelty). ALSO compute MAX cos_dist over all
+    6 pairwise (i<j) past-past distances (past_self_sim_max).
+    feature = post_novelty − past_self_sim_max. Reuses cached feat_chroma +
+    feat_vp — ZERO new librosa calls, ZERO new caches. Edge guard t-14<0
+    OR t+2>duration OR any voiced mask empty OR any norm underflow →
+    sentinel 0.0. FEATURE_NAMES 80→81 forces auto-retrain via US-505.
+
+(b) WHY over recent failures. Four retrospective-match variants tried:
+    b5b1a0d (all-frame MFCC, singing 0.354 / speech regressed via unvoiced
+    heterogeneity), 3d56d52 (voiced MFCC, singing 0.330 / drum-onset signal
+    stripped by mask), a6cf49d (voiced chroma, singing 0.377 HIGHEST-in-70+
+    but speech catastrophic 0.767/0.493), 32ff893 (self-cal with MEAN
+    past-pair baseline: post_novelty − MEAN, singing 0.343 speech recovered
+    to 0.886 but gave back the singing gain). Pattern: retrospective-match
+    HAS the singing signal (voiced-chroma a6cf49d was best-ever), and
+    self-calibration stabilises speech (32ff893 fixed english/korean) but
+    MEAN baseline absorbs too much cross-song signal because MEAN averages
+    small adjacent-pair distances alongside the few pairs that actually
+    cross chord-cycle boundaries. MAX baseline captures the CEILING of
+    internal novelty: the single largest past-vs-past distance — by
+    definition the biggest novelty the recording itself supports.
+
+    Mechanism on 3 singing chord-cycle FPs. Past at k∈{3,6,9,12} samples
+    different phases of the chord cycle; at least one past-past pair
+    crosses a chord boundary (past_self_sim_max ≈ 0.15-0.20, the chord-
+    cycle novelty scale). post_novelty on a chord-cycle FP = matching
+    chord in past at some k, so min-distance ≈ 0.10-0.15. feature =
+    post_novelty − past_self_sim_max ≈ 0 to −0.05, SILENT. MEAN baseline
+    (32ff893) only gets ~0.08 so feature was +0.07 and fired weakly → lost
+    singing gain.
+
+    Real cross-song splice. past song A self-consistent
+    (past_self_sim_max ≈ 0.08), post_novelty = song B vs all song A
+    ≈ 0.40-0.60. feature ≈ +0.32-0.52 STRONGLY POSITIVE, fires. MAX
+    baseline barely hurts signal because song A internal variation
+    ceiling is still small relative to cross-song distance.
+
+    Speech non-splice (a6cf49d failure class). past_self_sim_max ≈
+    0.15-0.20 (within-recording phoneme drift ceiling over 9s span).
+    post_novelty ≈ 0.15. feature ≈ 0 → GBM low per-domain SHAP on
+    english/korean → no new FPs. MAX self-cal STRICTER than MEAN
+    (which would give baseline ≈ 0.10 and feature ≈ +0.05 firing).
+
+    Speech cross-speaker splice TP. past same-speaker past_self_sim_max
+    ≈ 0.08-0.12, post speaker-B voiced chroma post_novelty ≈ 0.30.
+    feature ≈ +0.18-0.22 fires, TP boosted.
+
+    Chroma chosen because a6cf49d was single highest singing score in
+    70+ iterations (0.377 vs 0.345 baseline). Raw signal is there; prior
+    failures were aggregator choices. Drums/percussion barely register
+    in chroma so voicing mask doesn't strip productive signal (the
+    failure that killed 3d56d52 voiced MFCC).
+
+    Orthogonal. NOT a6cf49d (absolute min, no self-calibration); NOT
+    32ff893 (MEAN past-pair baseline — MAX is a different aggregator
+    GBM max_depth=4 cannot synthesize via threshold splits; mean-vs-max
+    of 6 distances requires different reductions each with O(6) ops);
+    NOT b5b1a0d / 3d56d52 (MFCC axis, not chroma); NOT 32cac36
+    voiced_chroma (single-boundary, no past bank); NOT 8170784
+    voiced_chroma_cross_intra (intra sub-windows on SAME ±4s, no past-
+    history bank); NOT f4148cc 1st-order paired-diff; NOT 9064eec /
+    26a3687 / c5040d7 cross-intra; NOT 4e67946 persistence; NOT 4314449
+    cross-scale; NOT 1b4fe7c corr-matrix; NOT any DSP-gate. FIRST
+    MAX-self-calibrated retrospective-match feature; FIRST use of
+    max-over-past-pairs as novelty ceiling rather than mean-as-average.
+
+(c) IF THIS FAILS. (1) Singing still blunted — MAX aggregator captures
+    noisy max-outlier pairs that aren't truly chord-cycle boundaries →
+    fall back to median-past-pair baseline (robust middle, between MEAN
+    and MAX). (2) Speech regresses — 4 past offsets too few to estimate
+    a stable MAX (single noisy pair dominates) → widen bank to 8 offsets
+    {2,4,6,8,10,12,14,16} for better ceiling estimation. (3) Feature
+    fires but zero SHAP — redundant with voiced_chroma via correlated
+    GBM splits → pivot to spec_contrast axis with same MAX calibration.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 70+
+    iterations — cannot verify the 3 singing FPs sit at chord-cycle
+    periods within {3,6,9,12}s coverage (mechanism) vs verse→chorus
+    transitions (30s scale). (ii) SHAP rollup STILL empty for 14 keeps
+    — cannot verify whether 32cac36 voiced_chroma was itself load-
+    bearing to decide marginal signal THIS feature adds. (iii) a6cf49d
+    / 32ff893 per-FP feature values at the 3 singing FP positions
+    unknown — would directly validate whether MAX baseline is the
+    right calibration choice.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks across
+    70+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    voicing_fraction, voiced_chroma_cosine_dist, post_novelty,
+    past_self_sim_max, past_self_sim_mean, top-5 |SHAP|). Would settle
+    every retrospective-match aggregator choice data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
+    DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot alongside
+    GBM_*.
+
