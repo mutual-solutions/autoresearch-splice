@@ -5423,3 +5423,95 @@ per-domain: combined_english=0.771084 combined_korean=0.428169 combined_singing=
     voicing / full-mix) so pivots to new preprocessing axes are
     visible alongside GBM_* / augmentation frontier.
 
+## 2026-04-21T07:13:12+09:00 — 425f6d6 (discard, combined=0.463790)
+subject: voicing-gated GBM threshold (music-strict 0.990 / speech-default 0.982) -- pure detector.py change, no retrain, FEATURE_NAMES stable 80, classifier byte-identical. STRUCTURAL pivot off 60+ exhausted axes (features.py 1st+2nd order paired-diff / variance / persistence / cross-scale / trajectory / corr-matrix / histogram / retrospective-match 7 variants / music-gate / HPSS-percussive; classifier-training sample_weight catastrophic e4a9c18 + capacity d1be6c3 + l2_reg 4b1575e + pitch-shift 4e2941b + time-stretch 7b49d40; detector post-filter peak-width 60196aa + margin d4d35b1 catastrophic 0.287 + cluster-count 1cded37 catastrophic english 0.889->0.542; DSP gates MAX/SUM/SECOND/PHASE) onto the genuinely untried PER-DOMAIN-THRESHOLD axis using an intrinsic audio statistic. Global GBM_THRESHOLD tried at 0.980/0.981/0.9825/0.983 (all failed) + 0.982 kept -- SPLIT the threshold by domain via voicing_prob_post rather than globally. MUSIC_GATE_VOICING_MAX=0.55 separates music (post_voicing_fraction 0.30-0.55, validated a23ab28 smoke real singing vp_post 0.40) from speech (0.65-0.85, validated real english vp_post 0.89). At each hit, if voicing_prob_post < 0.55: require p_splice > MUSIC_GBM_THRESHOLD=0.990 else default 0.982. Speech untouched: english 0.889 / korean 0.667 margins fully preserved. Mechanism on 3 singing chord-cycle FPs: vp_post~0.40 gate applies, require p_splice>0.990; marginal FPs at p_splice~0.983 drop (4b1575e cited l2 analysis). Real singing TPs cross-song disrupt multiple DSP signals simultaneously (sum 6-12 per 865d92f) so expected p_splice distribution shifted upward vs within-song chord-cycle FPs at marginal band. Orthogonal: NOT a23ab28 (music-gated FEATURE feeds GBM not gates it); NOT e4a9c18 (per-dataset sample_weight loss-gradient); NOT 60196aa/1cded37/d4d35b1 (p_splice-time-series post-filters no per-candidate domain split); NOT any global GBM_THRESHOLD tweak; NOT DSP_*_MIN tuning; NOT any features.py addition. FIRST per-domain threshold in detector history; FIRST use of intrinsic audio statistic (voicing_prob_post) as GBM-threshold domain-switch rather than arithmetic normalization or feature-input. GBM max_depth=5 cannot synthesize this because decision threshold operates on predict_proba OUTPUT not on features; no post-proba per-domain threshold path exists in existing detector logic. Blast radius: 3 new constants (MUSIC_GATE_FEATURE / MUSIC_GATE_VOICING_MAX / MUSIC_GBM_THRESHOLD) + 1 feature-index lookup (music_gate_idx alongside dsp_confirm_idx) + 3 lines in hit_mask loop (inserted BEFORE DSP gates so music-drop is counted separately) + music_dropped kv in diag.gbm.chunk_scan_done. Feature set unchanged. Classifier byte-identical; no retrain required. Per-emit cost: 1 row index + 1 compare, sub-us. Smoke-verified: AST parse OK 919 lines, MUSIC_GATE_FEATURE='voicing_prob_post' MUSIC_GATE_VOICING_MAX=0.55 MUSIC_GBM_THRESHOLD=0.99, other tunables stable (GBM_THRESHOLD=0.982 DSP_SUM_MIN=5.0 DSP_CONFIRMATION_MIN=2.0 GBM_MIN_SEP_S=3.5 ANALYSIS_STRIDE_S=0.12), FEATURE_NAMES stable at 80, voicing_prob_post index=34 confirmed present in classifier feature vector.
+per-domain: combined_english=0.814815 combined_korean=0.417391 combined_singing=0.293333
+
+# 2026-04-21 — hypothesis: voicing-gated GBM threshold (music-strict / speech-default)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — add a voicing-gated
+    secondary GBM threshold. At each hit (p_splice > GBM_THRESHOLD=0.982),
+    read `voicing_prob_post` from the feature row X[i]; if it is below
+    MUSIC_GATE_VOICING_MAX = 0.55 (music regime), require the STRICTER
+    floor p_splice > MUSIC_GBM_THRESHOLD = 0.990 before passing. Speech
+    hits (vp_post >= 0.55) are unchanged. No retrain, no feature change,
+    FEATURE_NAMES stable at 80, classifier byte-identical. New constants
+    + ~3 lines in the existing hit loop + one feature-index lookup.
+
+(b) WHY over recent failures. 60+ features.py additions (every content
+    axis 1st+2nd order, retrospective-match 7 variants, music-gate,
+    HPSS percussive), classifier-training axis (sample_weight
+    catastrophic e4a9c18, capacity d1be6c3, l2 4b1575e, pitch-shift
+    4e2941b, time-stretch 7b49d40), and detector post-filters
+    (cluster-count 1cded37 catastrophic english 0.889->0.542,
+    peak-width 60196aa, margin d4d35b1 catastrophic 0.287) all
+    collapsed on the 3 singing chord-cycle FPs. Global GBM_THRESHOLD
+    tried at {0.980, 0.981, 0.9825, 0.983} -- all failed -- and current
+    0.982 kept. The genuinely untried direction is a THRESHOLD that is
+    CONDITIONAL on an intrinsic audio statistic: split the threshold
+    by DOMAIN via voicing_prob_post rather than globally. Music
+    (vocals+accompaniment) post_voicing_fraction sits at 0.30-0.55;
+    pure speech 0.65-0.85 (validated in a23ab28 smoke: real singing
+    clean_001 vp_post 0.40, english clean_001 vp_post 0.89). A tighter
+    MUSIC threshold 0.990 bites marginal singing FPs (p_splice just
+    barely >0.982 per 4b1575e's analysis of "marginal FPs sit at
+    p_splice ~0.983") while leaving speech untouched -- english 0.889
+    / korean 0.667 fully preserved.
+
+    Mechanism on 3 singing chord-cycle FPs: vp_post~0.40 (music) ->
+    gate applies -> require p_splice > 0.990. If any FP sits at
+    p_splice in [0.982, 0.990], it drops. Real singing TPs cross-song
+    differ from chord-cycle FPs by feature-space distance (not just
+    p_splice magnitude) -- but if a real TP also sits in
+    [0.982, 0.990], it would also drop. This is the key risk.
+    Mitigant: real cross-source splices disrupt multiple DSP signals
+    simultaneously (sum 6-12 per 865d92f) so their p_splice
+    distribution is expected to be shifted upward vs marginal
+    within-song chord-cycle FPs.
+
+    Speech untouched: vp_post >= 0.55 -> gate skipped -> existing
+    0.982 threshold and DSP gates unchanged. English clean_fp=0 and
+    korean clean_fp=0 stay zero, splice_f1 unchanged.
+
+    Orthogonal. NOT a23ab28 (music-gated FEATURE, features.py, feeds
+    GBM not gates it); NOT e4a9c18 (per-dataset sample_weight,
+    classifier loss-gradient); NOT 60196aa peak-width, NOT 1cded37
+    cluster-count, NOT d4d35b1 margin (all p_splice-time-series
+    post-filters with NO per-candidate domain split); NOT any global
+    GBM_THRESHOLD tweak (0.980-0.983 tried); NOT DSP_*_MIN tuning;
+    NOT any feature add. FIRST per-domain threshold in detector
+    history; FIRST use of an intrinsic audio statistic to split
+    GBM decision threshold.
+
+    Blast radius. 2 new constants + ~5 lines in the existing hit
+    loop + 1 feature-index lookup alongside the existing
+    dsp_confirm_idx pattern. Feature set unchanged; classifier
+    byte-identical; no retrain. Per-emit cost: one array index + one
+    compare, sub-us.
+
+(c) IF THIS FAILS. (1) Singing unchanged -- the 3 FPs sit at p_splice
+    >= 0.990 (GBM very confident on chord-cycle transitions) -> raise
+    MUSIC threshold to 0.995. (2) Singing TPs drop -- real TPs in
+    [0.982, 0.990] lose recall -> lower MUSIC threshold to 0.986 or
+    widen gate range (less strict vp_post gate). (3) Gate misfires
+    because vp_post on speech recall files is already below 0.55
+    (denser silence) -> raise gate threshold to 0.60 or use
+    (vp_pre + vp_post)/2 instead.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 75+
+    iterations -- cannot verify the 3 singing FPs' p_splice values
+    to predict whether MUSIC 0.990 bites them. (ii) No per-emit
+    p_splice histogram by domain surfaced -- need to see whether
+    singing FP p_splice sits near 0.983 or near 0.998. (iii) SHAP
+    rollup STILL empty for 14 keeps.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON in CURRENT
+    STATE per-FP (domain, file, t_sec, p_splice, voicing_prob_post,
+    dsp_phase_z/t2_z/cpe_z, voicing_fraction, top-5 |SHAP|). Would
+    settle threshold-split choices data-driven rather than by theory.
+    (2) SHAP ROLLUP REPAIR -- rollup empty for 14 keeps.
+    (3) PER-DOMAIN p_splice QUANTILES (p50/p90/p95/p99 of p_splice
+    at positive emits and clean FPs, per domain) in CURRENT STATE.
+    Would make any threshold-tweak (global OR voicing-gated) directly
+    data-driven.
+
