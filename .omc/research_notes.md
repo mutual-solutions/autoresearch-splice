@@ -3257,3 +3257,87 @@ per-domain: combined_english=0.814815 combined_korean=0.417391 combined_singing=
     Would make any threshold-tweak (global OR voicing-gated) directly
     data-driven.
 
+## 2026-04-21T07:26:08+09:00 — f1e91ec (discard, combined=0.463043)
+subject: raise HistGBM l2_regularization 2.0 -> 3.0 (pure train_classifier.py hyperparameter change, no feature or detector edit) -- LINEAR CONTINUATION of 4b1575e keep (1.0 -> 2.0 kept as current baseline 0.589). Explicit cited next step from 4b1575e: 'common L2 progression {1,2,5,10} with 2.0 conservative first step; if unchanged 3.0-5.0 follows'. Since 4b1575e keep, 6 consecutive discards on 6 different axes: a23ab28 music-gate feature, 1cded37 cluster-count detector post-filter, e4a9c18 per-dataset sample_weight, 7b49d40 time-stretch augmentation, ca2aa2f HPSS percussive MFCC, 425f6d6 voicing-gated GBM threshold -- every structural pivot has regressed. Linear continuation of a PROVEN productive axis is the single most risk-bounded move available. Mechanism on 3 surviving singing chord-cycle FPs: they persist marginally above GBM_THRESHOLD=0.982 even after l2=2.0 (baseline singing 0.345 still 3 FPs). l2 shrinks leaf log-odds by (sum_hess+l2_prev)/(sum_hess+l2_new), disproportionately biting small-hessian edge-case leaves where marginal FPs live. Further 50% l2 bump (2.0 -> 3.0) squeezes leaf log-odds another ratio-step on same small-hessian leaves -- marginal FPs at p_splice ~0.983 drop below 0.982. Real TPs have larger hessian mass (sum_hess dominates ratio, shrinkage factor -> 1) so retain confident predictions. Speech english 0.889 / korean 0.667 predictions well-separated in log-odds -- 1.5x l2 bump should barely shift them. Why 3.0 specifically: 4b1575e went 1.0 -> 2.0 (2x); next doubling 4.0 aggressive; 3.0 is moderate 1.5x further, common {1,2,3,5,10} progression, allows bisection to 2.5 if too aggressive or 5.0 if unchanged. Orthogonal: NOT features.py (FEATURE_NAMES stable 80, features.py sha unchanged); NOT detector.py (no DSP/threshold/post-filter); NOT e4a9c18 (per-dataset sample_weight loss-gradient bias); NOT 7b49d40 (augmentation data-diversity); NOT d1be6c3 (capacity knob max_depth/max_leaf/max_iter stable); SAME axis as 4b1575e but DIFFERENT value -- pure linear continuation. Blast radius: 1 float literal in make_pipeline(). Training runtime unchanged (l2 is per-leaf scalar add, cost negligible). Inference cost unchanged (same forest size). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 460 lines, make_pipeline() constructs Pipeline with l2_regularization=3.0 confirmed via named_steps[clf].l2_regularization, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 learning_rate=0.07 min_samples_leaf=20), FEATURE_NAMES stable at 80.
+per-domain: combined_english=0.790123 combined_korean=0.443478 combined_singing=0.283333
+
+# 2026-04-21 — hypothesis: raise HistGBM l2_regularization 2.0 → 3.0
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    raise `HistGradientBoostingClassifier.l2_regularization` from 2.0
+    to 3.0 at make_pipeline(). All other hyperparameters stable
+    (max_iter=300, max_depth=5, max_leaf_nodes=32, learning_rate=0.07,
+    min_samples_leaf=20). FEATURE_NAMES stable at 80. US-505b
+    train_classifier.py sha gate forces auto-retrain.
+
+(b) WHY over recent failures. 4b1575e was the MOST RECENT KEEP —
+    raised l2_regularization 1.0 → 2.0 and that is now the current
+    baseline 0.589. Mechanism (per 4b1575e note): l2 shrinks leaf
+    log-odds by (sum_hess+l2_prev)/(sum_hess+l2_new), disproportion-
+    ately biting small-hessian edge-case leaves where marginal
+    singing FPs sit at p_splice just above GBM_THRESHOLD=0.982. Since
+    the keep, 6 consecutive discards on 6 different axes (a23ab28
+    music-gate feature, 1cded37 cluster-count detector post-filter,
+    e4a9c18 per-dataset sample_weight, 7b49d40 time-stretch
+    augmentation, ca2aa2f HPSS percussive MFCC, 425f6d6 voicing-gated
+    GBM threshold) — every structural pivot has regressed. 4b1575e's
+    own explicitly cited continuation: "common L2 progression
+    {1,2,5,10} with 2.0 conservative first step; if unchanged 3.0-5.0
+    follows." 3.0 is the exact cited next step. Linear continuation
+    of a PROVEN productive axis is the single most risk-bounded move
+    available when structural pivots keep failing.
+
+    Mechanism on 3 surviving singing chord-cycle FPs: they persist
+    marginally above 0.982 even after l2=2.0 (baseline singing 0.345,
+    still 3 FPs). Further 50% l2 bump squeezes leaf log-odds another
+    ratio-step on the same small-hessian leaves — marginal FPs at
+    p_splice ~0.983 drop below 0.982. Real TPs have larger hessian
+    mass (sum_hess dominates in the ratio, shrinkage factor → 1) so
+    retain confident predictions. Speech english 0.889 / korean 0.667
+    predictions are well-separated in log-odds — a 1.5x l2 bump
+    should barely shift them.
+
+    Orthogonal. NOT features.py (FEATURE_NAMES stable at 80,
+    features.py sha unchanged — distinct from every ca2aa2f / a23ab28
+    style feature-axis discard). NOT detector.py (no DSP/threshold/
+    post-filter change — distinct from 1cded37 / 425f6d6). NOT e4a9c18
+    (per-dataset sample_weight is loss-gradient bias, different
+    classifier axis). NOT 7b49d40 (augmentation data-diversity). NOT
+    d1be6c3 (capacity knob — max_depth/max_leaf/max_iter all stable).
+    SAME axis as 4b1575e but DIFFERENT value (2.0 → 3.0) — pure
+    linear continuation of a keep.
+
+    Blast radius. 1 float literal in make_pipeline(). Training
+    runtime unchanged (l2 is per-leaf scalar add, cost negligible).
+    Inference cost unchanged (same forest size). US-505b
+    train_classifier.py sha gate auto-retrains from scratch.
+
+(c) IF THIS FAILS. (1) Singing unchanged — chord-cycle FP leaves have
+    enough hessian mass that l2=3.0 still doesn't squeeze them past
+    0.982 threshold → bisect upward to 5.0 (next step in {1,2,3,5,10}
+    progression). (2) Speech regresses — 3.0 over-shrinks TP leaves
+    that carry speech confidence → moderate to 2.5 as bisection
+    between 2.0 kept and 3.0 discarded. (3) Correlated all-domain
+    drop — l2 is globally wrong lever for current GBM capacity →
+    pivot to min_samples_leaf 20 → 40 (tree-structure regularization,
+    different geometry than log-odds shrinkage).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after
+    75+ iterations — cannot verify the 3 singing FPs sit at p_splice
+    in [0.982, 0.990] band where l2=3.0 would bite. If they sit at
+    0.995+, l2 bumps don't help. (ii) SHAP rollup STILL empty for 14
+    keeps. (iii) Actual p_splice value at each FP post-l2=2.0 unknown
+    — would directly tell whether another l2 step is the right move
+    vs. pivoting to min_samples_leaf or max_depth.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON in CURRENT
+    STATE per-FP (domain, file, t_sec, p_splice,
+    gbm_predict_proba_vector, dsp_phase_z/t2_z/cpe_z,
+    voicing_fraction, top-5 |SHAP|). Would make l2-progression
+    bisection data-driven rather than theory-driven. (2) SHAP ROLLUP
+    REPAIR — rollup empty for 14 keeps. (3) CLASSIFIER HYPERPARAMETER
+    FRONTIER SNAPSHOT (n_estimators / max_depth / learning_rate /
+    l2_regularization / min_samples_leaf / max_leaf_nodes — tried
+    kept/failed per axis alongside GBM_*) so regularization-strength
+    progression is visible like the primary-tunable frontier.
+
