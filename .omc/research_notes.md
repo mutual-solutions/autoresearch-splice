@@ -4872,3 +4872,77 @@ per-domain: combined_english=0.875000 combined_korean=0.500000 combined_singing=
     DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot alongside
     GBM_*.
 
+## 2026-04-21T04:42:35+09:00 — 8593da7 (discard, combined=0.521115)
+subject: add unvoiced_spec_contrast_post_retrospective_match (FEATURE_NAMES 80->81) -- UNVOICED-mask retrospective context match on spec_contrast (mastering-signature) axis. For post[t,t+2] unvoiced-mean 7-dim contrast, min cos_dist to unvoiced-mean contrast at past [t-k-2,t-k] for k in {3,6,9,12}s. Reuses cached feat_contrast + feat_vp, ZERO new librosa calls, ZERO new caches. Sentinel 0.0 on t-14<0 OR t+2>duration OR any unvoiced mask empty OR any norm underflow. Five prior retrospective-match variants tried, ALL on voiced/all-frame mask and MFCC/chroma axis: b5b1a0d (all-frame MFCC, singing 0.354 / speech regressed), 3d56d52 (voiced MFCC, singing 0.330 -- drum-onset lives UNVOICED), a6cf49d (voiced chroma absolute min, singing 0.377 BEST-in-70+ / speech catastrophic), 32ff893 (self-cal MEAN) / c578d73 (self-cal MAX) -- both rescued speech but killed singing gain. Retrospective mechanism DOES bite chord-cycle FPs on singing (a6cf49d highest-ever 0.377) but calibration subtracts the signal. NONE of the 5 used UNVOICED mask; NONE used spec_contrast. Unvoiced+spec_contrast is at the intersection of two proven mechanisms: 1eda8e3 voiced_unvoiced_MFCC_asymmetry +0.054 biggest keep (unvoiced captures cross-song mastering signal), 7972a98 voiced_unvoiced_spec_contrast +0.005 keep (spec_contrast axis carries mastering). Mechanism on 3 singing chord-cycle FPs: drum kit + compressor + limiter + EQ frozen within-song so unvoiced spec_contrast recurs across past k -> min TINY -> silent -> FP not boosted. Cross-song splice: different mastering chain -> unvoiced spec_contrast differs -> min LARGE -> fires. Speech self-gating via 1eda8e3 mechanism: mic+preamp+codec frozen within-recording so unvoiced consonants+silence spec_contrast stable across k -> min TINY on non-splice -> GBM low per-domain SHAP on english/korean. Speech cross-speaker TP: mic chain change -> min MODERATE/LARGE -> helps speech TPs. Orthogonal: NOT b5b1a0d (all-frame MFCC); NOT 3d56d52 (voiced MFCC -- OPPOSITE mask different axis); NOT a6cf49d/32ff893/c578d73 (voiced chroma -- OPPOSITE mask different axis); NOT 7972a98 voiced_unvoiced_spec_contrast_asymmetry (single-boundary paired-diff no past bank no MIN aggregator); NOT e7ca9eb voiced_spec_contrast (voiced mask single-boundary); NOT 26a3687 spec_contrast_cross_intra_contrast (intra sub-windows SAME +-4s no past-history bank); NOT any 1st-order paired-diff; NOT any DSP-gate. FIRST unvoiced-mask retrospective match; FIRST spec_contrast retrospective match in 80-set. Pure features.py change -- 1 new block (~55 lines cloning voiced_mfcc_post_retrospective_match template with unvoiced mask replacing voiced + spec_contrast 7-dim replacing MFCC 13-dim) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features + self-test assert bumps. Per-t cost: 5 slices + 5 unvoiced-masked means on 7-dim + 4 cosines + 1 min, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81 last-name 'unvoiced_spec_contrast_post_retrospective_match', real singing_train clean_001 at 7 within-song probe positions yields small values 0.0000-0.0077 (mechanism-consistent: unvoiced frames stable across past k within-song), 3/7 non-zero (rest return 0.0 sentinel when 2s window lacks unvoiced frames -- vocal-dense positions), edge guards t=5 (t-14<0) and t=29 (t+2>dur) both return 0.0, 300 calls 0.15s (0.52ms/call), all 81 features finite across 15 sampled positions, idempotent on repeated calls.
+per-domain: combined_english=0.864198 combined_korean=0.537313 combined_singing=0.304762
+
+(a) HYPOTHESIS. Add `unvoiced_spec_contrast_post_retrospective_match`
+    (FEATURE_NAMES 80→81). For post[t,t+2] compute UNVOICED-mean 7-dim
+    spec_contrast. For each k ∈ {3,6,9,12}s compute unvoiced-mean
+    spec_contrast over past [t-k-2,t-k]. feature = MIN over k of
+    cos_dist(post_unvoiced, past_unvoiced_k). Reuses cached feat_contrast
+    + feat_vp. ZERO new librosa calls, ZERO new caches. Sentinel 0.0 on
+    t-14<0 OR t+2>duration OR any unvoiced mask empty OR any norm
+    underflow. FEATURE_NAMES 80→81 forces auto-retrain via US-505.
+
+(b) WHY over recent failures. Five retrospective-match variants tried:
+    b5b1a0d (all-frame MFCC, singing 0.354 / speech regressed),
+    3d56d52 (voiced MFCC, singing regressed 0.330 — drum-onset lives in
+    UNVOICED), a6cf49d (voiced chroma absolute min, singing 0.377
+    BEST-in-70+ but speech catastrophic), 32ff893 (self-cal MEAN) /
+    c578d73 (self-cal MAX) — both rescued speech but killed singing
+    gain. Retrospective mechanism works on singing; calibration
+    subtracts the signal. Four prior attempts all used VOICED or
+    ALL-FRAME mask; NONE tried UNVOICED. Also all on chroma or MFCC
+    axis; NONE on spec_contrast. Unvoiced+spec_contrast is at the
+    intersection of two proven mechanisms: (1) 1eda8e3
+    voiced_unvoiced_MFCC_asymmetry +0.054 biggest keep proved unvoiced
+    captures cross-song mastering signal while voiced captures singer
+    timbre; (2) 7972a98 voiced_unvoiced_spec_contrast +0.005 keep
+    proved spec_contrast axis carries mastering-signature info. On
+    retrospective axis, unvoiced frames on chord-cycle FP see the SAME
+    within-song drum+mastering chain at every past k → min TINY →
+    silent. Cross-song splice shifts mastering chain → min LARGE →
+    fires. Speech: unvoiced = consonants+silence with mic+preamp+codec
+    frozen within recording → min TINY on non-splice, LARGE on
+    cross-speaker splice (mic/preamp change) → helps TPs via same
+    1eda8e3 self-gating mechanism.
+
+    Orthogonal. NOT b5b1a0d (all-frame MFCC); NOT 3d56d52 (voiced
+    MFCC — OPPOSITE mask, different axis); NOT a6cf49d / 32ff893 /
+    c578d73 (voiced chroma — OPPOSITE mask, different axis); NOT
+    7972a98 voiced_unvoiced_spec_contrast_asymmetry (single-boundary
+    paired-diff, no past-bank, no MIN aggregator); NOT e7ca9eb
+    voiced_spec_contrast (voiced mask, single-boundary, no bank);
+    NOT 26a3687 spec_contrast_cross_intra_contrast (intra sub-windows
+    on SAME ±4s span, no past-history bank); NOT any 1st-order
+    paired-diff; NOT any DSP-gate. FIRST unvoiced-mask retrospective
+    match, FIRST spec_contrast retrospective match in 80-set.
+
+(c) IF THIS FAILS. (1) Singing unchanged (unvoiced frames in 2s
+    windows too sparse on vocal-dominated singing) → fall back to
+    ALL-FRAME spec_contrast retrospective match. (2) Speech regresses
+    (within-recording mic-noise drift over 3-12s makes min non-trivial)
+    → add MEAN self-calibration as a follow-up. (3) Feature fires but
+    zero SHAP (redundant with voiced_unvoiced_spec_contrast_asymmetry
+    via correlated splits) → pivot to harmonic-percussive-separated
+    percussive retrospective match via librosa.effects.hpss.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 75+
+    iterations — cannot verify the 3 singing FPs sit in sections with
+    consistent within-song drum+mastering (mechanism assumption) vs
+    dynamic arrangement transitions. (ii) SHAP rollup STILL empty for
+    14 keeps — cannot verify whether 7972a98 voiced_unvoiced_spec_contrast
+    is load-bearing. (iii) a6cf49d per-FP feature values at the 3
+    singing FP positions unknown — would validate mask choice.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE per-FP (domain, file, t_sec, p_splice, dsp_phase_z,
+    dsp_t2_z, dsp_cpe_z, voicing_fraction,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    unvoiced_spec_contrast_post_retro_match, top-5 |SHAP|). Would
+    settle every mask+axis combo hypothesis data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
+    DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot.
+
