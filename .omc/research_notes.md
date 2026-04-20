@@ -3584,3 +3584,109 @@ per-domain: combined_english=0.850000 combined_korean=0.614706 combined_singing=
     feedback-loop verification gap so claude can confirm hyperparam
     iterations now force retrain.
 
+## 2026-04-20T20:38:52+09:00 — 347c0ac (discard, combined=0.509293)
+subject: add voiced_unvoiced_spec_contrast_asymmetry_mid (FEATURE_NAMES 80->81) -- MID-adjacent ±3s balanced on spec_contrast. pre[t-3,t] post[t,t+3] 0s gap, cited fallback from 6c6c254(c)(1). Reuses cached feat_contrast + feat_vp, ZERO new librosa calls, ZERO new caches. Empty-mask sentinel 0.0 via _masked_mean None path (matches 7972a98 template). Combines d290101's proven speech-safe spec_contrast axis (3s gap 3s span IMPROVED english 0.889->0.897) with 1eda8e3's proven balanced-adjacent self-gating template (NEAR ±2s kept +0.054 biggest win). b7dc8bf MID (MFCC, 0s gap 3s adjacent) failed speech because MFCC phoneme-correlated; d290101 proves spec_contrast peak-RATIO is phoneme-stable at ±3s spans so the same MID geometry that broke MFCC should preserve speech here. Every FAR-gap spec_contrast variant failed singing (d290101 3s/3s 0.291, 177d641 1s gap 0.273, 88adb49 4s asym 0.329, 6c6c254 4s/2s bal 0.305) -- untried alternative is ADJACENT ±3s no gap, wider than NEAR's ±2s so spans ~1-1.5 chord cycles, begins averaging chord-cycle noise. Mechanism on 3 singing chord-cycle FPs: ±3s covers one chord transition in pre AND post -> voiced_dist averages to moderate, unvoiced_dist stays small (mastering frozen) -> asymmetry ~0 silent. Cross-song splice: pre 3s song A, post 3s song B -> unvoiced LARGE (new drum-bus comp + master EQ + limiter), voiced moderate -> asymmetry POSITIVE. Speech self-gating: spec_contrast peak-RATIO phoneme-stable, ±3s adjacent ~6 syllables each side samples similar phoneme distribution, voiced+unvoiced peak-ratios co-vary -> diff near zero -> GBM low per-domain SHAP on english/korean. FIRST 0s-gap + 3s-balanced-adjacent geometry on spec_contrast axis. Orthogonal: NOT 7972a98 NEAR ±2s, NOT d290101 3s gap, NOT 177d641 1s gap, NOT 88adb49 4s asym, NOT 6c6c254 4s/2s bal, NOT b7dc8bf MID MFCC content, NOT 1eda8e3 NEAR MFCC, NOT f4148cc chroma, NOT 0c3bf76 flatness scalar, NOT any percussive/harmonic/symmetric/single-mask variant. Pure features.py change -- 1 new block (~45 lines cloned from _block_voiced_unvoiced_spec_contrast_asymmetry with ±3s windows) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost: 4 slices + 4 masked means + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_contrast_asymmetry_mid', all 81 features finite on synthetic audio, sentinel 0.0 on empty-voicing mask, edge-clamped t=1 returns 0.0 via _slice_frames clamping path, idempotent.
+per-domain: combined_english=0.825000 combined_korean=0.530882 combined_singing=0.301613
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_contrast_asymmetry_mid (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — MID-adjacent companion to
+    7972a98 NEAR spec_contrast asymmetry (kept +0.005). pre=[t-3, t],
+    post=[t, t+3] (0s gap, 3s balanced adjacent spans) on the spec_contrast
+    content axis. Reuses cached feat_contrast + feat_vp — ZERO new librosa
+    calls, ZERO new caches, ZERO edge guard code (`_slice_frames` clamps
+    out-of-range safely; empty-mask → sentinel 0.0 via None-path, matching
+    7972a98 template). FEATURE_NAMES 80→81 forces wrapper auto-retrain via
+    US-505 sha gate (920dcdb US-505b now also covers train_classifier.py).
+
+(b) WHY this over recent failures. EXPLICIT cited fallback from 6c6c254(c)(1):
+    "MID-adjacent spec_contrast (pre[t-3,t] post[t,t+3], 0s gap, 3s balanced
+    — untried time scale on spec_contrast)". Combines two empirically-
+    validated pieces into a genuinely untried geometry cell:
+    (i) d290101 (spec_contrast FAR 3s gap 3s span) IMPROVED english 0.889
+    →0.897 and matched korean 0.667 — proving spec_contrast is intrinsic-
+    ally speech-safe at 3s-wide windows. Only singing regressed (0.291)
+    because 3s gap let voiced formants diverge.
+    (ii) 1eda8e3 NEAR ±2s BALANCED-ADJACENT MFCC kept +0.054 (biggest win
+    in loop history) — 0s gap + balanced spans is the canonical speech-
+    self-gating template.
+    b7dc8bf MID (MFCC, 0s gap, 3s adjacent) FAILED speech because MFCC is
+    phoneme-correlated; d290101 proves spec_contrast peak-RATIO is
+    phoneme-stable, so the same MID geometry that broke MFCC should
+    preserve speech on spec_contrast.
+
+    Every FAR-gap variant on spec_contrast has failed singing: d290101
+    (3s/3s) 0.291, 177d641 (1s gap) 0.273, 88adb49 (4s/4s asym) 0.329,
+    6c6c254 (4s gap 2s bal) 0.305. Failure pattern: GAPS on spec_contrast
+    preserve speech but fail singing. Untried alternative: ADJACENT ±3s
+    no gap, wider than NEAR's ±2s so spans ~1-1.5 chord cycles (pop ~2-3s),
+    begins averaging chord-cycle noise where NEAR doesn't bite 3 FPs.
+
+    Mechanism on 3 surviving singing chord-cycle FPs: ±3s covers one
+    complete chord transition within pre AND one within post → voiced_dist
+    averages across chord = moderate; unvoiced_dist stays small (mastering
+    frozen, drum bus identical) → asymmetry near zero, feature silent on
+    FP. Real cross-song splice: pre=3s song A baseline, post=3s song B →
+    unvoiced_dist LARGE (new drum-bus comp + master EQ + limiter), voiced
+    moderate → asymmetry POSITIVE. Speech self-gating via spec_contrast
+    peak-RATIO phoneme-stability: at 0s gap + ±3s adjacent ≈ 6 syllables
+    each side, broad enough to span typical phoneme distribution;
+    recording continuous, voiced+unvoiced peak-ratios co-vary with
+    phoneme context; difference near zero → GBM low per-domain SHAP on
+    english/korean.
+
+    FIRST 0s-gap + 3s-balanced-adjacent geometry on the spec_contrast
+    axis. Orthogonal: NOT 7972a98 (NEAR ±2s); NOT d290101 (3s gap); NOT
+    177d641 (1s gap); NOT 88adb49 (4s asym); NOT 6c6c254 (4s/2s bal);
+    NOT b7dc8bf (MID on MFCC); NOT 1eda8e3 (NEAR MFCC); NOT f4148cc
+    (chroma); NOT 0c3bf76 (flatness); NOT any percussive/harmonic/
+    symmetric/single-mask variant. Blast radius: 1 new block (~40 lines
+    cloned from _block_voiced_unvoiced_spec_contrast_asymmetry with ±3s
+    windows) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call.
+    ZERO new caches, ZERO new librosa calls. Per-t cost: 4 slices + 4
+    masked means + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing flat / speech preserved (±3s doesn't capture
+    enough chord averaging; 3s span often lands mid-chord) → fallback to
+    MID-WIDE ±3.5s adjacent on spec_contrast (interpolates between this
+    MID and failed WIDE ±4s MFCC; untried). (2) Speech regresses (peak-
+    RATIO phoneme stability held at d290101's 3s gap but breaks at 0s gap
+    because voiced+unvoiced sample the SAME phoneme event across boundary
+    and contrast shifts differently than at NEAR/FAR) → pivot to voiced-
+    only F0 contour cosine distance (voiced_f0_contour_cosine_dist — pitch
+    trajectory shape on voiced frames, untried content axis, per-singer
+    identity signal). (3) combined matches 0.589282 exactly → 4/16
+    capacity ghost is in-tree AND US-505b retrain is working but yielded
+    zero marginal signal; escalate to structural pivot away from voiced/
+    unvoiced asymmetry family.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 45+
+    iterations — cannot verify if 3 singing FPs sit in chord-dense windows
+    where ±3s averaging works, vs isolated transitions. (ii) SHAP rollup
+    STILL empty for 7972a98 despite 14 keeps — rollup writer broken, no
+    per-feature attribution. (iii) 99081f5 4/16 capacity ghost status
+    unclear: train_classifier.py currently shows max_depth=4,
+    max_leaf_nodes=16 at HEAD; 960113c "revert" note didn't actually
+    revert file values; baseline 0.589282 evaluated against whichever
+    config the last retrain produced. With US-505b live, any features.py
+    bump now retrains against 4/16. (iv) Per-FP spec_contrast peak-ratio
+    trajectories absent — cannot verify MID averaging hypothesis on 3
+    singing FPs' actual chord-transition timescale.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 45+-iteration blocker cited in every reflection.
+    Per-FP (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|). Transforms
+    every geometry hypothesis from theory to data-driven decision.
+    (2) SHAP ROLLUP REPAIR — per-iteration SHAP top-K to
+    .omc/classifier/shap_rollup.json on every keep, aggregate rolling-5
+    in wrapper. Without SHAP, feature selection is blind. (3) US-505b
+    VERIFICATION TRACE — 920dcdb landed but no visible signal whether
+    train_classifier.py-only iterations now force retrain; wrapper log
+    line at retrain decision ("features.py sha Δ → retrain" vs
+    "train_classifier.py sha Δ → retrain" vs "no Δ → skip") closes
+    feedback-loop verification gap. Also clarifies whether 4/16 ghost
+    is still in-effect. Three unchanged highest-priority requests across
+    45+ iterations.
+
