@@ -3812,3 +3812,121 @@ per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=
     retrain" vs "train_classifier.py sha Δ → retrain" vs "no Δ → skip")
     confirms 920dcdb works.
 
+## 2026-04-20T21:12:12+09:00 — 27ddbf7 (discard, combined=0.523753)
+subject: add voiced_f0_iqr_log_ratio feature (FEATURE_NAMES 80->81) -- STRUCTURAL pivot onto F0 DISTRIBUTION SHAPE content axis, untouched by block 5's mean/delta/jitter/continuity. Feature = |log2(post_iqr / pre_iqr)| where iqr = voiced F0 75th-25th percentile over pre[t-2,t] vs post[t,t+2]. Reuses cached feat_f0 + feat_f0_hop + feat_sr, ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when either window has <3 valid F0 frames OR either IQR <1 Hz (log-safe + perceptually negligible). FEATURE_NAMES 80->81 forces retrain via US-505 sha gate. Targets 7972a98 baseline (combined=0.589282) singing 0.345 3-FP chord-cycle plateau. Last 13+ iterations exhausted geometry/content variation on voiced/unvoiced paired-differencing template (MFCC/spec_contrast/chroma/spec_flatness/RMS dB). CLAUDE.md mandates structural change after 5+ same-axis failures. Block 5 already has f0_mean_pre/post/delta (Hz-linear mean shift) + f0_jitter_delta (std/mean ratio) + f0_continuity_score (edge 100ms delta) but NOTHING percentile-based, NOTHING log-ratio-based, NOTHING shape/spread-based. GBM max_depth=3 cannot synthesize log-IQR-ratio from existing mean/delta/jitter features. Mechanism on 3 surviving singing chord-cycle FPs: within one song singer holds similar phrasing style (melodic range 3-7 semitones per phrase) so voiced F0 IQR of any 2s slice stays stable ~30-80 Hz regardless of chord transition -> pre_iqr and post_iqr both similar -> log2 ratio ~0 silent, FP not boosted. Cross-song splice same-singer: melodic style differs (ballad narrow IQR vs pop bridge wide IQR) -> log-ratio LARGE. Cross-song different-singer: register AND spread shift combined -> feature strongly positive. Speech self-gating via voiceprint stability: within-speaker 2s voiced F0 IQR is habitual prosodic range (~30-60 Hz), stable characteristic over 2s windows -> log-ratio sits ~0.1-0.3 uncorrelated with splice position -> GBM low per-domain SHAP on english/korean. Log-scale normalisation prevents absolute F0 level bias (male F0=150 IQR=30 equiv to female F0=300 IQR=60). IQR chosen over STD because IQR robust to yin octave errors; f0_jitter_delta already uses std/mean. Orthogonal: NOT 1eda8e3 (cepstral cosine); NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac (spec_contrast variants); NOT f4148cc (chroma cosine); NOT 0c3bf76 (spec_flatness 1D abs-delta); NOT c006d52 (RMS dB asymmetry); NOT block-5 F0 mean/delta/jitter/continuity (all mean/edge-based, none IQR or log-ratio); NOT percussive/harmonic mask family; NOT any voiced/unvoiced pair variant. FIRST F0-DISTRIBUTION-SHAPE feature in the 80-feature set, FIRST log-ratio feature in any content axis. Pure features.py change -- 1 new block (~30 lines) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 2 slices + 2 nan-mask + 4 percentile ops + 1 log2 + 1 abs, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_f0_iqr_log_ratio', synthetic narrow-IQR->wide-IQR transition at t=10 yields 4.83 LARGE, within-source t=5 yields 0.048 sentinel-small (100x discrimination), silence returns sentinel 0.0, edge guard fires correctly on <3 valid F0 frames, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.875000 combined_korean=0.555882 combined_singing=0.295385
+
+# 2026-04-20 — hypothesis: add voiced_f0_iqr_log_ratio (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot onto
+    the F0 (pitch) content axis, which has never been touched beyond
+    mean/delta/jitter/continuity (block 5). Feature = |log2(post_iqr /
+    pre_iqr)| where iqr = F0 75th − 25th percentile on voiced frames in
+    pre=[t-2,t] and post=[t,t+2]. Reuses cached feat_f0 + feat_f0_hop +
+    feat_sr — ZERO new librosa calls, ZERO new caches. Sentinel 0.0 when
+    either window has <3 valid F0 frames OR either IQR <1 Hz (log-safe
+    + perceptually negligible). FEATURE_NAMES 80→81 forces retrain via
+    US-505 sha gate.
+
+(b) WHY this over recent failures. Every iteration in the last ~13 has
+    been a GEOMETRY or CONTENT variant on the voiced/unvoiced paired-
+    differencing template (MFCC / spec_contrast / chroma / spec_flatness
+    / RMS dB). CLAUDE.md mandates structural change after 5+ same-axis
+    failures. Most recent c006d52 voiced_unvoiced_rms_asymmetry_db
+    produced combined=0.490700 — identical to the earlier hyperparam-
+    only streak and identical per-domain breakdown (english=0.8395
+    korean=0.4765 singing=0.2954), suggesting either the feature fired
+    sentinel-0 everywhere or US-505 didn't retrain on the feature-add.
+    Either way the paired-differencing ENERGY axis tapped out. Block 5
+    already has f0_mean_pre/post/delta (linear-Hz mean shift) + jitter
+    (std/mean of F0) + continuity (edge 100ms F0 delta). MISSING from
+    block 5: F0 DISTRIBUTION SHAPE / SPREAD statistics — no percentile,
+    no IQR, no log-scale ratio, no range. GBM max_depth=3 cannot
+    synthesize log-ratio-of-IQR from existing mean/delta/jitter features
+    (jitter is std/mean not IQR; delta is mean shift not spread shift).
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song
+    the singer holds similar phrasing style (melodic range per phrase
+    ≈ 3-7 semitones) so F0 IQR of any 2s voiced slice is stable at
+    ~30-80 Hz regardless of chord transition. Pre_iqr and post_iqr
+    both ~50 Hz → log2(50/50)=0 → feature silent, FP not boosted.
+    Cross-song splice (same singer different song): melodic style
+    changes across songs — ballad pre has narrow IQR (~25 Hz), pop
+    bridge post has wide IQR (~90 Hz) → log2(90/25)=1.8 LARGE.
+    Different-singer cross-song: register shift AND IQR shift
+    combined → feature POSITIVE. Within-song chord cycle is the
+    only case where melodic style is by construction continuous,
+    so IQR stability is the exact signature that discriminates the
+    3 chord-cycle FPs from real splices.
+
+    Speech self-gating via voiceprint stability. Within-speaker on
+    2s windows the voiced F0 IQR is ~30-60 Hz (habitual prosodic
+    range); this is a relatively stable speaker characteristic over
+    2s, so log-ratio across within-file non-splice positions sits
+    at ~log2(45/50)=0.15 (small). Sentence-boundary prosodic shifts
+    can push IQR variation but still stay within speaker's range →
+    log-ratio remains modest and uncorrelated with splice position
+    → GBM low per-domain SHAP on english/korean. Log-scale
+    normalization prevents absolute F0 level from dominating the
+    signal (male F0=150 IQR=30 ≡ female F0=300 IQR=60 in log-ratio
+    space).
+
+    Why log-ratio over linear difference: (i) linear iqr_delta
+    would be F0-level-biased — GBM would learn a singer-register
+    artifact not a melodic-style artifact; (ii) log-ratio is
+    symmetric around 0; (iii) ABS gives a single-sign signal GBM
+    can cleanly threshold.
+
+    Why IQR not STD: IQR is robust to yin octave-errors;
+    f0_jitter_delta already uses std/mean (sensitive to outliers
+    and mean shift). IQR-based spread is genuinely orthogonal.
+
+    Orthogonal to every prior axis: NOT 1eda8e3 (cepstral cosine);
+    NOT 7972a98/d290101/177d641/88adb49/6c6c254/347c0ac
+    (spec_contrast variants); NOT f4148cc (chroma cosine); NOT
+    0c3bf76 (spec_flatness 1D abs-delta); NOT c006d52 (RMS dB);
+    NOT block 5 F0 mean/delta/jitter/continuity (all mean-based
+    OR edge-based, none IQR or log-ratio); NOT percussive/harmonic
+    mask family; NOT any voiced/unvoiced pair variant. FIRST
+    F0-DISTRIBUTION-SHAPE feature in the 80-feature set, FIRST
+    log-ratio feature in any content axis. Pure features.py — 1
+    new block (~30 lines) + 1 FEATURE_NAMES append + 2 assert
+    bumps (80→81) + 1 call. ZERO new librosa calls, ZERO new
+    caches. Per-t cost: 2 slices + 2 nan-mask + 4 percentile ops
+    + 1 log2 + 1 abs, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech preserved (IQR
+    signal too weak — within-song melodic range variation exceeds
+    cross-song IQR shift because singers use full range within any
+    given song) → fallback to voiced_f0_median_shift_cents =
+    |1200*log2(post_median/pre_median)| (untried log-scale F0-
+    center shift feature). (2) Speech regresses (2s IQR is NOT a
+    stable voiceprint — sentence-level prosodic variation is large
+    enough to produce FPs) → pivot to voiced_f0_p10_shift_cents
+    (10th-percentile = F0 floor / chest register, more speaker-
+    stable). (3) Combined matches 0.589282 exactly AGAIN despite
+    feature-count change → rules out c006d52 sentinel-0 theory
+    and points at wrapper retrain bug genuinely present; escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after
+    46+ iterations — cannot verify the 3 singing FPs' F0
+    distributions to sanity-check the IQR hypothesis. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite
+    14 keeps — rollup writer broken. (iii) c006d52 per-domain
+    (0.8395/0.4765/0.2954) EXACTLY matches prior hyperparam-only
+    iterations — signal that US-505 retrain occasionally fails OR
+    the feature fires sentinel-0 always; no wrapper log confirms
+    which. (iv) 99081f5 4/16 capacity ghost status unclear at HEAD
+    after 960113c "REVERT" that wrapper may have discarded.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent 46+-iteration blocker. Per-FP
+    (domain, file, t_sec, p_splice, dsp_*, chunk_duration_s,
+    f0_mean_pre, f0_mean_post, f0_iqr_pre, f0_iqr_post, top-5
+    |SHAP|). (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) US-505 RETRAIN VERIFICATION TRACE — wrapper log line at
+    retrain decision ("features.py sha Δ → retrain" vs "no Δ →
+    skip") with a post-retrain sanity check (classifier joblib
+    mtime vs features.py mtime) would surface the c006d52-style
+    identical-output case.
+
