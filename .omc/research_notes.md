@@ -4641,3 +4641,160 @@ per-domain: combined_english=0.835443 combined_korean=0.529412 combined_singing=
     root cause. Three unchanged highest-priority requests across 48+
     iterations.
 
+## 2026-04-20T23:13:14+09:00 — 9064eec (discard, combined=0.544129)
+subject: add mfcc_cross_intra_contrast (FEATURE_NAMES 80->81) -- SECOND-ORDER MFCC consistency feature. cross_dist - 0.5*(intra_pre + intra_post) over +-4s span (clipped to [t-4,t+4]; edge guard t-4<0 or t+4>duration -> 0.0). intra_pre=cos_dist(mean_mfcc(t-4,t-2), mean_mfcc(t-2,t)); intra_post=cos_dist(mean_mfcc(t,t+2), mean_mfcc(t+2,t+4)); cross=cos_dist(mean_mfcc(t-4,t), mean_mfcc(t,t+4)). Reuses cached feat_mfcc, ZERO new librosa calls, ZERO new caches. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. 25+ iterations exhausted the 1D voiced/unvoiced paired-diff template on every content axis (MFCC/spec_contrast/chroma/spec_flatness/RMS-dB/ZCR/spec_bandwidth/spec_rolloff), every geometry (NEAR/MID/WIDE/FAR/narrow-gap/balanced-span), F0 distribution (IQR, median-cents), voicing-mask temporal structure (transition-rate), detector post-filter (peak-width) -- CLAUDE.md mandates structural change after 5+ same-axis failures. Untried dimension is SECOND-ORDER: comparing cross-boundary distance to intra-side self-distances on the same span. Every prior feature computes ONE distance (or one paired subtraction of masked distances on the SAME window). This feature computes THREE distances on distinct time windows and combines them. GBM max_depth=4/max_leaf=16 cannot synthesize via threshold splits on existing block-2 MFCC deltas because those are all single-cross-boundary. Mechanism on 3 singing chord-cycle FPs: singer+mastering+drum-bus continuous within one song so MFCC drifts steadily both BEFORE and AFTER t; intra_pre ~0.10 (one chord transition each side), intra_post ~0.10, cross averaging 2-3 chords bounded ~0.10 -> feature ~0 silent, FP not boosted. Real cross-song splice: intra_pre small ~0.04 (song A self-consistent), intra_post small ~0.04 (song B self-consistent), cross LARGE ~0.30 (A->B mastering+drum+singer jump) -> feature +0.26 STRONGLY POSITIVE, TP boosted. Sign-and-magnitude separation chord cycle (~0) vs real splice (+0.25+) is binary discriminator. Speech self-gating: 4s pre samples ~6-8 syllables -> intra_pre 0.08-0.15 phoneme drift; 4s post same -> intra_post 0.08-0.15; 4s-mean vs 4s-mean cross smooths phoneme variation -> cross 0.08-0.15 tracking intra -> feature ~0 across non-splice positions on english/korean. Speech splices TP handled by existing 1eda8e3 voiced_unvoiced_mfcc_asymmetry (+0.054 biggest keep). Why subtraction (not ratio): ratio amplifies near-zero-intra noise; subtraction zero-mean-balanced; 0.5*(intra_pre+intra_post) average smoother than max-over-intras. Why MFCC axis: 1eda8e3 proved MFCC carries singer/instrument timbre continuity signal (+0.054 biggest keep); intra-side baseline captures within-song timbre drift precisely where chord-cycle FPs sit. Orthogonal: NOT 1eda8e3 / any voiced_unvoiced_mfcc geometry (all 1st-order voicing-masked cross-boundary); NOT block-2 MFCC deltas (1st-order single distance no intra baseline); NOT 7972a98/spec_contrast variants; NOT f4148cc chroma; NOT 0c3bf76 spec_flatness; NOT c006d52 RMS dB; NOT 0cdd87e ZCR; NOT 7a170b0 spec_bandwidth; NOT e234649 spec_rolloff; NOT 27ddbf7/1d1144d F0; NOT 8fc7169 voicing transition rate; NOT 60196aa peak-width detector. FIRST SECOND-ORDER consistency feature in the 80-feature set. Pure features.py change -- 1 new block (~55 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost: 6 slices + 6 means on 13-dim vectors + 3 cosines + 2 subtractions + 1 average, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'mfcc_cross_intra_contrast', synthetic A/B splice at t=10 yields 1.68 LARGE, within-source t=5 yields -8e-5 sentinel-near-zero (~20000x discrimination), edge guard t=1 (t-4<0) returns 0.0, edge guard t=17 with 20s audio (t+4>20) returns 0.0, all 81 features finite, idempotent on repeated calls.
+per-domain: combined_english=0.860759 combined_korean=0.623881 combined_singing=0.300000
+
+# 2026-04-20 — hypothesis: add mfcc_cross_intra_contrast (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — STRUCTURAL pivot to a
+    SECOND-ORDER MFCC consistency feature that distinguishes real cross-
+    source splice from intra-song chord cycle by comparing the cross-
+    boundary distance to the intra-side self-distances on the SAME
+    ±4s span. For windows clipped to [t-4, t+4]:
+        intra_pre  = cos_dist(mean_mfcc(t-4, t-2), mean_mfcc(t-2, t))
+        intra_post = cos_dist(mean_mfcc(t,   t+2), mean_mfcc(t+2, t+4))
+        cross      = cos_dist(mean_mfcc(t-4, t),   mean_mfcc(t,   t+4))
+        feature    = cross - 0.5 * (intra_pre + intra_post)
+    Reuses cached feat_mfcc — ZERO new librosa calls, ZERO new caches.
+    Edge guard t-4<0 OR t+4>duration_s returns sentinel 0.0.
+    FEATURE_NAMES 80→81 forces wrapper auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. 25+ iterations exhausted the 1D
+    voiced/unvoiced paired-diff template on every content axis: MFCC
+    cosine (1eda8e3 kept, every geometry variant discarded), spec_contrast
+    (7972a98 kept, NEAR/MID/WIDE/FAR/narrow-gap/balanced-span all
+    discarded), chroma (f4148cc), spec_flatness (0c3bf76 → 0.539), RMS
+    dB (c006d52 → 0.491), ZCR (0cdd87e → 0.508), spec_bandwidth (7a170b0
+    → 0.542), spec_rolloff (e234649 → 0.507). F0 distribution shape and
+    location (27ddbf7 IQR → 0.524, 1d1144d median-cents → 0.508).
+    Voicing-mask temporal structure (8fc7169 transition-rate → 0.472).
+    Detector post-filter (60196aa peak-width → 0.491). CLAUDE.md
+    mandates structural change after 5+ same-axis failures; the
+    1st-order cross-boundary family is structurally exhausted.
+
+    The untried dimension is SECOND-ORDER — not another content axis
+    or another geometry, but a comparison between cross-boundary
+    distance and the intra-side self-distances. Every prior feature
+    computes ONE distance (or one paired subtraction of distances on
+    different masks computed on the SAME window). This feature
+    computes THREE distances on distinct time windows and combines
+    them. GBM max_depth=4 / max_leaf_nodes=16 (ghost still in-tree)
+    cannot synthesize this subtraction via threshold splits on
+    existing block-2 MFCC deltas because those deltas are all computed
+    over a SINGLE ±(2s) cross-boundary pair — no feature in the
+    80-feature set carries an intra-side baseline.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Within one song
+    the singer/mastering/drum-bus is continuous; chord transitions
+    drift the MFCC steadily both BEFORE and AFTER t. intra_pre captures
+    one chord transition in [t-4, t] ≈ 0.08-0.12 cosine dist.
+    intra_post captures another chord transition in [t, t+4] ≈ 0.08-
+    0.12. cross distance over longer 4s means averages over 2-3 chords
+    each side within the same song ≈ 0.08-0.15 (not amplified because
+    within-song mean is bounded). Feature ≈ 0.10 − 0.10 ≈ 0 or slightly
+    negative, silent → FP NOT boosted.
+
+    Real cross-song splice. Pre-side 4s from song A is self-consistent
+    (intra_pre ≈ 0.03-0.05). Post-side 4s from song B is self-
+    consistent (intra_post ≈ 0.03-0.05). cross captures A → B jump
+    dominated by different mastering chain + different drum kit +
+    possibly different singer formants → 0.25-0.45. Feature ≈ 0.30 −
+    0.04 = +0.26 STRONGLY POSITIVE, real TP boosted. Sign-and-magnitude
+    separation of chord cycle (≈0) vs real splice (+0.25+) is a binary
+    discriminator GBM cannot synthesize from the existing feature set
+    because every existing MFCC feature mixes intra-side and cross-
+    side in the same single distance.
+
+    Speech self-gating. On english/korean, pre-side 4s samples ~6-8
+    syllables with phoneme drift → intra_pre ≈ 0.08-0.15. Post-side
+    4s samples next ~6-8 syllables with phoneme drift → intra_post ≈
+    0.08-0.15. cross computes 4s-mean vs 4s-mean — longer averaging
+    smooths phoneme variation so cross ≈ 0.08-0.15 as well (tracks
+    intra at same scale). Feature ≈ 0 across non-splice positions →
+    GBM low per-domain SHAP on english/korean. Speech splices (TP)
+    remain handled by existing voiced_unvoiced_mfcc_asymmetry (1eda8e3
+    +0.054 biggest keep) which is designed for speech.
+
+    Why subtraction (not ratio): cross/intra ratio amplifies near-
+    zero-intra noise. Subtraction is zero-mean-balanced and GBM handles
+    signed scalars cleanly via threshold splits. Using 0.5*(intra_pre+
+    intra_post) vs max-over-intras: average smoother, less sensitive
+    to single-sided chord transitions that coincidentally land large
+    on one intra window.
+
+    Why MFCC content axis: 1eda8e3 proved MFCC carries the singer/
+    instrument timbre continuity signal (+0.054 biggest keep); the
+    intra-side baseline on MFCC captures within-song timbre drift
+    precisely where chord-cycle FPs sit. Transplanting this second-
+    order template to MFCC leverages the proven productive axis rather
+    than exploring yet another content space.
+
+    Classifier hyperparam axis verifiably broken (5+ train_classifier.py-
+    only iterations IDENTICAL 0.490700). Only features.py-sha bumps
+    force retrain. Every primary tunable saturated both directions.
+
+    Orthogonal. NOT 1eda8e3 / any voiced_unvoiced_mfcc geometry variant
+    (all 1st-order voicing-masked cross-boundary); NOT block-2 MFCC
+    deltas (1st-order single distance, no intra baseline); NOT 7972a98
+    + every spec_contrast variant; NOT f4148cc chroma; NOT 0c3bf76
+    spec_flatness; NOT c006d52 RMS dB; NOT 0cdd87e ZCR; NOT 7a170b0
+    spec_bandwidth; NOT e234649 spec_rolloff; NOT 27ddbf7 / 1d1144d
+    F0 distribution; NOT 8fc7169 voicing transition rate; NOT 60196aa
+    peak-width detector; NOT any percussive/harmonic/tonnetz mask or
+    single-mask variant. FIRST SECOND-ORDER consistency feature in the
+    80-feature set: first feature computing a function of MULTIPLE
+    distance measurements across distinct time windows.
+
+    Blast radius. Pure features.py change — 1 new block (~35 lines)
+    + 1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call in
+    extract_features. ZERO new caches, ZERO new librosa calls. Per-t
+    cost: 6 slices + 6 means on 13-dim vectors + 3 cosines + 2
+    subtractions + 1 average, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (intra-side baseline too
+    noisy at 2s half-windows because 2s spans only ~1 chord → intra
+    distance indistinguishable from cross when chord cycles dominate)
+    → fallback to same formula on spec_contrast axis (d290101 proved
+    speech-safe at 3s spans; intra-side baseline on spec_contrast
+    mastering-fingerprint cancels chord-cycle drift more cleanly).
+    (2) Speech regresses (cross > intra on speech because phoneme
+    transitions are correlated within short stretches, so 4s vs 4s
+    cross-means carry sentence-level shift beyond 2s intra-shifts) →
+    normalized ratio cross / (0.1 + max(intra_pre, intra_post)) capped
+    at 10, compressed signal less sensitive to speech prosody. (3)
+    combined matches 0.490700 again → features.py sha-bump no longer
+    forces retrain (coverage bug regressed); escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 49+
+    iterations — cannot verify whether the 3 singing FPs' t_sec sits
+    in a chord-dense region where intra_pre/intra_post actually
+    dominate cross_dist, or whether they sit near file ends where the
+    ±4s edge guard fires and feature silences. (ii) SHAP rollup STILL
+    empty for 14 keeps — no per-feature attribution; cannot verify
+    whether 1eda8e3/7972a98 are even in top features GBM actually uses.
+    (iii) 99081f5 4/16 capacity ghost STILL at HEAD (max_depth=4,
+    max_leaf_nodes=16 per grep); 960113c "REVERT" commit note did not
+    change the file; baseline 0.589282 was set against whichever config
+    was live at retrain time. Attribution against baseline contaminated.
+    (iv) No wrapper log signal confirms features.py sha bumps actually
+    trigger retrain vs cache hit; 0.490700 identical-streak spanned
+    multiple features.py edits.
+
+(e) Wrapper enhancements.
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — persistent
+    49+-iteration blocker. Per-FP (domain, file, t_sec, p_splice,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry, voiced_unvoiced_spec_contrast_
+    asymmetry, mfcc_delta_01..13 norm, top-5 |SHAP|). Would turn every
+    2nd-order-consistency hypothesis into a data-driven decision.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without per-
+    feature attribution the axis pick is theory-only. Cannot verify
+    which features GBM uses or which are redundant with existing
+    block-2 deltas vs genuinely orthogonal.
+    (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
+    decision ("features.py sha Δ XX→YY → retrain" vs "no Δ → skip")
+    with joblib-mtime sanity check post-retrain would isolate the
+    0.4907 identical-streak root cause. Three unchanged highest-
+    priority requests across 49+ iterations.
+
