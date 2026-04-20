@@ -4889,3 +4889,132 @@ per-domain: combined_english=0.853659 combined_korean=0.613846 combined_singing=
     commits' exact-match as KEEP not DISCARD. ~15 lines of commit-message
     parse.
 
+## 2026-04-20T19:38:23+09:00 — 88adb49 (discard, combined=0.551338)
+subject: add voiced_unvoiced_spec_contrast_asymmetry_far_wide feature (FEATURE_NAMES 80->81) -- d49284c's exact 4s-gap + 4s-span FAR geometry transplanted to spec_contrast content axis. pre[t-2,t] post[t+4,t+8]. Reuses cached feat_contrast + feat_vp + feat_audio/sr, ZERO new librosa calls, ZERO new caches. Edge guard t-2<0 OR t+8>duration_s returns sentinel 0.0. Targets 7972a98 baseline (combined=0.589282) singing 0.345 chord-cycle plateau. d49284c MFCC 4s/4s was THE ONLY recent feature to LIFT singing (0.345->0.354) but broke speech (english 0.889->0.825) because MFCC phoneme-correlated. d290101 spec_contrast 3s gap 3s span proved spec_contrast is speech-safe WITH a gap (english 0.889->0.897 IMPROVED!) but 3s/3s didn't capture enough chord-cycle averaging on singing (0.291). 177d641 spec_contrast 1s gap failed singing 0.273 too. Proposed 4s/4s geometry combines d49284c's singing-winning gap+span with d290101's proven speech-safe content axis -- wider gap (4s vs 3s) for more chord-cycle averaging, wider post span (4s vs 3s) for statistically robust song-B mastering mean. Mechanism on 3 surviving singing FPs: chord cycle voiced_dist moderate (formants average across 2 chord cycles) + unvoiced_dist small (mastering frozen) -> asymmetry near zero, feature silent. Cross-song splice: pre 2s song A baseline, post 4s song B mastering, unvoiced_dist LARGE (different drum-bus compression/EQ/limiter), voiced moderate -> asymmetry POSITIVE, TP boosted. Speech self-gating: spec_contrast peak-RATIO is phoneme-stable per d290101; voiced+unvoiced distances co-vary tightly even at 4s gap -> asymmetry near zero -> GBM low per-domain SHAP on english/korean. Classifier hyperparam axis verifiably broken (5 train_classifier.py-only iterations produced IDENTICAL combined=0.490700); only features.py-sha bumps force retrain. Every primary tunable saturated both directions; mask family failed; voiced/unvoiced asymmetry time-scales mostly exhausted. FIRST 4s-gap + 4s-span geometry on spec_contrast axis. Orthogonal: NOT d290101 (3s gap 3s span); NOT 177d641 (1s gap); NOT 7972a98 (NEAR); NOT d49284c (MFCC content axis); NOT ff88b22/b7dc8bf/78513fb/dde4135 (MFCC variants); NOT f4148cc/0c3bf76/any mask/tonnetz/symmetric variant. Pure features.py change -- 1 new block (~55 lines template-cloned from _block_voiced_unvoiced_spec_contrast_asymmetry with edge guard + 4s gap + 4s span) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. Per-t cost 4 slices + 4 masked means + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_contrast_asymmetry_far_wide', synthetic splice-crossing t=8 yields asym=+0.1286 vs within-source t=4 asym=-0.0119 (~10x discrimination), edge guard t=1 (t-2<0) returns 0.0, edge guard t=15 with 20s chunk (t+8>20) returns 0.0, idempotent on repeated calls, all 81 features finite on synthetic audio.
+per-domain: combined_english=0.888889 combined_korean=0.573016 combined_singing=0.329032
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_contrast_asymmetry_far_wide (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — d49284c's exact FAR
+    geometry transplanted to the spec_contrast content axis.
+    pre=[t-2, t], post=[t+4, t+8] (4s gap, 4s span asymmetric).
+    Reuses cached feat_contrast + feat_vp + feat_audio/sr — ZERO
+    new librosa calls, ZERO new caches. Edge guard t+8>duration_s
+    OR t-2<0 returns sentinel 0.0. FEATURE_NAMES 80→81 forces
+    retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. d49284c (MFCC 4s gap + 4s span
+    asymmetric) was THE ONLY recent feature to LIFT singing
+    (0.345→0.354) but broke speech (english 0.889→0.825, korean
+    0.667→0.537) because MFCC is phoneme-correlated — the 6s pre-
+    to-post-end separation made pre/post sample different sentence
+    content → voiced+unvoiced MFCC no longer co-varied → self-
+    gating broke. d290101 (spec_contrast 3s gap + 3s span) proved
+    spec_contrast is INTRINSICALLY speech-safe WITH a gap: english
+    IMPROVED 0.889→0.897, korean matched 0.667 — but singing
+    stayed 0.291 because 3s gap + 3s span didn't capture enough
+    chord-cycle averaging OR mastering signal. 177d641 spec_contrast
+    1s gap also failed singing 0.273 (gap too small). Every
+    subsequent MFCC geometry variant (ff88b22 WIDE adjacent,
+    b7dc8bf MID, 78513fb 3s/3s, dde4135 4s/2s balanced) failed
+    because narrowing post span or eliminating the gap dropped the
+    singing signal, AND MFCC is inherently phoneme-sensitive so
+    speech regression persisted. The UNTRIED move is to use
+    d49284c's exact singing-winning geometry (4s gap + 4s post
+    span) on spec_contrast where d290101 proved speech is safe.
+    4s gap is WIDER than d290101's 3s — more chord-cycle
+    averaging. 4s post span is WIDER than d290101's 3s — more
+    statistical averaging of post-splice mastering state.
+    Hyperparam axis verifiably broken (5 identical 0.490700 on
+    train_classifier.py-only edits); only features.py-sha bumps
+    force retrain.
+
+    Mechanism on 3 surviving singing FPs (chord cycle). Post sub-
+    window t+4..t+8 = 4-8s past splice = 2-4 chord cycles past
+    (pop period ~2s). Voiced spec_contrast averaged over 4s spans
+    ~2 complete chord cycles → voiced_dist moderate (formants
+    average across cycles toward singer's mean). Unvoiced
+    spec_contrast: mastering chain frozen within song →
+    unvoiced_dist small. Asymmetry (unvoiced − voiced) = small
+    negative or near zero → non-discriminating on chord-cycle FP,
+    feature silent, FP not boosted. Real same-singer cross-song
+    splice: pre is 2s song A mastering baseline, post is 4s of
+    song B drums+bus compressor+master limiter → unvoiced_dist
+    LARGE (per-band peak-to-valley profile shifts via different
+    drum-bus compression / EQ / limiter threshold). voiced_dist
+    moderate (similar formant structure, different mastering
+    envelope). Asymmetry strongly POSITIVE → real TP boosted.
+    d49284c proved this mechanism on MFCC; spec_contrast carries
+    mastering-fingerprint MORE cleanly than MFCC carries vocal-
+    tract (per-band peak-RATIO is directly shaped by drum-bus
+    compression, the single most album-variable element).
+
+    Speech self-gating preserved. d290101 proved at 3s gap + 3s
+    span: english 0.889→0.897 (IMPROVED). The mechanism:
+    spec_contrast per-band peak-RATIO is more phoneme-stable than
+    MFCC's absolute cepstral envelope — when pre and post sub-
+    windows sample different phoneme distributions across a gap,
+    voiced+unvoiced spec_contrast distances co-vary more tightly
+    than MFCC counterparts, so asymmetry (difference) stays near
+    zero → GBM assigns low per-domain SHAP on english/korean. At
+    4s gap the phoneme drift is larger but the peak-RATIO
+    stability argument still holds. Worst case: some speech
+    regression vs d290101's +0.008 english lift, but even if
+    english falls back to 0.889 baseline, singing lift could
+    compensate.
+
+    Why this over alternatives. (1) dde4135 cited balanced-span
+    spec_contrast (4s gap, 2s spans) — but dde4135 on MFCC
+    FAILED (singing 0.291) precisely because balanced 2s post
+    couldn't capture chord-cycle averaging; spec_contrast doesn't
+    have chord dependency but also doesn't have as much post-span
+    statistical power at 2s. 4s post span gives more robust
+    mastering averaging. (2) F0 jitter asymmetry — unvoiced has
+    no F0. (3) spec_flatness — 0c3bf76 NEAR already failed
+    (0.539); weaker baseline than spec_contrast +0.005 keep.
+    (4) MFCC at wider pre span — MFCC phoneme sensitivity breaks
+    regardless of span symmetry.
+
+    Orthogonal: NOT d290101 (3s gap, 3s span — this is 4s gap,
+    4s span); NOT 177d641 (1s gap); NOT 7972a98 (NEAR); NOT
+    d49284c (MFCC content); NOT ff88b22/b7dc8bf/78513fb/dde4135
+    (MFCC variants); NOT f4148cc/0c3bf76/any mask/tonnetz/
+    symmetric variant. FIRST 4s-gap + 4s-span geometry on the
+    spec_contrast axis. Pure features.py change — 1 new block
+    (~55 lines template-cloned from _block_voiced_unvoiced_spec_
+    contrast_asymmetry with edge guard + 4s gap + 4s span) + 1
+    FEATURE_NAMES append + 2 assert bumps + 1 call. ZERO new
+    caches, ZERO new librosa calls. Per-t cost: 4 slices + 4
+    masked means + 2 cosines on 7-dim vectors + 1 subtraction,
+    sub-ms.
+
+(c) IF THIS FAILS. (1) Singing lifted but speech regresses (4s gap
+    too wide for spec_contrast self-gating — phoneme drift across
+    4s breaks the peak-RATIO stability argument) → fallback to
+    voiced_unvoiced_spec_contrast_asymmetry_far_balanced
+    pre[t-2,t]/post[t+4,t+6] (4s gap, 2s spans balanced, cited
+    dde4135(c)(2)). (2) Singing flat (4s/4s spec_contrast too
+    statistically averaged — mastering change signal dilutes over
+    4s of song B) → pivot to 5s gap + 3s span pre[t-2,t]/
+    post[t+5,t+8] (even more chord averaging, 3s span that worked
+    on d290101 for speech). (3) combined matches 0.490700 exactly
+    → wrapper retrain-skip bug extends past hyperparam-only sites;
+    escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after
+    43+ iterations — cannot verify whether the 3 singing FPs sit
+    within 8s of file ends (t+8>duration fires edge guard). Every
+    FAR-window hypothesis still theory-calibrated. (ii) SHAP
+    rollup STILL empty for 7972a98. (iii) chunk_duration
+    distribution absent. (iv) 99081f5 4/16 capacity ghost in-tree.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block —
+    persistent 43+-iteration blocker. Per-FP (domain, file, t_sec,
+    p_splice, dsp_*, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|).
+    (2) US-505 COVERAGE FIX — extend sha-gate to
+    train_classifier.py. (3) DISCARD-REVERT SYMMETRY SEMANTICS
+    bug — if commit subject starts "REVERT" + names prior-
+    discarded SHA, treat exact-match as KEEP.
+
