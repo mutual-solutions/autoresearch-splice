@@ -4585,3 +4585,135 @@ per-domain: combined_english=0.800000 combined_korean=0.529412 combined_singing=
 
 (e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — 39+-iteration blocker; per-FP (domain, file, t_sec, p_splice, dsp_*, chunk_duration_s, voiced_unvoiced_mfcc_asymmetry, voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|). (2) US-505 COVERAGE FIX — extend retrain sha-gate to train_classifier.py changes, not just features.py. 5 train_classifier.py-only iterations all produced IDENTICAL 0.490700. (3) DISCARD-REVERT SYMMETRY SEMANTICS bug fix — wrapper treats "matches baseline exactly" as no-improvement; restored 99081f5 capacity ghost via 960113c discard. If commit subject starts "REVERT" + names prior-discarded SHA, treat exact-match as KEEP.
 
+## 2026-04-20T18:41:39+09:00 — 177d641 (discard, combined=0.489666)
+subject: add voiced_unvoiced_spec_contrast_asymmetry_narrow_gap feature (FEATURE_NAMES 80->81) -- NARROW-GAP FAR companion to 7972a98 NEAR voiced_unvoiced_spec_contrast_asymmetry (kept +0.005). pre[t-2,t] post[t+1,t+4] (1s gap, 3s span). Reuses cached feat_contrast + feat_vp, ZERO new librosa calls, ZERO new caches. Edge guard t-2<0 OR t+4>duration_s returns sentinel 0.0. FEATURE_NAMES 80->81 forces wrapper auto-retrain via US-505 sha gate. Combines two cited fallbacks: b7dc8bf(c)(2) NARROW-GAP FAR geometry (1s gap 3s span) + spec_contrast axis (d290101 proved speech-safe: english 0.889->0.897 IMPROVED, korean matched 0.667, only singing regressed because 3s gap let voiced formants diverge on different-chord content). 1s gap on spec_contrast keeps voiced spec_contrast small on BOTH chord-cycle AND cross-song cases while UNVOICED (mastering) shifts only on cross-song. Cross-song -> POSITIVE asymmetry (new drum bus + new master EQ + new limiter); chord-cycle FP -> ~0 (frozen mastering, non-discriminating, feature silent). Speech self-gating preserved: 1s gap keeps phoneme-distribution similar (2-3 syllables adjacent) and spec_contrast peak-RATIO is phoneme-stable per d290101 at 3s gap. Narrower than d290101's 3s gap so even safer for speech. Why NARROW-GAP FAR on spec_contrast over alternatives: MID/WIDE adjacent (ff88b22 WIDE and b7dc8bf MID) lack the gap signal that discriminates chord-cycle from cross-song; 3s gap (d290101) regressed singing; 4s gap (d49284c MFCC) broke speech; spec_flatness axis (0c3bf76 NEAR) has weaker baseline than spec_contrast. Classifier hyperparam axis verifiably broken (5 train_classifier.py-only iterations all produced IDENTICAL combined=0.490700 -> US-505 does not auto-retrain on hyperparam edits). Only features.py-sha bumps force retrain. Voiced/unvoiced spec_contrast asymmetry family is proven productive (7972a98 NEAR kept +0.005); narrow-gap companion on this content axis is genuinely untried and the principled interpolation between NEAR (0s gap) and d290101 (3s gap). Orthogonal: NOT 7972a98 (NEAR 0s gap, same template at narrow gap); NOT d290101 (3s gap, 3s span -- this is 1s gap); NOT d49284c (MFCC content, 4s gap, 4s span); NOT ff88b22 (MFCC WIDE adjacent no gap); NOT b7dc8bf (MFCC MID adjacent no gap); NOT 1eda8e3 (NEAR MFCC); NOT f4148cc (chroma NEAR asym); NOT 0c3bf76 (spec_flatness 1D scalar); NOT any percussive/harmonic/tonnetz/symmetric/single-mask variant. FIRST NARROW-GAP FAR geometry on any content axis, FIRST 1s-gap geometry on spec_contrast. Pure features.py change -- 1 new block (~70 lines, template-cloned from _block_voiced_unvoiced_spec_contrast_asymmetry with 1s gap + edge guard) + 1 FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features. ZERO new caches, ZERO new librosa calls. Per-t cost: 4 slices + 4 masked means + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81, last name 'voiced_unvoiced_spec_contrast_asymmetry_narrow_gap', synthetic voiced+unvoiced splice at t=8 yields narrow_gap_asym=+0.1255 (positive, discriminative of splice) vs +0.0026 at within-source t=10 (sentinel-small), edge guard t-2<0 returns 0.0, edge guard t+4>duration returns 0.0, idempotent on repeated calls, all 81 features finite on synthetic audio.
+per-domain: combined_english=0.843373 combined_korean=0.510448 combined_singing=0.272727
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_contrast_asymmetry_narrow_gap (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — NARROW-GAP FAR companion to
+    7972a98's NEAR voiced_unvoiced_spec_contrast_asymmetry (kept +0.005).
+    Same paired-difference template, but post = [t+1, t+4] (1s gap, 3s span)
+    instead of NEAR [t, t+2]. Pre stays [t-2, t]. Reuses cached feat_contrast
+    + feat_vp — ZERO new librosa calls, ZERO new caches. Edge guard
+    t+4 > duration_s OR t-2 < 0 returns sentinel 0.0. Sentinel 0.0 also
+    on empty mask / zero-norm. FEATURE_NAMES 80→81 triggers wrapper
+    auto-retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. Combines the two most informative
+    recent experiments. d290101 (spec_contrast FAR, 3s gap, 3s span):
+    english IMPROVED 0.889→0.897, korean matched 0.667, ONLY singing
+    regressed 0.345→0.291 — proving spec_contrast axis is intrinsically
+    speech-safe even with gap, but 3s gap was too wide on singing
+    (voiced formants at [t+3,t+6] diverge from voiced at [t-2,t] on
+    different chord, asymmetry sign becomes muddled). b7dc8bf(c)(2)
+    cited fallback: "NARROW-GAP FAR pre[t-2,t]/post[t+1,t+4] (1s gap
+    + 3s span — smaller gap than d49284c's 4s but preserves some
+    chord-averaging)". Applied to spec_contrast NOT MFCC because MFCC
+    is phoneme-sensitive at gaps (d49284c/ff88b22/b7dc8bf all broke
+    speech) while spec_contrast is mastering-fingerprint stable on
+    speech per d290101. Hyperparam axis verifiably broken (5 identical
+    0.490700 on train_classifier.py-only edits, US-505 doesn't retrain
+    on hyperparam). Only features.py-sha bumps force retrain.
+
+    Mechanism on 3 surviving singing FPs (chord-cycle FPs). At narrow
+    1s gap: pre[t-2,t] and post[t+1,t+4] sample temporally close
+    voiced content so VOICED spec_contrast stays small on BOTH chord
+    cycle AND cross-song cases (same singer formants in both).
+    Crucially, UNVOICED distance behaves differently:
+    - Chord-cycle FP intra-song: mastering chain frozen (vocal bus
+      comp + drum bus comp + master limiter all constant) →
+      unvoiced_dist small ~0.08. voiced_dist small ~0.08 →
+      asymmetry ~0 (non-discriminating, feature silent).
+    - Cross-song splice same-singer: voiced_dist small ~0.08 (similar
+      formants), unvoiced_dist LARGE ~0.30-0.50 (new drum bus + new
+      master EQ + new limiter) → asymmetry POSITIVE +0.22-0.42.
+    - Different-singer cross-song: both shift → asymmetry small but
+      1eda8e3 MFCC asym already fires on this case.
+    The mechanism distinguishes cross-song (POS) from chord-cycle (~0)
+    without the sign-flip ambiguity d290101 suffered at 3s gap.
+
+    Speech self-gating: 1s gap keeps pre and post phoneme-distribution
+    similar (2-3 syllables adjacent); spec_contrast peak-RATIO is
+    phoneme-stable per d290101; asymmetry near zero → low per-domain
+    SHAP on english/korean. Narrower than d290101's 3s gap where
+    speech self-gating already held → even safer.
+
+    Why NARROW-GAP FAR over alternatives:
+    (1) MID ±3s adjacent spec_contrast — interpolation between proven
+    NEAR and failed WIDE (MFCC WIDE broke), but pure-adjacent lacks
+    the GAP signal that discriminates chord-cycle from cross-song.
+    (2) Expand d290101 post to [t+3, t+7] (d290101(c)(2) cited) —
+    would make singing regression WORSE by extending into more
+    chord-diverse content.
+    (3) F0 jitter asymmetry — unvoiced frames lack F0, template doesn't
+    apply. Would need different mechanism.
+    (4) spec_flatness FAR — 0c3bf76 NEAR already failed (0.5385);
+    flatness axis has weaker baseline signal than spec_contrast.
+
+    Orthogonal: NOT 7972a98 (NEAR, 0s gap); NOT d290101 (3s gap, 3s
+    span — this is 1s gap); NOT d49284c (MFCC content, 4s gap, 4s
+    span); NOT ff88b22 (MFCC WIDE adjacent); NOT b7dc8bf (MFCC MID
+    adjacent); NOT 1eda8e3 (NEAR MFCC); NOT f4148cc (chroma NEAR
+    asym); NOT 0c3bf76 (spec_flatness 1D scalar); NOT any percussive/
+    harmonic/tonnetz/symmetric variant. FIRST NARROW-GAP FAR geometry
+    on any content axis, FIRST 1s gap on spec_contrast. Pure
+    features.py change — 1 new block (~50 lines, template-cloned from
+    _block_voiced_unvoiced_spec_contrast_asymmetry with edge guard +
+    1s gap) + 1 FEATURE_NAMES append + 2 assert bumps (80→81) + 1
+    call. ZERO new caches, ZERO new librosa calls. Per-t cost: 4
+    slices + 4 masked means + 2 cosines on 7-dim vectors + 1
+    subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged / speech preserved (1s gap
+    too small to discriminate chord-cycle from cross-song even on
+    spec_contrast — unvoiced_dist stays small on BOTH cases because
+    1s post window mostly captures the same mastering continuity on
+    either splice type) → step gap to 2s, pre[t-2,t]/post[t+2,t+5]
+    (untried MID-GAP FAR). (2) Singing regresses like d290101 /
+    speech preserved (1s gap introduces just enough voiced-chord
+    drift to muddle sign) → pivot to voiced_unvoiced_spec_contrast_
+    asymmetry_mid adjacent pre[t-3,t]/post[t,t+3] (cited b7dc8bf,
+    untried on spec_contrast). (3) combined matches 0.490700 exactly
+    despite feature-count change → wrapper retrain-skip bug extends
+    past hyperparam-only sites; escalate to operator with identical-
+    output streak across physically-distinct feature-count changes.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 40+
+    iterations — cannot verify whether the 3 surviving singing FPs
+    sit in chord-dense windows where 1s gap actually breaks sync or
+    isolated transitions where 1s gap is within same chord period;
+    every gap-geometry hypothesis remains theory-calibrated. (ii)
+    SHAP rollup STILL "no keeps yet — rollup empty" for 7972a98
+    despite 14 keeps — rollup writer broken, no per-feature
+    attribution available to predict the narrow-gap signal strength.
+    (iii) chunk_duration distribution absent — cannot estimate edge
+    guard fire rate (1s gap + 3s post → t+4>duration_s fires rarely
+    on 30s chunks, even rarer on 120s, but cannot verify). (iv) Only
+    one in-tree spec_contrast asymmetry variant (NEAR) so I can't
+    check whether 7972a98's per-domain SHAP suggests FAR/GAP
+    variants will compose cleanly with it or double-count signal.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in
+    CURRENT STATE — persistent 40+-iteration blocker. Per-FP (domain,
+    file, t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    dsp_max, dsp_sum, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    chord_cycle_density_estimate, top-5 |SHAP|). Single block
+    transforms every gap-geometry hypothesis from theory-calibrated
+    bet into data-driven decision. chord_cycle_density_estimate =
+    count of emits above 0.5 p_splice within ±10s of each FP would
+    directly test the chord-cycle hypothesis. (2) US-505 COVERAGE
+    FIX — extend retrain sha-gate to train_classifier.py changes,
+    not just features.py. Diagnostic: 5+ consecutive
+    train_classifier.py-only iterations all produced IDENTICAL
+    combined=0.490700 while feature-count bumps produced distinct
+    values. ~5-line shell extension. (3) DISCARD-REVERT SYMMETRY
+    SEMANTICS bug fix — wrapper treats "matches baseline exactly"
+    as no-improvement, restoring the 99081f5 capacity ghost via
+    960113c discard. If commit subject starts "REVERT" + names
+    prior-discarded SHA, treat exact-match as KEEP not DISCARD.
+    ~15 lines git commit-message parse. Three unchanged
+    highest-priority requests across 40+ iterations.
+
