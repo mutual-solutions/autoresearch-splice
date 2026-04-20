@@ -3036,3 +3036,82 @@ per-domain: combined_english=0.657534 combined_korean=0.491803 combined_singing=
     min_samples_leaf) at HEAD, so per-tunable-frontier "current ?"
     resolves and ghost state surfaces explicitly.
 
+## 2026-04-20T15:03:57+09:00 — 960113c (discard, combined=0.589282)
+subject: REVERT 99081f5 HistGBM capacity-bump ghost (max_depth 4->3, max_leaf_nodes 16->8) — first hyperparam REVERT in loop history. Confirmed ghost via git-diff: 7972a98 baseline had max_depth=3/max_leaf=8 but HEAD carries max_depth=4/max_leaf=16 from 99081f5's un-rolled-back commit (99081f5 row ABSENT from results.tsv — suggests verify-fail whose diff never reverted). Every iteration post-99081f5 (49fa2ca, 6384137, ea1636c, 53d3ea0, 0cb551f, 67633f2) evaluated against 4/16 classifier while 0.589282 baseline was set at 3/8 — attribution contamination. Manually retrained, committed fresh joblib+cv_results+meta (f71c526 joblib-skip lesson). OOF weighted F1=0.6437 (vs 99081f5-reported 0.6321 on 4/16) — hard_cut F1 0.373, crossfade 0.342, both above 99081f5 baselines suggesting capacity bump may have been hurting fit quality too. Self-diagnostic: combined >= 0.589 confirms ghost theory and many recent discards deserve re-evaluation; combined < 0.589 proves 99081f5 was actually positive and reinstates 4/16 as the correct config. Orthogonal: NOT feature add (features.py sha stable); NOT primary-tunable (detector.py unchanged); NOT DSP gate; NOT new hyperparam exploration — REVERT of unauthorized ghost. First hyperparam REVERT in loop history. Blast radius: 2-line edit in make_pipeline() + regenerated bundle. Smoke-verified: reverted values load (max_depth=3, max_leaf_nodes=8), train completed in budget, OOF metrics non-degenerate.
+per-domain: combined_english=0.888889 combined_korean=0.666667 combined_singing=0.345312
+
+# 2026-04-20 — hypothesis: REVERT 99081f5 HistGBM capacity-bump ghost (max_depth 4→3, max_leaf_nodes 16→8)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` hyperparam
+    REVERT — restore HistGBM max_depth=4→3 and max_leaf_nodes=16→8 to
+    match the 7972a98-keep-time classifier state. Verified ghost via
+    git-diff: 7972a98 had max_depth=3 / max_leaf=8; HEAD carries
+    max_depth=4 / max_leaf=16 from 99081f5's commit that was never
+    rolled back. Manually retrain and commit the new joblib +
+    cv_results + training_manifest alongside (f71c526 joblib-skip
+    lesson). Features.py sha stable so the wrapper's auto-retrain gate
+    is passive; the committed bundle guarantees the reverted
+    classifier is consumed at eval.
+
+(b) WHY this over recent failures. Every reflection since ea1636c has
+    flagged the 99081f5 ghost as attribution contamination. Confirmed
+    today: HEAD's train_classifier.py still has the discarded capacity
+    bump. Every iteration post-99081f5 (49fa2ca, 6384137, ea1636c,
+    53d3ea0, 0cb551f, 67633f2) evaluated against a 4/16 classifier
+    while the 0.589282 baseline was set at 3/8. 53d3ea0/0cb551f/67633f2
+    deteriorated past 0.527 not only because their DSP tightenings
+    were bad but partially because the 4/16 classifier produces
+    different p_splice distributions than 7972a98-keep-time.
+
+    Self-diagnostic: if REVERT HELPS (combined ≥ 0.589), the ghost was
+    hurting — many recent discards deserve re-evaluation with the
+    clean classifier. If REVERT HURTS (combined < 0.589), 99081f5's
+    capacity bump was actually positive and should have been kept; in
+    that case stop reverting and restart the feature-add axis on top
+    of 4/16. Either outcome is strong information.
+
+    Orthogonal to every prior axis: NOT a feature add (features.py sha
+    stable); NOT primary-tunable (detector.py unchanged); NOT DSP
+    gate; NOT new hyperparam exploration — this is a REVERT of an
+    unauthorized ghost, not a new direction; NOT feature removal
+    (ea1636c). First hyperparam REVERT in the loop's history.
+
+(c) IF THIS FAILS. (1) combined drops below 0.589 with 3/8 capacity —
+    99081f5 was actually positive; reinstate 4/16 and pivot to
+    learning_rate reduction 0.07 → 0.05 (smoother fit, tightens
+    calibration at the high-probability tail; untried). (2) combined
+    matches 0.589 within ±0.003 — ghost inert, plateau is structural;
+    pivot to ANALYSIS_STRIDE_S = 0.08 (denser than both 0.11-failed
+    and 0.12-current, cited in multiple fallback plans). (3) combined
+    rises above 0.589 — ghost theory confirmed; revisit most-promising
+    recent discards (e.g., voiced_percussive_mfcc_asymmetry aa4f141)
+    against the clean classifier since their attribution was
+    contaminated.
+
+(d) Information gaps. (i) The 99081f5 row is ABSENT from results.tsv
+    (grep confirms no line). Progress reports 10 verify-fails out of
+    100 iterations — 99081f5 may be a verify-fail whose hyperparam
+    diff was never rolled back. Fix is the same either way (manual
+    revert). (ii) CLEAN_FP_POSITIONS STILL absent after 27+
+    iterations; I cannot verify which singing FPs are classifier-
+    capacity-sensitive vs DSP-gated. (iii) The on-disk joblib's
+    training metadata (training_manifest.json, cv_results.json) is
+    not surfaced in the prompt — I can't tell which hyperparams the
+    CURRENT joblib was trained with without reading files.
+
+(e) Wrapper enhancements. (1) DISCARD-REVERT SYNC auditor (repeated
+    for 5+ iterations): the wrapper's discard AND verify-fail paths
+    must diff every changed file vs baseline-sha and RESTORE on drift.
+    99081f5 ghost persisted 10+ iterations after e7ca9eb's
+    15+-iteration precedent. ~20 lines of shell guard would prevent
+    the next one. (2) CURRENT-CLASSIFIER-STATE block in CURRENT STATE:
+    (max_depth, max_leaf_nodes, learning_rate, l2_regularization,
+    min_samples_leaf, max_iter, joblib_sha, training_sha) so any
+    divergence between baseline-keep-time config and HEAD config
+    surfaces immediately. (3) CLEAN_FP_POSITIONS JSON block — the
+    persistent 27+-iteration blocker. Every theory-calibrated
+    hypothesis around singing clean_fp=3 could become data-driven
+    with (domain, file, t_sec, p_splice, dsp_phase_z, dsp_t2_z,
+    dsp_cpe_z, voiced_mfcc_dist, voiced_unvoiced_mfcc_asymmetry,
+    top-5 |SHAP|).
+
