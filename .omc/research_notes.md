@@ -4946,3 +4946,88 @@ per-domain: combined_english=0.864198 combined_korean=0.537313 combined_singing=
     (3) ADD DSP_SUM_MIN / DSP_CONFIRMATION_MIN / DSP_PHASE_MIN /
     DSP_SECOND_HIGHEST_MIN to the tunable frontier snapshot.
 
+## 2026-04-21T05:02:02+09:00 — a23ab28 (discard, combined=0.490700)
+subject: add music_gated_voiced_chroma_retro_match (FEATURE_NAMES 80->81) -- voicing-fraction-gated retrospective voiced-chroma match. Combines a6cf49d's productive mechanism (singing 0.377 HIGHEST-in-70+ but speech catastrophic) with a HARD MUSIC GATE on post voicing_fraction: >=0.55 returns 0.0 (speech, gate closed), else min over k in {3,6,9,12}s of cos_dist(voiced_mean_chroma(post[t,t+2]), voiced_mean_chroma([t-k-2,t-k])). Reuses cached feat_chroma + feat_vp + feat_audio; ZERO new librosa calls, ZERO new caches. Edge guard t-14<0 OR t+2>duration OR any voiced mask empty OR norm underflow -> sentinel 0.0. FEATURE_NAMES 80->81 forces auto-retrain via US-505 sha gate. 6 prior retrospective-match variants: b5b1a0d (all-frame MFCC) singing 0.354 speech regressed; 3d56d52 (voiced MFCC) 0.330 drums-in-unvoiced stripped; a6cf49d (voiced chroma abs min) singing 0.377 speech catastrophic; 32ff893 (MEAN self-cal) / c578d73 (MAX self-cal) both rescued speech but subtracted singing gain; 8593da7 (unvoiced spec_contrast) 0.304. Pattern: retrospective-match HAS singing signal (a6cf49d highest-ever) but absolute min-past-dist fires on within-recording speech drift; every arithmetic self-cal via subtraction absorbs singing signal too. Correct lever is HARD DOMAIN GATE via intrinsic audio statistic: singing (vocals+accompaniment) has post voicing_fraction ~0.30-0.55; pure speech 0.65-0.85. Threshold 0.55 separates them. Feature identically 0.0 on speech -> GBM cannot learn any english/korean split on it -> bypasses a6cf49d failure mode rather than cancelling arithmetically. Mechanism on 3 singing chord-cycle FPs: vp_post~0.40 gate opens; post voiced-chroma converges to key centroid (chords share 3-5 of 12 pitch classes); past {3,6,9,12}s windows all in same key -> min TINY silent FP not boosted. Cross-song splice: past song-A-key, post song-B-key -> min LARGE fires. Speech: gate closed feature=0; speech TPs handled by existing 1eda8e3 MFCC asymmetry. Orthogonal: NOT a6cf49d (abs min no gate); NOT 32ff893/c578d73 (subtraction self-cal); NOT b5b1a0d/3d56d52 (MFCC axis); NOT 8593da7 (unvoiced spec_contrast); NOT 32cac36 voiced_chroma (single-boundary); NOT 8170784 voiced_chroma_cross_intra; NOT f4148cc 1st-order paired-diff; NOT any DSP-gate. FIRST voicing-fraction-gated feature in 80-set; FIRST feature using intrinsic audio statistic as hard domain switch rather than arithmetic normalization. GBM max_depth=4 cannot synthesize if-else gate on min-over-past-bank because no past-bank feature exists. Pure features.py change -- 1 new block (~65 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call in extract_features + self-test assert bumps. Per-t cost 5 voiced-masked-means on 12-dim chroma + 4 cosines + 1 min, sub-ms. Smoke-verified: len(FEATURE_NAMES)==81 last-name 'music_gated_voiced_chroma_retro_match'; real singing clean_001 t=20 vp_post=0.405 -> feature=0.1849 (gate open, retrospective active), t=25 vp_post=0.740 -> feature=0.0 (gate closed); real english clean_001 t=16/20 vp_post=0.889 -> feature=0.0 (gate closed across speech); edge guards t=10 (t-14<0) and t=29.5 (t+2>30) both return 0.0; all 81 features finite; idempotent.
+per-domain: combined_english=0.839506 combined_korean=0.476471 combined_singing=0.295385
+
+# 2026-04-21 — hypothesis: add music_gated_voiced_chroma_retro_match (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add. Take a6cf49d's productive
+    voiced-chroma retrospective-match mechanism (singing 0.377 — HIGHEST
+    in 70+ iterations) and put it behind a hard MUSIC GATE keyed on the
+    intrinsic voicing fraction of the post window: if post_voicing_fraction
+    >= 0.55 return 0.0; else compute min over k ∈ {3,6,9,12}s of cos_dist(
+    voiced_mean_chroma(post), voiced_mean_chroma([t-k-2, t-k])). Reuses
+    cached feat_chroma + feat_vp, ZERO new librosa calls, ZERO new caches.
+    Edge guard t-14<0 OR t+2>duration OR any voiced mask empty OR norm
+    underflow → sentinel 0.0. FEATURE_NAMES 80→81 forces auto-retrain.
+
+(b) WHY over recent failures. Six retrospective-match variants tried:
+    b5b1a0d (all-frame MFCC) singing 0.354 speech regressed; 3d56d52
+    (voiced MFCC) 0.330 drums-in-unvoiced stripped; a6cf49d (voiced
+    chroma absolute min) singing 0.377 BEST but speech catastrophic
+    0.765/0.493; 32ff893 MEAN self-cal / c578d73 MAX self-cal both
+    rescued speech but subtracted the singing gain (0.343/0.319); 8593da7
+    unvoiced spec_contrast 0.304. Pattern is now clear: the retrospective-
+    match mechanism HAS real singing signal (a6cf49d highest-ever), but
+    an ABSOLUTE min-past-dist fires on within-recording speech drift too,
+    and every arithmetic self-calibration (subtraction) also absorbs the
+    singing signal. Self-calibration via SUBTRACTION is the wrong lever.
+
+    The correct lever is a HARD DOMAIN GATE using an intrinsic audio
+    statistic: voicing_fraction. Singing (vocals + accompaniment) yields
+    post voicing_fraction ≈ 0.30–0.55 because drums/bass/instrumental
+    interludes pull it down. Pure speech yields 0.65–0.85 because dense
+    vowels dominate 2s windows. Threshold 0.55 separates them. Making
+    the feature IDENTICALLY 0.0 on speech means GBM cannot learn any
+    split on it from english/korean — bypasses a6cf49d's speech failure
+    mode entirely rather than trying to cancel it arithmetically.
+
+    Mechanism on 3 singing chord-cycle FPs: voicing_fraction ≈ 0.40 so
+    gate opens; post voiced-mean chroma converges to key-signature
+    centroid (every chord shares 3-5 of 12 pitch classes), past windows
+    at k ∈ {3,6,9,12}s all sit in the same key → min cos_dist TINY →
+    silent, FP not boosted. Cross-song splice (different key): past
+    voiced-chroma all song-A-key, post voiced-chroma song-B-key → min
+    LARGE → fires. Speech non-splice and speech TPs: gate closed →
+    feature = 0 → no speech regression, speech TPs handled by 1eda8e3
+    MFCC asymmetry (english 0.889, korean 0.667 already strong).
+
+    Orthogonal. NOT a6cf49d (absolute min, no gate); NOT 32ff893 (MEAN
+    subtraction); NOT c578d73 (MAX subtraction); NOT b5b1a0d / 3d56d52
+    (MFCC axis); NOT 8593da7 (unvoiced spec_contrast); NOT 32cac36
+    voiced_chroma (single-boundary, no past bank); NOT 8170784
+    voiced_chroma_cross_intra (intra sub-windows on SAME ±4s); NOT
+    f4148cc 1st-order paired-diff; NOT any DSP-gate. FIRST voicing-
+    fraction-gated feature in 80-set. FIRST feature using an intrinsic
+    audio statistic as a hard domain switch rather than subtraction.
+    GBM max_depth=4 cannot synthesize this if-else gate because
+    voicing_prob_post exists but no past-bank feature exists, so the
+    joint "voiced_chroma_retro_match * 1{vp_post<0.55}" is unreachable.
+
+(c) IF THIS FAILS. (1) 0.55 threshold wrong — singing voicing_fraction
+    on vocal-lead sections exceeds 0.55 (gate closes on real singing)
+    → retry with 0.65. (2) Gate correct but chord-cycle FPs still get
+    non-zero min (key-change bridge within song) → widen past bank to
+    {2,4,6,8,10,12,14}s. (3) Feature fires but zero per-domain SHAP —
+    redundant with existing voiced_chroma_cosine_dist via correlated
+    GBM splits → pivot to music-gated voiced-MFCC retro match.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 75+
+    iterations — cannot verify the 3 singing FPs' actual
+    voicing_fraction values or whether they sit at key-stable regions.
+    Theory bet on threshold 0.55 vs 0.5 vs 0.6. (ii) SHAP rollup STILL
+    empty for 14 keeps. (iii) Distribution of voicing_prob_post across
+    domains not surfaced in CURRENT STATE; the 0.55 threshold is my
+    prior, not data-observed.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE
+    per-FP (domain, file, t_sec, p_splice, voicing_prob_post,
+    voiced_chroma_cosine_dist, music_gated_voiced_chroma_retro_match,
+    top-5 |SHAP|). Would settle gate-threshold choices data-driven.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) PER-DOMAIN voicing_fraction DISTRIBUTION in CURRENT STATE
+    (median / p25 / p75 of voicing_prob_post over clean files per
+    domain). Would directly justify gate thresholds for any music-
+    gated feature.
+
