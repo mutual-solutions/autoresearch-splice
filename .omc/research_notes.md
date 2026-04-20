@@ -5273,3 +5273,123 @@ per-domain: combined_english=0.301887 combined_korean=0.321429 combined_singing=
     (3) RETRAIN-ACTUALLY-FIRED TRACE — wrapper log line at retrain
     decision with joblib-mtime sanity check.
 
+## 2026-04-21T00:28:07+09:00 — 3bcec76 (discard, combined=0.495614)
+subject: add unvoiced_spec_contrast_cross_intra_contrast (FEATURE_NAMES 80->81)
+per-domain: combined_english=0.888889 combined_korean=0.547826 combined_singing=0.250000
+
+# 2026-04-21 — hypothesis: add unvoiced_spec_contrast_cross_intra_contrast (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — UNVOICED-mask 2nd-order
+    cross-intra consistency on spec_contrast. Every prior 2nd-order
+    variant used all-frame (9064eec MFCC → 0.544, 26a3687 spec_contrast
+    → 0.493) or VOICED mask (c5040d7 MFCC → 0.513, 8170784 chroma →
+    0.494). UNVOICED mask on 2nd-order is the genuinely untried
+    combination. For ±4s span clipped to [t-4, t+4]:
+        intra_pre  = cos_dist(unvoiced_mean_contrast(t-4,t-2), unvoiced_mean_contrast(t-2,t))
+        intra_post = cos_dist(unvoiced_mean_contrast(t,t+2),   unvoiced_mean_contrast(t+2,t+4))
+        cross      = cos_dist(unvoiced_mean_contrast(t-4,t),   unvoiced_mean_contrast(t,t+4))
+        feature    = cross − 0.5 * (intra_pre + intra_post)
+    Unvoiced mask = vp<0.5 on cached feat_contrast + feat_vp. ZERO new
+    librosa calls, ZERO new caches. Edge guard (t-4<0 or t+4>duration
+    or any sub-window unvoiced-mask empty or any norm underflow) → 0.0.
+    FEATURE_NAMES 80→81 forces retrain via US-505 sha gate.
+
+(b) WHY this over recent failures. d4d35b1 (detector p_splice margin
+    filter) regressed all three domains (0.287) — catastrophic signal
+    the detector-side axis is dangerous without FP position data.
+    8170784 voiced_chroma 2nd-order landed 0.494 explicitly citing
+    fallback to wider windows or ratio form, NOT mask inversion. All
+    four prior 2nd-order attempts used voiced or all-frame masks; the
+    unvoiced-mask companion remains untried across every content axis.
+    spec_contrast is the correct content choice: (i) d290101 proved
+    spec_contrast peak-RATIO is phoneme-stable (english improved
+    0.889→0.897 at 3s gaps) so unvoiced spec_contrast on speech does
+    not carry the cepstral envelope drift that broke c5040d7 voiced
+    MFCC. (ii) 7972a98 spec_contrast asymmetry remains a keep — axis
+    is singing-productive. (iii) 26a3687 all-frame spec_contrast
+    2nd-order regressed because voiced+unvoiced mixing on the cross
+    window overshot the voiced-dominated intra sub-windows; masking
+    to unvoiced-only equalizes both.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Master bus
+    compressor + limiter + drum-bus EQ + reverb tail are FROZEN within
+    one song. Unvoiced frames are dominated by drums / cymbals / decay
+    tail / ambient noise — all mastering-shaped, chord-invariant. 2s
+    unvoiced-mean spec_contrast sits at stable per-band peak/valley
+    baseline across every 2s slice in the chord cycle. intra_pre ≈
+    intra_post ≈ cross ≈ 0.02-0.06. feature ≈ 0.04 − 0.04 ≈ 0 silent,
+    FP NOT boosted. Real cross-song splice: pre 4s unvoiced reflects
+    song A mastering (intra_pre ≈ 0.02-0.04 self-consistent), post 4s
+    unvoiced reflects song B (intra_post ≈ 0.02-0.04 self-consistent),
+    cross captures A→B mastering jump (different drum kit + different
+    limiter + different master EQ → per-band peak/valley shifts
+    0.20-0.45). feature ≈ 0.30 − 0.03 = +0.27 STRONGLY POSITIVE.
+
+    Speech self-gating. Unvoiced in speech = fricatives + plosives +
+    silence. spec_contrast peak-RATIO is phoneme-stable per d290101
+    so per-phoneme variation is small compared to register/recording
+    continuity. 2s unvoiced-mean across ~3-5 consonants + silence
+    averages to a within-recording mastering signature; 4s-mean
+    samples ~6-10 consonants giving the SAME mastering signature.
+    intra_pre, intra_post, cross all land in ~0.04-0.08 → feature ≈
+    0 across non-splice speech positions → GBM low per-domain SHAP on
+    english/korean → functionally invisible on speech.
+
+    Orthogonal. NOT 9064eec (all-frame MFCC); NOT 26a3687 (all-frame
+    spec_contrast); NOT c5040d7 (voiced MFCC 2nd-order); NOT 8170784
+    (voiced chroma 2nd-order); NOT 7972a98 (1st-order voiced/unvoiced
+    paired-diff, no intra baseline); NOT e7ca9eb (voiced spec_contrast
+    single-mask); NOT any 1D-scalar / F0 / ZCR / bandwidth / rolloff /
+    flatness variant; NOT 8fc7169 voicing transition rate; NOT 60196aa
+    or d4d35b1 detector post-filter. FIRST unvoiced-mask 2nd-order
+    feature; FIRST 2nd-order feature masked to the MASTERING-DOMINATED
+    frame population.
+
+    Blast radius. Pure features.py change — 1 new block (~55 lines
+    fusing unvoiced _masked_mean with 26a3687-style intra/cross on
+    7-dim contrast vector) + 1 FEATURE_NAMES append + 2 assert bumps
+    (80→81) + 1 call in extract_features. ZERO new caches, ZERO new
+    librosa calls. Per-t cost: 6 slices + 6 unvoiced-masked means on
+    7-dim vectors + 3 cosines + 2 subtractions + 1 average, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing unchanged (unvoiced mask too sparse at
+    2s sub-windows on singing — quiet sustained-vocal moments have
+    almost no unvoiced frames and trigger sentinel 0.0 exactly where
+    chord-cycle FPs live) → widen to ±6s / 3s sub-windows so even
+    sparse unvoiced frames average to stable means. (2) Speech
+    regresses (cross > intra because 4s unvoiced-mean samples a
+    different consonant distribution than 2s sub-means) → tighten
+    to median instead of mean (robust to consonant-count imbalance).
+    (3) combined matches 0.490700 identical-streak → retrain gate
+    still broken for this sha bump; escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 56+
+    iterations — cannot verify the 3 singing FPs' unvoiced-frame
+    density at ±4s window (if they sit in sustained-vocal-only
+    regions, unvoiced mask empties and feature sentinels silently).
+    (ii) SHAP rollup STILL empty for 14 keeps — cannot verify the
+    spec_contrast 2nd-order axis has measurable GBM uptake even on
+    synthetic discrimination. (iii) d4d35b1's catastrophic 0.287
+    outcome was not diagnosed with dense-p_splice histograms — is
+    p_splice truly near-binary (0.99+ saturated) or does it have
+    dynamic range below 0.9? Affects every detector-side hypothesis.
+    (iv) 99081f5 4/16 capacity ghost status unclear at HEAD.
+
+(e) Wrapper enhancements. Three unchanged highest-priority requests
+    across 56+ iterations:
+    (1) CLEAN_FP_POSITIONS JSON block in CURRENT STATE — per-FP
+    (domain, file, t_sec, p_splice, p_splice_local_median_3s,
+    dsp_phase_z, dsp_t2_z, dsp_cpe_z, chunk_duration_s,
+    voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry,
+    voiced_fraction_in_pm4s, unvoiced_fraction_in_pm4s, top-5 |SHAP|).
+    Per-FP unvoiced-mask-density would decide mask-based 2nd-order
+    hypotheses data-driven instead of theory-only.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps; without per-
+    feature attribution the axis pick remains theory-only.
+    (3) DENSE-P_SPLICE HISTOGRAM per chunk in diagnostic log —
+    would isolate whether detector-side margin/rank filters are
+    geometrically viable OR whether p_splice is saturated at 0.99+
+    making all margin-based filters meaningless. d4d35b1's
+    catastrophic outcome amplifies this need.
+
