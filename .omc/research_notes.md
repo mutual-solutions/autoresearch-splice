@@ -5018,3 +5018,130 @@ per-domain: combined_english=0.888889 combined_korean=0.573016 combined_singing=
     bug — if commit subject starts "REVERT" + names prior-
     discarded SHA, treat exact-match as KEEP.
 
+## 2026-04-20T20:22:22+09:00 — 6c6c254 (discard, combined=0.542020)
+subject: add voiced_unvoiced_spec_contrast_asymmetry_far_balanced (FEATURE_NAMES 80->81) -- spec_contrast analog of dde4135 MFCC balanced. pre[t-2,t] post[t+4,t+6] (4s gap, 2s balanced spans). Combines d49284c's singing-winning 4s gap with 1eda8e3 NEAR's proven balanced-span speech self-gating, on d290101's proven speech-safe spec_contrast axis. Reuses feat_contrast + feat_vp + feat_audio/sr, ZERO new librosa calls, ZERO new caches. Edge guard t-2<0 OR t+6>duration_s returns sentinel 0.0. FIRST 4s-gap + 2s-balanced-span geometry on spec_contrast; cited explicit fallback from dde4135(c)(2) and 88adb49(c)(1). Mechanism on 3 singing chord-cycle FPs: 4s gap reaches 2-3 chord cycles past splice; mastering frozen within-song -> unvoiced_dist small; voiced 2s-averaged -> voiced_dist small -> asymmetry ~0 silent. Cross-song: post firmly inside new mastering chain -> unvoiced LARGE, voiced moderate -> asymmetry POSITIVE. Speech self-gating: spec_contrast peak-RATIO phoneme-stable per d290101; balanced 2s spans narrower than 88adb49's 4s post (which over-smoothed korean 0.667->0.573) keep mastering statistics local. Orthogonal: NOT 7972a98 NEAR, NOT d290101 3s/3s, NOT 177d641 1s gap, NOT 88adb49 4s/4s asymmetric, NOT dde4135 MFCC content, NOT any MFCC variant, NOT mask family. Pure features.py change -- 1 new block (~55 lines) + FEATURE_NAMES append + 2 assert bumps (80->81) + 1 call. Per-t cost: 4 slices + 4 masked means + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms. Smoke: len(FEATURE_NAMES)==81, last name correct, edge guards t-2<0 and t+6>duration return 0.0, synthetic splice-crossing asymmetry 0.083 vs within-source 0.033 (2.5x), idempotent, all 81 features finite.
+per-domain: combined_english=0.850000 combined_korean=0.614706 combined_singing=0.304762
+
+# 2026-04-20 — hypothesis: add voiced_unvoiced_spec_contrast_asymmetry_far_balanced (FEATURE_NAMES 80 → 81)
+
+(a) HYPOTHESIS. Pure `splice/features.py` add — BALANCED-SPAN FAR-gap
+    asymmetry on the spec_contrast content axis.
+    pre=[t-2, t], post=[t+4, t+6] (4s gap, 2s spans balanced). Same
+    paired-difference template as 7972a98 kept NEAR. Reuses cached
+    feat_contrast + feat_vp + feat_audio/sr for duration — ZERO new
+    librosa calls, ZERO new caches. Edge guard t-2<0 OR t+6>duration_s
+    returns sentinel 0.0. FEATURE_NAMES 80→81 forces wrapper auto-retrain
+    via US-505 sha gate.
+
+(b) WHY this over recent failures. Combines two empirically-proven pieces
+    into a genuinely untried geometry on an untried content-axis cell:
+    - d49284c MFCC FAR (4s gap, 4s post span asymmetric): THE ONLY recent
+      feature to LIFT singing (0.345→0.354). The 4s-gap chord-cycle
+      averaging is the proven singing mechanism.
+    - d290101 spec_contrast FAR (3s gap, 3s span): english IMPROVED
+      0.889→0.897 proving spec_contrast is intrinsically speech-safe WITH
+      a gap (MFCC isn't — phoneme-correlated).
+    - dde4135 MFCC balanced (4s gap, 2s spans): regressed speech (english
+      0.854, korean 0.614) — MFCC phoneme sensitivity breaks regardless
+      of span balance; singing 0.291.
+    - 88adb49 spec_contrast 4s gap + 4s asymmetric span: english 0.889
+      preserved, singing 0.329, korean 0.573 — 4s post over-smooths
+      post-splice mastering mean and destabilizes korean.
+
+    Balanced 2s spans on spec_contrast at 4s gap is the cited explicit
+    fallback from dde4135(c)(2) and 88adb49(c)(1). It combines:
+    (i) 4s gap — d49284c's singing-lift mechanism (chord-cycle averaging
+    requires ~2 chord cycles of gap past splice);
+    (ii) 2s balanced spans — matches 1eda8e3 NEAR's proven clean
+    paired-differencing self-gating (pre/post sample equal-width regions);
+    (iii) spec_contrast content — d290101 proved speech-safe with gaps,
+    and mastering-fingerprint targets the 3 chord-cycle singing FPs
+    where mastering stays frozen intra-song and jumps cross-song.
+
+    Mechanism on 3 surviving singing FPs. post=[t+4,t+6] samples 4-6s
+    past splice ≈ 2-3 chord cycles past (pop period ~2s). Chord cycle:
+    mastering frozen, drum kit fixed → unvoiced_dist small; voiced may
+    shift on new vowel but averaged over 2s stabilizes → voiced_dist
+    small → asymmetry near zero, feature silent, FP not boosted. Cross-
+    song splice: pre 2s song A mastering baseline, post 2s firmly inside
+    song B new mastering chain (different drum-bus compressor + master
+    EQ + limiter threshold) → unvoiced_dist LARGE, voiced moderate →
+    asymmetry strongly POSITIVE, TP boosted.
+
+    Speech self-gating preserved: spec_contrast peak-to-valley RATIO is
+    phoneme-stable per d290101 (3s gap english IMPROVED). 2s balanced
+    spans are narrower than 88adb49's 4s post which over-smoothed korean's
+    unvoiced mean — 2s keeps mastering statistics closer to local
+    baseline. Voiced+unvoiced peak-ratio both co-vary with mastering
+    continuity, difference near zero on same-recording speech → GBM low
+    per-domain SHAP on english/korean.
+
+    Why this over alternatives. (1) Repeat 4s/4s asymmetric (88adb49) —
+    already tried, singing 0.329 + korean regression. (2) Shrink d290101
+    to 2s post (3s gap 2s span) — less chord-cycle averaging than 4s gap
+    which was minimum to lift singing on d49284c. (3) Wider gap (5s/2s)
+    — extrapolates past d49284c's proven 4s, risky on speech. (4) F0
+    jitter asymmetry — unvoiced lacks F0, template doesn't apply.
+
+    Classifier hyperparam axis verifiably broken (5 train_classifier.py-
+    only iterations IDENTICAL 0.490700; 920dcdb US-505 coverage fix just
+    landed but I cannot verify from inside claude whether it's active on
+    this iteration). Mask family exhausted (percussive/harmonic all
+    regressed). Time-scale variation on voiced/unvoiced asymmetry is the
+    provably-productive axis (1eda8e3 +0.054, 7972a98 +0.005).
+
+    Orthogonal: NOT 7972a98 (NEAR 0s gap); NOT d290101 (spec_contrast
+    3s gap 3s span); NOT 177d641 (spec_contrast 1s gap); NOT 88adb49
+    (spec_contrast 4s gap 4s asymmetric span — this is 2s balanced);
+    NOT d49284c (MFCC content); NOT dde4135 (MFCC 4s gap 2s balanced —
+    this is spec_contrast); NOT ff88b22/b7dc8bf/78513fb (MFCC variants);
+    NOT 1eda8e3/f4148cc/0c3bf76 (NEAR); NOT any percussive/harmonic/
+    tonnetz/single-mask variant. FIRST 4s-gap + 2s-balanced-span geometry
+    on the spec_contrast axis. Pure features.py change — 1 new block
+    (~55 lines template-cloned from _block_voiced_unvoiced_spec_contrast_
+    asymmetry with edge guard + 4s gap + balanced 2s spans) + 1
+    FEATURE_NAMES append + 2 assert bumps (80→81) + 1 call. ZERO new
+    caches, ZERO new librosa calls. Per-t cost: 4 slices + 4 masked means
+    + 2 cosines on 7-dim vectors + 1 subtraction, sub-ms.
+
+(c) IF THIS FAILS. (1) Singing flat / speech preserved (2s post too
+    narrow — 88adb49's 4s post was needed for statistical robustness of
+    post-splice mastering mean) → fallback to MID-adjacent spec_contrast
+    (pre[t-3,t] post[t,t+3], 0s gap, 3s balanced — untried time scale
+    on spec_contrast). (2) Singing regresses like d290101 (2s post misses
+    chord-averaging entirely; spec_contrast FAR family fundamentally
+    doesn't discriminate chord-cycle on singing) → pivot to voiced-only
+    F0 statistical features (voiced_f0_percentile_shift — pitch contour
+    is recording-dependent not mastering-dependent, genuinely untried
+    content axis). (3) combined matches 0.490700 EXACTLY → wrapper
+    retrain-skip bug extends past hyperparam sites despite 920dcdb fix;
+    escalate.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS STILL absent after 44+
+    iterations — cannot verify whether the 3 singing FPs sit within 6s
+    of file ends (t+6>duration fires edge guard silencing feature).
+    Every FAR-window hypothesis remains theory-calibrated. (ii) SHAP
+    rollup STILL "no keeps yet — rollup empty" for 7972a98 despite 14
+    keeps — rollup writer broken, no per-feature attribution. (iii)
+    920dcdb US-505 coverage fix just landed (last commit) but no on-line
+    signal that train_classifier.py-only retrains are now firing
+    correctly; cannot verify without a hyperparam-only test iteration.
+    (iv) 99081f5 capacity ghost in-tree (max_depth=4, max_leaf_nodes=16)
+    — feature delta clean; absolute comparison mixes with ghost.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON block in CURRENT
+    STATE — persistent 44+-iteration blocker. Per-FP (domain, file,
+    t_sec, label_id, p_splice, dsp_phase_z, dsp_t2_z, dsp_cpe_z,
+    chunk_duration_s, voiced_unvoiced_mfcc_asymmetry,
+    voiced_unvoiced_spec_contrast_asymmetry, top-5 |SHAP|). Single block
+    transforms every FAR-window / gap-geometry hypothesis from theory-
+    calibrated bet to data-driven decision. (2) SHAP ROLLUP REPAIR —
+    rollup empty for 14 keeps is a long-standing bug; without per-
+    feature attribution claude picks "theoretically orthogonal" not
+    "what signal GBM actually uses." (3) US-505 COVERAGE ASSERTION —
+    920dcdb extended the sha-gate; a wrapper log line at retrain
+    decision point ("train_classifier.py hash delta detected → auto-
+    retraining" or "no hash delta → skip retrain") would close the
+    feedback-loop verification gap so claude can confirm hyperparam
+    iterations now force retrain.
+
