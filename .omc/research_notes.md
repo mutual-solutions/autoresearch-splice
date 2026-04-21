@@ -3579,3 +3579,116 @@ per-domain: combined_english=0.819277 combined_korean=0.397297 combined_singing=
     regularization knobs the way GBM_THRESHOLD / GBM_MIN_SEP_S /
     ANALYSIS_STRIDE_S have explicit "tried kept/failed" tracking.
 
+## 2026-04-21T10:01:57+09:00 — f6e05a7 (discard, combined=0.443084)
+subject: enable HistGBM early_stopping=True validation_fraction=0.15 n_iter_no_change=15 tol=1e-4 (pure train_classifier.py hyperparameter change, no feature or detector edit) -- EXPLICIT CITED FALLBACK from 055285f(c)(3) after max_bins 127 discard: 'pivot to early_stopping + validation_fraction (genuinely untouched classifier axis: built-in overfitting guard rather than direct regularization)'. FIRST automatic-overfit-guard experiment in post-HistGBM classifier history. Since fcb8f4e min_samples_leaf 20->40 keep, 9 consecutive discards on 9 different axes (a23ab28 music-gate, 1cded37 cluster-count, e4a9c18 sample_weight, 7b49d40 time-stretch, ca2aa2f HPSS, 425f6d6 voicing-gated threshold, f1e91ec l2 3.0, 79317c7 lr 0.05, 055285f max_bins 127) -- every direct-regularization classifier-hyperparameter knob explored. Default HistGBM early_stopping='auto' disables when samples <10k (our ~2000 rows qualify) so currently GBM always trains all 300 iterations regardless of validation divergence. Forcing early_stopping=True with tol=1e-4 (default 1e-7 effectively never triggers) adds AUTOMATIC overfit guard picking iteration count data-driven rather than hard-capping at 300. Mechanism on 3 surviving singing chord-cycle FPs: GBM likely overfits to chord-cycle-specific feature-space pockets in later iterations (past ~150-200 boosting rounds), carving tight leaves separating 3 FPs from nearby not_splice training rows via bin-level splits. Validation loss on held-out 15%% split plateaus earlier than training loss (classic overfitting signature). Early stopping at n_iter_no_change=15 tol=1e-4 cuts training at knee ~150-220 iter BEFORE GBM carves overfit leaves. Marginal FPs at p_splice ~0.983 drop toward baseline GBM at shallower boosting depth. Confident TPs (p_splice >=0.99) decided by first ~50-100 trees where strongest discriminators compound -- val loss still improving there so those trees preserved. Fundamentally different from l2 (leaf log-odds shrinkage ALL leaves uniformly); min_samples_leaf (structural leaf-size floor globally); max_bins (input quantization globally); lr (per-tree contribution scalar uniformly). early_stopping TERMINATES training adaptively based on data-observed divergence rather than globally reshaping decision surface. Why 0.15/15/1e-4: validation_fraction=0.15 over default 0.1 because training set small (~2000 rows) -- 0.15 gives ~300-row val statistically meaningful but leaves ~1700 training; n_iter_no_change=15 slightly more permissive than default 10 to avoid premature stopping from noisy per-iter val loss; tol=1e-4 empirical regime (default 1e-7 effectively never triggers within 300 iter); three values jointly produce genuine operational early stopping not no-op. Orthogonal: NOT features.py (FEATURE_NAMES stable 80, features.py sha unchanged); NOT detector.py (no DSP gate/threshold/post-filter); NOT any prior hyperparameter tweak -- early_stopping/validation_fraction/n_iter_no_change/tol GENUINELY untouched knobs in classifier history. Blast radius: 4 new kwargs in HistGradientBoostingClassifier() constructor. Training runtime slightly faster on stopping (typically ~200 iter instead of 300). Inference cost lower (smaller forest if triggered) or unchanged (300 iter if not triggered). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: make_pipeline() constructs Pipeline with early_stopping=True validation_fraction=0.15 n_iter_no_change=15 tol=0.0001 confirmed via named_steps[clf] introspection, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 learning_rate=0.07 l2_regularization=2.0 min_samples_leaf=40), FEATURE_NAMES stable at 80.
+per-domain: combined_english=0.732530 combined_korean=0.395833 combined_singing=0.300000
+
+# 2026-04-21 — hypothesis: enable HistGBM early_stopping + validation_fraction
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change — enable
+    HistGradientBoostingClassifier built-in early stopping via
+    `early_stopping=True, validation_fraction=0.15, n_iter_no_change=15,
+    tol=1e-4`. All other hyperparameters stable (max_iter=300, max_depth=5,
+    max_leaf_nodes=32, learning_rate=0.07, l2_regularization=2.0,
+    min_samples_leaf=40). FEATURE_NAMES stable at 80. US-505b sha gate
+    auto-retrains. EXPLICIT CITED FALLBACK from 055285f(c)(3) after
+    max_bins 127 discard: "pivot to early_stopping + validation_fraction
+    (genuinely untouched classifier axis: built-in overfitting guard
+    rather than direct regularization)".
+
+(b) WHY over recent failures. Since fcb8f4e min_samples_leaf 20→40 keep,
+    9 consecutive discards on 9 different axes (a23ab28 music-gate,
+    1cded37 cluster-count, e4a9c18 sample_weight, 7b49d40 time-stretch,
+    ca2aa2f HPSS percussive MFCC, 425f6d6 voicing-gated threshold,
+    f1e91ec l2 3.0, 79317c7 lr 0.05, 055285f max_bins 127). Every
+    classifier hyperparameter knob explored (leaf-size-floor, leaf
+    log-odds shrinkage, input quantization, per-tree contribution,
+    tree structure capacity, ensemble size, loss-gradient bias,
+    training-data diversity) — all either kept or discarded. The ONE
+    genuinely untouched classifier-training axis is AUTO-REGULARIZATION
+    VIA EARLY STOPPING. Default HistGBM behavior: `early_stopping='auto'`
+    disables when samples <10k (our ~2000 rows qualify) so currently
+    GBM always trains all 300 iterations regardless of validation
+    divergence. Forcing early_stopping=True with tol=1e-4 (default
+    1e-7 effectively never triggers) adds AUTOMATIC overfit guard
+    that picks iteration count data-driven rather than hard-capping
+    at 300.
+
+    Mechanism on 3 surviving singing chord-cycle FPs: GBM likely
+    overfits to chord-cycle-specific feature-space pockets in later
+    iterations (past ~150-200 boosting rounds), carving tight leaves
+    that separate 3 specific FPs from nearby not_splice training
+    rows via bin-level splits. Validation loss on held-out 15% split
+    plateaus earlier than training loss (classic overfitting
+    signature). Early stopping at n_iter_no_change=15, tol=1e-4
+    cuts training at the knee — ~150-220 iterations instead of 300 —
+    BEFORE GBM carves these overfit leaves. Marginal FPs at p_splice
+    ~0.983 drop toward baseline GBM predictions at shallower boosting
+    depth. Confident TPs (p_splice ≥0.99) were decided by the first
+    ~50-100 trees where the strongest discriminators compound;
+    validation loss is still improving there so those trees are
+    preserved.
+
+    Fundamentally different from l2 (leaf log-odds shrinkage —
+    shrinks ALL leaves uniformly); min_samples_leaf (structural
+    leaf-size floor — disallows small leaves globally); max_bins
+    (input quantization — coarsens splits globally); lr (per-tree
+    contribution scalar — smooths every tree uniformly).
+    early_stopping is the only axis that TERMINATES training
+    adaptively based on data-observed divergence rather than globally
+    reshaping the decision surface.
+
+    Orthogonal. NOT any features.py addition (FEATURE_NAMES stable 80,
+    features.py sha unchanged). NOT detector.py (no DSP gate/threshold/
+    post-filter). NOT any prior hyperparameter tweak — early_stopping /
+    validation_fraction / n_iter_no_change / tol are GENUINELY
+    untouched knobs in classifier history. FIRST automatic-overfit-
+    guard experiment in the post-HistGBM classifier history.
+
+    Why 0.15 / 15 / 1e-4 specifically. validation_fraction=0.15 chosen
+    over default 0.1 because our training set is small (~2000 rows) —
+    0.15 gives ~300-row validation sample statistically meaningful
+    but leaves ~1700 rows training. n_iter_no_change=15 slightly more
+    permissive than default 10 to avoid premature stopping from noisy
+    per-iter validation loss. tol=1e-4 is the empirical regime for
+    GBM early stopping; default 1e-7 means effectively never triggers
+    within 300 iterations. These three values jointly produce genuine
+    operational early stopping, not a no-op. Room to bisect all three
+    if the direction is right but magnitude wrong.
+
+(c) IF THIS FAILS. (1) Singing unchanged — HistGBM's random
+    train/val split leaks file groups between train+val so validation
+    loss is over-optimistic and stopping doesn't trigger → lower tol
+    to 1e-5 or raise n_iter_no_change to 25. (2) Speech regresses —
+    0.15 val split removed critical speech training rows; early
+    stopping at ~180 iterations drops confident multi-feature TPs →
+    bisect validation_fraction down to 0.1 and keep n_iter_no_change=15.
+    (3) All domains move correlated down — early stopping is globally
+    wrong lever at this capacity → pivot to SCALER swap: replace
+    StandardScaler with RobustScaler (quantile-based, resistant to
+    outlier features, genuinely untouched preprocessing axis).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after
+    75+ iterations — cannot verify whether 3 singing FPs arise from
+    overfit leaves carved in late boosting iterations vs stable-
+    throughout-training signal. If FPs persist at p_splice=0.983
+    even after 50 trees, early stopping won't help. (ii) SHAP rollup
+    STILL empty for 14 keeps. (iii) Per-iteration OOF F1 or val loss
+    curve across 300 boosting steps NOT surfaced — would directly
+    tell whether validation loss plateaus around ~150-200 iter
+    (early stopping bites) or keeps improving to 300 (no-op).
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, gbm_predict_proba_vector,
+    gbm_n_iter_effective, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    top-5 |SHAP|). Would directly settle whether FPs arise from
+    late-iter overfitting vs early-iter mislearning and guide
+    early_stopping tolerance.
+    (2) SHAP ROLLUP REPAIR — rollup empty for 14 keeps.
+    (3) TRAINING LOSS CURVE SNAPSHOT in CURRENT STATE: per-iter
+    train_loss + val_loss (if early_stopping on) OR train_loss +
+    OOF F1 deltas across 50/100/200/300 iter checkpoints. Would
+    make every subsequent classifier-hyperparameter / early-stopping
+    tweak data-driven instead of theory-driven.
+
