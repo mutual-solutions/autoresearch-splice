@@ -3692,3 +3692,62 @@ per-domain: combined_english=0.732530 combined_korean=0.395833 combined_singing=
     make every subsequent classifier-hyperparameter / early-stopping
     tweak data-driven instead of theory-driven.
 
+## 2026-04-21T10:15:22+09:00 — c7ff141 (discard, combined=0.485147)
+subject: add HistGBM class_weight={0: 1.3, 1: 1.0, 2: 1.0} (pure train_classifier.py hyperparameter change, no feature or detector edit) -- FIRST class_weight experiment in classifier history; FIRST per-CLASS loss-gradient weighting. Since fcb8f4e keep (min_samples_leaf 20->40), 10 consecutive discards on 10 different axes (a23ab28 music-gate, 1cded37 cluster-count, e4a9c18 per-DATASET sample_weight catastrophic, 7b49d40 time-stretch, ca2aa2f HPSS, 425f6d6 voicing-gated threshold, f1e91ec l2 3.0, 79317c7 lr 0.05, 055285f max_bins 127, f6e05a7 early_stopping) -- every direct-regularization classifier-hyperparameter knob (l2/lr/max_bins/min_samples_leaf/early_stopping/max_depth/max_iter) AND every feature.py/detector.py axis explored. sklearn HistGradientBoostingClassifier class_weight parameter (added in sklearn 1.2) has NEVER been explored. DIFFERENT from e4a9c18 per-DATASET sample_weight (weighted rows by DOMAIN: singing 2x catastrophic) -- this weights rows by CLASS LABEL (not_splice 1.3x, hard_cut + crossfade 1.0x). class_weight is the ONE untouched loss-gradient axis that specifically targets the FP-vs-TP trade-off by class rather than by domain. Cited f6e05a7(c)(3) RobustScaler fallback is effectively no-op for HistGBM (bin-based, quantile-binning invariant to monotonic scaling transforms). Mechanism on 3 surviving singing chord-cycle FPs: upweight not_splice class 1.3x in loss -> GBM pushes harder to correctly classify negatives -> positive log-odds lowered globally. Marginal singing chord-cycle FPs at p_splice ~0.983 (log-odds ~4.06) lose ~20-30%% log-odds from class-loss weighting (1.3x weight compounds across 300 trees via class-imbalance adjusted loss gradient) -> drop below 0.982 threshold -> 3 singing FPs drop. Confident TPs (p_splice >0.99, log-odds >4.6) retain comfortable margin even after the class-loss penalty. Speech english 0.889 / korean 0.667 TPs sit at log-odds well above threshold with multi-feature tree support; 1.3x nudge on negatives minimally shifts them. Why 1.3 specifically: e4a9c18 used 2.0 per-dataset catastrophic, 1.3 is moderate conservative first step mirroring 4b1575e l2 1.0->2.0 (2x) and fcb8f4e min_samples_leaf 20->40 (2x) productive-keep magnitudes but smaller (class_weight acts more directly on loss gradient so smaller bump appropriate); bisection room to 1.2 if too aggressive or 1.5 if unchanged; class_weight='balanced' as automatic fallback. Orthogonal: NOT any features.py addition (FEATURE_NAMES stable 80, features.py sha unchanged); NOT detector.py (no DSP gate/threshold/post-filter); NOT e4a9c18 per-dataset sample_weight (different axis: by DOMAIN not by CLASS); NOT any l2/lr/max_bins/min_samples_leaf/max_depth/max_iter/early_stopping/augmentation. Blast radius: 1 new kwarg in make_pipeline(). Training runtime unchanged (class_weight is per-row loss scalar, negligible). Inference cost unchanged (same 300 trees). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 462 lines, make_pipeline() constructs Pipeline with class_weight={0: 1.3, 1: 1.0, 2: 1.0} confirmed via named_steps[clf].class_weight, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 learning_rate=0.07 l2_regularization=2.0 min_samples_leaf=40), FEATURE_NAMES stable at 80, sklearn 1.7.2 accepts class_weight param end-to-end (fit + predict_proba working on synthetic 3-class X/y).
+per-domain: combined_english=0.800000 combined_korean=0.473239 combined_singing=0.301613
+
+# 2026-04-21 — hypothesis: HistGBM class_weight={0: 1.3, 1: 1.0, 2: 1.0}
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    add `class_weight={0: 1.3, 1: 1.0, 2: 1.0}` to HistGradientBoostingClassifier
+    in make_pipeline(). Weights not_splice class 1.3x during loss computation,
+    making GBM more conservative on positive predictions. All other
+    hyperparameters stable. FEATURE_NAMES stable at 80. US-505b sha gate
+    forces auto-retrain.
+
+(b) WHY over recent failures. Since fcb8f4e min_samples_leaf 20→40 keep,
+    10 consecutive discards on 10 different classifier/feature/detector
+    axes. The sklearn HistGradientBoostingClassifier `class_weight`
+    parameter (added in sklearn 1.2) has NEVER been explored — genuinely
+    untouched axis. DIFFERENT from e4a9c18 per-DATASET sample_weight
+    (which weighted rows by DOMAIN: singing 2x catastrophic) — this
+    weights rows by CLASS label (not_splice 1.3x, hard_cut + crossfade
+    1.0x). Cited f6e05a7(c)(3) RobustScaler fallback is effectively
+    no-op for HistGBM (bin-based, scaling-invariant). Mechanism: loss
+    gradient penalizes misclassifying negatives 1.3x more → GBM pushes
+    harder to correctly classify negatives → positive log-odds lowered
+    globally. Marginal singing chord-cycle FPs at p_splice ~0.983
+    (log-odds ~4.06) lose ~20-30% log-odds from class-loss weighting
+    → drop below 0.982 threshold. Confident TPs (p_splice >0.99,
+    log-odds >4.6) retain margin. Factor 1.3 is conservative (e4a9c18
+    used 2.0 catastrophic; 1.3 is moderate, room to bisect to 1.2 or
+    1.5). Orthogonal to: every hyperparameter knob (l2, lr, max_bins,
+    min_samples_leaf, early_stopping, max_depth, max_iter), every
+    features.py experiment, every detector.py change, e4a9c18 per-dataset
+    weighting. FIRST class_weight experiment; FIRST per-CLASS loss-gradient
+    weighting.
+
+(c) IF THIS FAILS. (1) Korean regresses (0.667→0.5): 1.3 too aggressive
+    on the recall-limited domain → bisect to 1.2. (2) Singing unchanged
+    (chord-cycle FPs at p_splice >0.990 where class-weight bump doesn't
+    bite) → bisect up to 1.5 or try class_weight='balanced' which sklearn
+    computes automatically from class frequencies. (3) All domains drop
+    correlated (class_weight is globally wrong lever for current GBM
+    calibration) → pivot to monotonic_cst on known-direction features
+    (dsp_phase_z, dsp_t2_z, dsp_cpe_z monotonic-increasing on p_splice).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after
+    75+ iterations — cannot verify the 3 singing FPs sit at p_splice
+    in [0.982, 0.990] band where class_weight bump would bite. If at
+    0.995+, this doesn't help. (ii) SHAP rollup STILL empty for 14
+    keeps. (iii) Exact class-count distribution from training_manifest.json
+    not surfaced in CURRENT STATE — approximating not_splice:positive
+    as ~60:40 from file-type arithmetic but don't know exact effective
+    imbalance post-augmentation (pitch-shift adds singing clean negatives).
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON. (2) SHAP rollup
+    repair. (3) CLASS-COUNT SNAPSHOT from training_manifest.json:
+    not_splice/hard_cut/crossfade counts per domain post-augmentation,
+    in CURRENT STATE. Would make class_weight and sample_weight
+    hypotheses data-driven instead of theory-driven.
+
