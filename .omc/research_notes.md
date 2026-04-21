@@ -3341,3 +3341,126 @@ per-domain: combined_english=0.790123 combined_korean=0.443478 combined_singing=
     kept/failed per axis alongside GBM_*) so regularization-strength
     progression is visible like the primary-tunable frontier.
 
+## 2026-04-21T09:37:29+09:00 — 79317c7 (discard, combined=0.493616)
+subject: drop HistGBM learning_rate 0.07 -> 0.05 (pure train_classifier.py hyperparameter change, no feature or detector edit) -- FIRST learning_rate tweak in post-HistGBM classifier history; genuinely untouched axis. 99081f5 noted prior lr experiments (9f66d66 lr 0.1->0.05) were in OLD GradientBoostingClassifier pre-acba4aa HistGBM swap; post-swap lr stood at 0.07 through 40+ classifier iterations unchanged. THEORETICAL PAIRING with d1be6c3 keep: d1be6c3 bumped max_iter 200->300 (1.5x) but kept lr at 0.07. Canonical GBM trade-off is lr x max_iter ~= constant for equivalent total fit; natural co-tune 0.07 x 200/300 ~= 0.0467 ~= 0.05. lr=0.05 completes the capacity-plus-compensation arc that 4b1575e l2 1.0->2.0 (kept) started. ORTHOGONAL to every other knob: l2 shrinks leaf output log-odds (4b1575e kept, f1e91ec 3.0 discard); min_samples_leaf is tree-GEOMETRY leaf-size-floor (fcb8f4e 20->40); max_depth/max_leaf_nodes/max_iter are tree-STRUCTURE capacity; sample_weight is loss-gradient bias (e4a9c18 catastrophic); SINGING_AUG is training-data diversity (4e2941b kept, 7b49d40 discard). lr is the per-TREE CONTRIBUTION scalar -- fundamentally different regularization mechanism. Mechanism on 3 surviving singing chord-cycle FPs: each of 300 trees contributes log-odds*0.07 currently; marginal FPs at p_splice ~0.983 (log-odds ~4.06) built by ~60-80 trees voting positively. Lowering lr to 0.05 (28.6%% reduction per tree) smooths log-odds landscape: chord-cycle-edge trees contribute proportionally less, while TP-voting trees compound across 300 iterations via law of large numbers so aggregate remains robust. Marginal FPs drop below 0.982; confident TPs (p_splice >=0.99, log-odds >=4.6) retain clearance via higher per-tree margin x many-tree support. DIFFERENT geometry than l2 (hits small-hessian leaves specifically) and DIFFERENT from min_samples_leaf (disallows small-leaf carve-outs structurally). Speech english 0.889 / korean 0.667 sit at log-odds well above threshold; multi-feature signatures with many-tree agreement keep speech predictions well above 0.982 even with 28.6%% per-tree shrinkage. Why 0.05 specifically: d1be6c3 1.5x max_iter pairs with lr/1.5=0.047, 0.05 nearest clean decimal; standard sklearn HistGBM progression {0.01, 0.05, 0.1}; bisection room to 0.06 if too aggressive or 0.03 if unchanged. Not 0.03 (too aggressive, drops TPs); not 0.06 (too small step to shift marginal FPs). Orthogonal: NOT fcb8f4e min_samples_leaf (leaf-size-floor); NOT 4b1575e/f1e91ec l2 (leaf log-odds); NOT d1be6c3 max_depth/max_leaf_nodes/max_iter (tree structure and ensemble size); NOT e4a9c18 sample_weight (loss-gradient bias); NOT 4e2941b/7b49d40 augmentation; NOT any features.py addition (FEATURE_NAMES stable 80, features.py sha unchanged); NOT any detector.py/DSP-gate/post-filter. FIRST post-HistGBM learning_rate experiment. Blast radius: 1 float literal in make_pipeline(). Training runtime: lr change alone doesn't affect per-tree cost; max_iter=300 fixed cap. Inference cost unchanged (same 300 trees). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 460 lines, make_pipeline() constructs Pipeline with learning_rate=0.05 confirmed via named_steps[clf].learning_rate, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 l2_regularization=2.0 min_samples_leaf=40), FEATURE_NAMES stable at 80.
+per-domain: combined_english=0.814815 combined_korean=0.489394 combined_singing=0.301613
+
+# 2026-04-21 — hypothesis: drop HistGBM learning_rate 0.07 → 0.05
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    lower `HistGradientBoostingClassifier.learning_rate` from 0.07 to
+    0.05 at make_pipeline(). All other hyperparameters stable
+    (max_iter=300, max_depth=5, max_leaf_nodes=32, l2_regularization=2.0,
+    min_samples_leaf=40). FEATURE_NAMES stable at 80. US-505b
+    train_classifier.py sha gate forces auto-retrain.
+
+(b) WHY over recent failures. learning_rate is the single truly
+    UNTOUCHED HistGBM hyperparameter axis in recent history. 99081f5
+    explicitly noted prior lr experiments (9f66d66 lr 0.1→0.05) were
+    ALL in OLD GradientBoostingClassifier context pre-acba4aa
+    HistGBM swap — post-swap lr has stood at 0.07 through 40+
+    classifier iterations. Every recent keep/discard touched a
+    DIFFERENT axis: d1be6c3 capacity (max_depth 4→5 / max_leaf 16→32
+    / max_iter 200→300, kept), 4e2941b pitch-shift aug expansion
+    (kept), e4a9c18 per-dataset sample_weight (catastrophic), 7b49d40
+    time-stretch aug (discard), 4b1575e l2 1.0→2.0 (kept), f1e91ec
+    l2 2.0→3.0 (discard), fcb8f4e min_samples_leaf 20→40 (in-tree).
+    Output-shrinkage (l2), leaf-geometry (min_samples_leaf),
+    tree-structure capacity (max_depth/max_leaf), ensemble size
+    (max_iter), and loss-gradient bias (sample_weight) are all
+    explored. learning_rate is the per-TREE CONTRIBUTION scalar —
+    orthogonal to every other knob.
+
+    Theoretical pairing with d1be6c3. d1be6c3 bumped max_iter 200→
+    300 (1.5x) but kept lr at 0.07. The canonical GBM trade-off is
+    lr × max_iter ≈ constant for equivalent total fit; bumping
+    max_iter without reducing lr leaves the ensemble slightly
+    over-confident. Natural co-tune: 0.07 × 200/300 ≈ 0.0467 ≈ 0.05.
+    So lr=0.05 completes d1be6c3's capacity-plus-compensation arc
+    that 4b1575e's l2 bump started.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. Each of the
+    300 boosting trees currently contributes log-odds × 0.07 to the
+    ensemble prediction. Marginal FPs at p_splice ≈ 0.983 (log-odds
+    ~4.06) are built up by ~60-80 trees voting positively with
+    average confidence. Lowering lr to 0.05 (28.6% reduction per
+    tree) SMOOTHS the final log-odds landscape: trees that voted
+    strongly-positive on chord-cycle edge cases now contribute
+    proportionally less, while trees voting on many TPs compound
+    across 300 iterations so their aggregate contribution remains
+    robust (law of large numbers on many weak learners). Net:
+    marginal FPs drop below 0.982 threshold; confident TPs
+    (p_splice ≥ 0.99, log-odds ≥ 4.6) retain clearance because
+    their log-odds are supported by more trees with higher margin
+    per tree. DIFFERENT geometry than l2 (which hits small-hessian
+    leaves specifically) and DIFFERENT from min_samples_leaf
+    (which disallows small-leaf carve-outs structurally). lr
+    affects EVERY tree's contribution uniformly.
+
+    Speech english 0.889 / korean 0.667 sit at log-odds well above
+    threshold (speech splice TPs have multi-feature signatures
+    that many of 300 trees agree on). A 28.6% lr drop reduces each
+    tree's contribution but 300 trees × many-feature support
+    means speech predictions stay well above 0.982. Pitch-shift
+    augmentation (4e2941b) and l2=2.0 regularization (4b1575e)
+    already bias the model toward smoother decision surface; lr
+    drop extends that direction per-tree.
+
+    Why 0.05 specifically. d1be6c3's max_iter 1.5x bump pairs with
+    lr ÷ 1.5 = 0.047; 0.05 is the nearest clean decimal. Standard
+    HistGBM progression from sklearn docs {0.01, 0.05, 0.1};
+    bisection room to 0.06 if too aggressive or 0.03 if unchanged.
+    Not 0.03 (too aggressive — would drop TPs); not 0.06 (too
+    small a step to shift marginal FPs); 0.05 is the sweet spot.
+
+    Orthogonal. NOT fcb8f4e min_samples_leaf (leaf-size-floor tree
+    structure); NOT 4b1575e / f1e91ec l2_regularization (leaf log-
+    odds shrinkage); NOT d1be6c3 max_depth / max_leaf_nodes /
+    max_iter (tree-structure capacity and ensemble size); NOT
+    e4a9c18 sample_weight (loss-gradient per-dataset bias); NOT
+    4e2941b / 7b49d40 augmentation (training-data diversity). NOT
+    any features.py addition (FEATURE_NAMES stable at 80,
+    features.py sha unchanged). NOT any detector.py edit (no
+    DSP / threshold / post-filter). FIRST learning_rate tweak in
+    post-HistGBM classifier history; FIRST per-tree-contribution
+    scalar axis experiment.
+
+    Blast radius. 1 float literal in make_pipeline(). Training
+    runtime: lr change alone doesn't affect per-tree cost; total
+    convergence may be slower but max_iter=300 is fixed cap.
+    Inference cost unchanged (same 300 trees). US-505b
+    train_classifier.py sha gate auto-retrains from scratch.
+
+(c) IF THIS FAILS. (1) Singing unchanged — 0.05 too conservative
+    to shift chord-cycle FP log-odds past threshold → bisect down
+    to 0.04 or 0.03. (2) Speech regresses — 0.05 over-shrinks
+    speech TP log-odds via weaker per-tree voting → bisect up to
+    0.06 as safe middle. (3) Correlated all-domain drop — lr is
+    globally wrong lever for current max_iter → pivot to max_bins
+    255 → 127 (histogram granularity, fundamentally different
+    regularization axis: input-quantization rather than
+    prediction-shrinkage).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent
+    after 75+ iterations — cannot verify the 3 singing FPs sit in
+    the [0.982, 0.990] p_splice band where lr drop would bite. If
+    they sit at 0.995+, lr adjustments at 0.07→0.05 scale don't
+    help. (ii) SHAP rollup STILL empty for 14 keeps. (iii)
+    Per-iteration OOF F1 on hard_cut / crossfade classes
+    pre-versus-post lr drop not surfaced — would directly tell
+    whether lr drop helped or hurt class-level discrimination
+    before eval commits.
+
+(e) Wrapper enhancements. (1) CLEAN_FP_POSITIONS JSON in CURRENT
+    STATE per-FP (domain, file, t_sec, p_splice,
+    gbm_raw_log_odds, dsp_phase_z/t2_z/cpe_z, voicing_fraction,
+    top-5 |SHAP|). Would make every lr / l2 / min_samples_leaf /
+    max_depth bisection data-driven rather than theory-driven.
+    (2) SHAP ROLLUP REPAIR — empty for 14 keeps; would let me see
+    which features drive FPs vs TPs. (3) CLASSIFIER HYPERPARAMETER
+    FRONTIER SNAPSHOT in CURRENT STATE (max_iter / max_depth /
+    max_leaf_nodes / learning_rate / l2_regularization /
+    min_samples_leaf tried kept/failed per axis alongside GBM_*)
+    so regularization knobs have visible exhaustion tracking like
+    the primary-tunable frontier.
+
