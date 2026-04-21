@@ -3464,3 +3464,118 @@ per-domain: combined_english=0.814815 combined_korean=0.489394 combined_singing=
     so regularization knobs have visible exhaustion tracking like
     the primary-tunable frontier.
 
+## 2026-04-21T09:49:11+09:00 — 055285f (discard, combined=0.455793)
+subject: drop HistGBM max_bins 255 -> 127 (pure train_classifier.py hyperparameter change, no feature or detector edit) -- EXPLICIT CITED FALLBACK from 79317c7(c)(3) after lr 0.07->0.05 discard: 'pivot to max_bins 255 -> 127 (histogram granularity, fundamentally different regularization axis: input-quantization rather than prediction-shrinkage)'. FIRST max_bins experiment in post-HistGBM classifier history; FIRST input-quantization regularization axis. Since fcb8f4e keep (min_samples_leaf 20->40), 7 consecutive discards on 7 different axes (a23ab28 music-gate, 1cded37 cluster-count, e4a9c18 sample_weight, 7b49d40 time-stretch, ca2aa2f HPSS, 425f6d6 voicing-gated threshold, f1e91ec l2 3.0, 79317c7 lr 0.05) -- structural pivots saturated, fallback axis is genuinely untouched. max_bins is INPUT QUANTIZATION: HistGBM discretizes every feature into <=max_bins bins before learning; each tree split chooses between these pre-computed bin boundaries. Default 255 gives sub-percentile granularity. Halving to 127 forces COARSER split thresholds on every feature simultaneously. Tight carve-out leaves that currently capture 3 singing chord-cycle FPs at specific sub-bins (e.g., voiced_chroma_cosine_dist bin 137 vs bin 138 ~0.4%% of feature range) disappear when bins 137-138 merge. DIFFERENT from l2 (shrinks log-odds but keeps tight split locations) and DIFFERENT from min_samples_leaf (requires larger leaf population but still at fine bin resolution). Mechanism on 3 surviving singing chord-cycle FPs: marginal above 0.982 on tight feature-space pockets; bin coarsening merges adjacent sub-bins where FP signatures live -> splits that separated 3 FPs from nearby not_splice rows no longer exist at bin-127 granularity -> GBM relies on coarser more generalizable thresholds -> marginal FPs drop below 0.982. Confident TPs (p_splice >=0.99) have much larger feature-value margin relative to bin width so survive coarsening. Speech english 0.889 / korean 0.667 carry multi-feature signatures with wide per-feature margins; halving bins barely shifts them. Why 127 specifically: sklearn HistGBM default 255, 127=2^7-1 clean half-step, standard progression {63,127,255}, bisection room to 191 if too aggressive or 63 if unchanged. Halving mirrors productive fcb8f4e min_samples_leaf 20->40 (2x) and 4b1575e l2 1.0->2.0 (2x) -- consistent regularization doubling on complementary axis. Orthogonal: NOT any features.py (FEATURE_NAMES stable 80, features.py sha unchanged); NOT detector.py (no DSP gate/threshold/post-filter); NOT max_iter/max_depth/max_leaf_nodes (tree structure stable); NOT learning_rate (per-tree contribution 0.07 stable); NOT l2_regularization (output shrinkage 2.0 stable); NOT min_samples_leaf (leaf size 40 stable); NOT sample_weight (loss-gradient); NOT SINGING_AUG (training-data diversity). Blast radius: 1 kwarg added in make_pipeline(). Training runtime slightly faster (fewer candidate split thresholds per node). Inference cost unchanged (same 300 trees). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 461 lines, make_pipeline() constructs Pipeline with max_bins=127 confirmed via named_steps[clf].max_bins, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 learning_rate=0.07 l2_regularization=2.0 min_samples_leaf=40), FEATURE_NAMES stable at 80.
+per-domain: combined_english=0.819277 combined_korean=0.397297 combined_singing=0.290909
+
+# 2026-04-21 — hypothesis: drop HistGBM max_bins 255 → 127
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    add `max_bins=127` to HistGradientBoostingClassifier (default 255).
+    All other hyperparameters stable (max_iter=300, max_depth=5,
+    max_leaf_nodes=32, learning_rate=0.07, l2_regularization=2.0,
+    min_samples_leaf=40). FEATURE_NAMES stable at 80. US-505b
+    train_classifier.py sha gate forces auto-retrain.
+
+(b) WHY over recent failures. EXPLICIT CITED FALLBACK from 79317c7(c)(3)
+    (the immediately prior discard): "pivot to max_bins 255 → 127
+    (histogram granularity, fundamentally different regularization axis:
+    input-quantization rather than prediction-shrinkage)". Since the
+    fcb8f4e keep (min_samples_leaf 20→40), 7 consecutive discards on
+    7 different axes: a23ab28 music-gate feature, 1cded37 cluster-count,
+    e4a9c18 sample_weight, 7b49d40 time-stretch, ca2aa2f HPSS, 425f6d6
+    voicing-gated threshold, f1e91ec l2 3.0, 79317c7 lr 0.05. Every
+    structural pivot has regressed. max_bins is genuinely untouched in
+    post-HistGBM classifier history — and it's the ONE regularization
+    axis fundamentally different from every other knob:
+
+      * l2_regularization → output log-odds shrinkage (4b1575e kept 1→2,
+        f1e91ec 3.0 discard)
+      * min_samples_leaf → leaf-size floor / tree geometry (fcb8f4e 20→40
+        kept, current baseline)
+      * max_depth/max_leaf_nodes → tree structure capacity (d1be6c3 kept)
+      * max_iter → ensemble size (d1be6c3 200→300 kept)
+      * learning_rate → per-tree contribution scalar (79317c7 0.05 discard)
+      * sample_weight → loss-gradient bias (e4a9c18 catastrophic)
+      * augmentation → training-data diversity (4e2941b kept)
+
+    max_bins is INPUT QUANTIZATION. HistGBM discretizes every feature
+    into at most `max_bins` bins before learning; every tree split
+    chooses between these pre-computed bin boundaries. Default 255
+    gives sub-percentile granularity. Halving to 127 forces the GBM
+    to see COARSER split thresholds on every feature simultaneously.
+    Tight carve-out leaves that currently capture chord-cycle FPs at
+    specific sub-bins (e.g., voiced_chroma_cosine_dist at bin 137 vs
+    138 — ~0.4% of feature range) disappear when bins 137-138 merge.
+    This is DIFFERENT from l2 (which shrinks leaf log-odds but keeps
+    tight split locations) and DIFFERENT from min_samples_leaf (which
+    requires larger leaf populations but still at fine bin resolutions).
+
+    Mechanism on 3 surviving singing chord-cycle FPs: they persist
+    marginally above GBM_THRESHOLD=0.982 on tight feature-space
+    pockets. Bin coarsening merges adjacent sub-bins where FP-specific
+    signatures live → splits that separated the 3 FPs from nearby
+    not_splice training rows no longer exist at bin-127 granularity.
+    The GBM has to rely on coarser, more generalizable thresholds.
+    Marginal FPs drop below 0.982; confident TPs (p_splice ≥ 0.99)
+    have much larger feature-value margin relative to bin width so
+    survive coarsening. Speech english 0.889 / korean 0.667 carry
+    multi-feature signatures with wide per-feature margins; halving
+    bins barely shifts them.
+
+    Why 127 specifically: sklearn HistGBM default 255. 127 = 2^7 - 1,
+    clean half-step, standard progression {63, 127, 255}; allows
+    bisection to 191 if too aggressive or 63 if unchanged. Halving
+    mirrors the productive fcb8f4e min_samples_leaf 20→40 step (also
+    2x) and 4b1575e l2 1.0→2.0 step (also 2x) — consistent
+    regularization doubling on a complementary axis.
+
+    Orthogonal. NOT any features.py addition (FEATURE_NAMES stable 80,
+    features.py sha unchanged). NOT detector.py (no DSP gate / threshold
+    / post-filter). NOT any prior classifier hyperparameter: max_bins
+    is distinct from max_iter/max_depth/max_leaf_nodes (tree structure),
+    learning_rate (per-tree contribution), l2_regularization (output
+    shrinkage), min_samples_leaf (leaf size), sample_weight (loss
+    gradient), augmentation (training data diversity). FIRST max_bins
+    experiment in post-HistGBM classifier history; FIRST input-
+    quantization regularization axis.
+
+    Blast radius. 1 kwarg added in make_pipeline(). Training runtime
+    slightly faster (fewer candidate split thresholds per node).
+    Inference cost unchanged (same 300 trees). US-505b train_classifier.py
+    sha gate auto-retrains from scratch.
+
+(c) IF THIS FAILS. (1) Singing unchanged — 127 bins still fine enough
+    to carve chord-cycle FP pockets → bisect down to 63. (2) Speech
+    regresses — 127 over-coarsens speech TP discriminators (phoneme
+    boundary features need fine resolution) → bisect up to 191 as
+    safe middle between 127 and 255. (3) All domains move correlated
+    (global coarsening wrong lever for current capacity) → pivot to
+    early_stopping + validation_fraction (genuinely untouched
+    classifier axis: built-in overfitting guard rather than direct
+    regularization).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after
+    75+ iterations — cannot verify the 3 singing FPs sit at feature-
+    space pockets where bin coarsening would specifically help vs
+    generic high-p_splice regions where it wouldn't. (ii) SHAP rollup
+    STILL empty for 14 keeps. (iii) Per-feature bin utilization (how
+    many of 255 bins each feature's histogram currently populates)
+    not surfaced — would directly tell whether halving 255→127 actually
+    changes resolution on the features that drive FPs vs just
+    features that are already coarse.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, gbm_predict_proba_vector, top-5 |SHAP|, top-5
+    feature VALUES, feature-bin-index-at-FP for top-5 features).
+    Would make every regularization choice data-driven instead of
+    theory-driven.
+    (2) SHAP ROLLUP REPAIR — empty for 14 keeps.
+    (3) CLASSIFIER HYPERPARAMETER FRONTIER SNAPSHOT in CURRENT STATE
+    (max_iter / max_depth / max_leaf_nodes / learning_rate /
+    l2_regularization / min_samples_leaf / max_bins — tried kept/failed
+    per axis alongside GBM_*). Would prevent losing state on
+    regularization knobs the way GBM_THRESHOLD / GBM_MIN_SEP_S /
+    ANALYSIS_STRIDE_S have explicit "tried kept/failed" tracking.
+
