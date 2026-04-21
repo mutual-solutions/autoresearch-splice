@@ -3751,3 +3751,123 @@ per-domain: combined_english=0.800000 combined_korean=0.473239 combined_singing=
     in CURRENT STATE. Would make class_weight and sample_weight
     hypotheses data-driven instead of theory-driven.
 
+## 2026-04-21T10:29:28+09:00 — 4f94f3e (discard, combined=0.459090)
+subject: add HistGBM interaction_cst='pairwise' (pure train_classifier.py hyperparameter change, no feature or detector edit) -- FIRST interaction_cst experiment in classifier history; FIRST feature-interaction-combinatorial regularization axis. Since fcb8f4e min_samples_leaf 20->40 keep, 11 consecutive discards on 11 different axes (a23ab28 music-gate, 1cded37 cluster-count, e4a9c18 per-DATASET sample_weight, 7b49d40 time-stretch, ca2aa2f HPSS, 425f6d6 voicing-gated threshold, f1e91ec l2 3.0, 79317c7 lr 0.05, 055285f max_bins 127, f6e05a7 early_stopping, c7ff141 class_weight) -- every MAGNITUDE-tuning classifier knob exhausted (l2/lr/max_bins/min_samples_leaf/max_iter/max_depth/max_leaf_nodes/class_weight/sample_weight/early_stopping). interaction_cst is STRUCTURAL-combinatorial rather than magnitude: constrains WHICH feature combinations trees may learn, not HOW MUCH they weight them. 'pairwise' restricts every tree to at most 2 features (GAM-like 2-way decomposition). Cited as natural multiclass replacement for c7ff141(c)(3) monotonic_cst fallback (sklearn raises ValueError for monotonic_cst on multiclass; interaction_cst supports multiclass -- smoke-verified fits 3-class synthetic data returns shape (200,3)). Mechanism on 3 surviving singing chord-cycle FPs: current max_depth=5/max_leaf_nodes=32 lets trees carve 5-feature conjunctions like 'voicing=0.4 AND chord_dist=0.1 AND mfcc_delta=0.2 AND tempo=110 AND onset=0.3 -> high p_splice' memorizing specific FP positions (unfindable as single 2-feature signal per 60+ failed features.py attempts). 'pairwise' makes such high-order conjunctions impossible -> FP-specific leaves disappear -> marginal FP p_splice ~0.983 drops below 0.982. Real TPs have SIMPLE 2-feature strong signals (DSP phase+t2+cpe pairs, voiced_unvoiced_mfcc_asymmetry + spec_contrast) -- 300 ensembled pairwise-trees compound these via law of large numbers, TPs retain strength. Speech english 0.889 / korean 0.667 multi-feature signatures decomposable to 2-feature ensembles retain clearance. Why 'pairwise' not 'no_interactions': no_interactions=decision stumps (1-feature) too aggressive dropping TP compounding; pairwise is conservative first step mirroring 4b1575e l2 1.0->2.0 and fcb8f4e min_samples_leaf 20->40 productive-first-step magnitudes. Bisection: 'no_interactions' if unchanged (stronger constraint); revert to None if regresses. Orthogonal: NOT any prior magnitude knob (l2/lr/max_bins/min_samples_leaf/max_depth/max_leaf_nodes/max_iter/class_weight/sample_weight/early_stopping -- all MAGNITUDE or STOPPING criteria); interaction_cst is COMBINATORIAL (restricts tree-topology space). NOT any features.py addition (FEATURE_NAMES stable 80, features.py sha unchanged); NOT detector.py (no DSP gate/threshold/post-filter); NOT augmentation axis (4e2941b/7b49d40). Blast radius: 1 new kwarg in make_pipeline(). Training runtime slightly faster (pairwise search cheaper per split than unrestricted). Inference cost unchanged (same 300 trees). US-505b train_classifier.py sha gate auto-retrains from scratch. Smoke-verified: AST parse OK 461 lines, make_pipeline() constructs Pipeline with interaction_cst='pairwise' confirmed via named_steps[clf].interaction_cst, other hyperparameters stable (max_iter=300 max_depth=5 max_leaf_nodes=32 learning_rate=0.07 l2_regularization=2.0 min_samples_leaf=40), FEATURE_NAMES stable at 80, sklearn accepts interaction_cst='pairwise' end-to-end (fit + predict_proba on synthetic 3-class X/y returns shape (300,3)).
+per-domain: combined_english=0.814815 combined_korean=0.475000 combined_singing=0.250000
+
+# 2026-04-21 — hypothesis: HistGBM interaction_cst='pairwise'
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change —
+    add `interaction_cst='pairwise'` kwarg to HistGradientBoostingClassifier
+    in `make_pipeline()`. Restricts every tree to use at most 2 features
+    per tree (GAM-like 2-way interaction decomposition). All other
+    hyperparameters stable (max_iter=300, max_depth=5, max_leaf_nodes=32,
+    learning_rate=0.07, l2_regularization=2.0, min_samples_leaf=40).
+    FEATURE_NAMES stable at 80. US-505b sha gate auto-retrains.
+
+(b) WHY over recent failures. Since fcb8f4e min_samples_leaf 20→40 keep,
+    11 consecutive discards on 11 different axes: a23ab28 music-gate,
+    1cded37 cluster-count, e4a9c18 sample_weight, 7b49d40 time-stretch,
+    ca2aa2f HPSS, 425f6d6 voicing-gated threshold, f1e91ec l2 3.0,
+    79317c7 lr 0.05, 055285f max_bins 127, f6e05a7 early_stopping,
+    c7ff141 class_weight. Every MAGNITUDE-tuning classifier knob explored
+    (l2/lr/max_bins/min_samples_leaf/max_iter/max_depth/max_leaf_nodes/
+    class_weight/sample_weight/early_stopping). interaction_cst is
+    STRUCTURAL rather than magnitude — it constrains WHICH feature
+    combinations trees may learn, not HOW MUCH they weight them. Trees
+    with max_depth=5 + max_leaf_nodes=32 can currently carve 5-feature
+    conjunctions like "voicing=0.4 AND chord_dist=0.1 AND mfcc_delta=0.2
+    AND tempo=110 AND onset=0.3 → high p_splice" — exactly the kind of
+    memorization capacity that produces 3 specific singing chord-cycle
+    FP carve-outs sitting marginally above 0.982 across 60+ iterations.
+    Cited as explicit fallback c7ff141(c)(3): "pivot to monotonic_cst
+    on known-direction features" — monotonic_cst is NOT multiclass-
+    supported in sklearn (raises ValueError for classes>2);
+    interaction_cst is its natural replacement, same spirit (structural
+    constraint) different mechanism, multiclass-supported (smoke-verified).
+
+    interaction_cst='pairwise' forces GAM-like 2-way decomposition.
+    Mechanism on 3 singing chord-cycle FPs: the high-order feature
+    conjunction memorizing FP positions (unfindable as single 2-feature
+    signal — proven across 60+ failed features.py additions targeting
+    single-mechanism FP separators) CANNOT be expressed. GBM must use
+    2-feature trees that generalize across chord-cycle + non-chord-cycle
+    boundaries similarly. FP-specific leaves disappear → marginal FP
+    p_splice drops below 0.982.
+
+    Real TPs have SIMPLE 2-feature strong signals: high DSP across
+    phase+t2+cpe (2-feature trees on dsp pairs) + high MFCC delta +
+    high chroma distance. 300 ensembled pairwise-trees compound
+    these signals (law of large numbers) → TP predictions retain
+    strength via many weak learners. Speech TPs similarly carry
+    2-feature conjunctions (voiced_unvoiced_mfcc_asymmetry biggest
+    keep is a single-feature-derived scalar already; combined with
+    spec_contrast it's a 2-feature signature).
+
+    Why 'pairwise' (not 'no_interactions'): 'no_interactions' allows
+    only 1-feature trees (decision stumps) — too aggressive, drops
+    TP signature compounding across feature pairs. 'pairwise' is the
+    conservative first step on the structural axis (analogous to
+    4b1575e l2 1.0→2.0 conservative first step, fcb8f4e min_samples_leaf
+    20→40 first step). Bisection: 'no_interactions' if unchanged
+    (stronger constraint); revert to None if regresses.
+
+    Orthogonal. NOT any magnitude-tuning knob (l2/lr/max_bins/
+    min_samples_leaf/max_iter/max_depth/max_leaf_nodes/class_weight/
+    sample_weight/early_stopping) — all were MAGNITUDE or STOPPING
+    criteria. interaction_cst is COMBINATORIAL: it restricts the
+    space of learnable tree topologies. NOT any features.py change
+    (FEATURE_NAMES stable 80, sha unchanged). NOT any detector.py
+    change (no DSP gate / threshold / post-filter). NOT any
+    augmentation axis. FIRST interaction_cst experiment in classifier
+    history; FIRST feature-interaction-combinatorial axis.
+
+    Blast radius. 1 new kwarg in make_pipeline(). Training runtime
+    slightly faster ('pairwise' search is cheaper per split than
+    unrestricted search). Inference cost unchanged (same 300 trees).
+    US-505b train_classifier.py sha gate auto-retrains from scratch.
+    Smoke-verified in-prompt: HistGBM with interaction_cst='pairwise'
+    fits on 200-row 3-class synthetic data and predict_proba returns
+    shape (200, 3) correctly.
+
+(c) IF THIS FAILS. (1) Singing unchanged — 2-feature conjunctions
+    also capture chord-cycle FPs because the 3 FPs are expressible
+    as 2-feature patterns → pivot to 'no_interactions' (decision
+    stumps, 1-feature constraint). (2) Speech regresses — TP signal
+    requires 3+ feature ensembling GBM can't compound via 2-way
+    only → bisect by passing explicit list-of-sets interaction_cst
+    allowing DSP-triple (phase+t2+cpe) as one group plus everything
+    else as another (partial structural constraint). (3) All
+    domains drop correlated — interaction_cst wrong direction for
+    current tree depth → pivot to warm-start isotonic calibration
+    via CalibratedClassifierCV(method='isotonic', cv=5) wrapping
+    the HistGBM (genuinely untouched post-hoc output-recalibration
+    axis).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent
+    after 75+ iterations — cannot verify if 3 chord-cycle FPs
+    correspond to 5-feature carve-outs vs 2-feature boundaries.
+    If they're 2-feature patterns, interaction_cst='pairwise'
+    won't bite them. (ii) SHAP rollup STILL empty for 14 keeps —
+    cannot verify which features' interactions drive the decisions.
+    (iii) Per-iteration train/OOF loss curve + feature-per-tree
+    distribution (how many features each of the 300 trees actually
+    splits on) NOT surfaced — would directly tell whether GBM
+    under current config is using 3+ feature trees (interaction_cst
+    would bite) or mostly 1-2 feature trees (interaction_cst
+    wouldn't bite).
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain,
+    file, t_sec, p_splice, gbm_predict_proba_vector,
+    dsp_phase_z/t2_z/cpe_z, voicing_fraction, top-5 |SHAP|).
+    Would make every structural-constraint choice data-driven.
+    (2) SHAP ROLLUP REPAIR — empty for 14 keeps.
+    (3) TREE-STRUCTURE DIAGNOSTICS SNAPSHOT in CURRENT STATE:
+    per-trained-GBM-run, distribution of (a) actual tree depths,
+    (b) number of unique features used per tree, (c) which 5-10
+    features dominate all splits. Would make interaction_cst /
+    max_depth / max_leaf_nodes decisions data-driven by knowing
+    whether GBM actually uses deep/wide trees or whether it's
+    already naturally restricted.
+
