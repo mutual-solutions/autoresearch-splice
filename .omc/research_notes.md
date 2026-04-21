@@ -3871,3 +3871,111 @@ per-domain: combined_english=0.814815 combined_korean=0.475000 combined_singing=
     whether GBM actually uses deep/wide trees or whether it's
     already naturally restricted.
 
+## 2026-04-21T10:43:26+09:00 — 3061196 (discard, combined=0.491287)
+subject: raise HistGBM min_samples_leaf 40 -> 80 (linear continuation of fcb8f4e keep 20->40)
+per-domain: combined_english=0.800000 combined_korean=0.422535 combined_singing=0.350794
+
+# 2026-04-21 — hypothesis: raise HistGBM min_samples_leaf 40 → 80
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py` change — raise
+    `HistGradientBoostingClassifier.min_samples_leaf` from 40 to 80 in
+    `make_pipeline()`. All other hyperparameters stable (max_iter=300,
+    max_depth=5, max_leaf_nodes=32, learning_rate=0.07,
+    l2_regularization=2.0). FEATURE_NAMES stable at 80. US-505b sha gate
+    auto-retrains.
+
+(b) WHY over recent failures. LINEAR CONTINUATION of the proven productive
+    fcb8f4e keep (min_samples_leaf 20→40, 2x doubling) — the same doubling
+    magnitude that 4b1575e l2 1.0→2.0 also landed as a keep. Since fcb8f4e,
+    12 consecutive discards on 12 different axes: every GENUINELY untouched
+    classifier hyperparameter knob (sample_weight e4a9c18, l2 3.0 f1e91ec,
+    lr 0.05 79317c7, max_bins 127 055285f, early_stopping f6e05a7,
+    class_weight c7ff141, interaction_cst 4f94f3e), augmentation axes
+    (time_stretch 7b49d40), features.py (HPSS ca2aa2f), detector
+    post-filters (cluster-count 1cded37, voicing-gated threshold 425f6d6),
+    and features (music-gate a23ab28). The structural-pivot well is dry;
+    exploit the PROVEN axis at the next natural step.
+
+    Why min_samples_leaf specifically (not another doubling of l2): l2
+    2.0→3.0 was the nearest linear continuation already tried and DISCARDED
+    (f1e91ec, 1.5x not 2x). min_samples_leaf at 40 has NOT had a follow-up
+    doubling attempt. The 2x doubling that worked at fcb8f4e (20→40) is
+    the natural continuation step; 40→60 would mirror the failed f1e91ec
+    1.5x on l2, so 80 is the right magnitude.
+
+    Mechanism on 3 surviving singing chord-cycle FPs. min_samples_leaf is
+    a LEAF-GEOMETRY structural regularizer: each leaf must contain ≥N
+    training rows before GBM is allowed to terminate a split there. At 40
+    (2% of ~2000 rows), GBM can still carve leaves populated by ~40 rows
+    from a specific chord-cycle feature-space pocket where 3 FPs + ~37
+    nearby not_splice training rows land; GBM then assigns that leaf a
+    small-positive log-odds sufficient to push the 3 FPs marginally above
+    p_splice=0.982. At 80 (4%), such leaves MUST be MERGED with adjacent
+    feature-space regions (dominated by clearly-negative not_splice rows)
+    → the merged leaf's log-odds pulled down toward negative → the 3 FPs'
+    p_splice drops below 0.982 → FPs drop. Confident TPs (p_splice ≥0.99)
+    sit in leaves dominated by positive rows where merging with adjacent
+    negative rows still leaves a positive majority; log-odds barely
+    moves. Speech english 0.889 / korean 0.667 TPs have multi-feature
+    signatures at well-populated feature-space regions (leaves already
+    ≥80 rows); merging has NO effect.
+
+    DIFFERENT from l2 (output log-odds shrinkage uniform across all
+    leaves regardless of population — bites confident TPs and marginal
+    FPs alike); DIFFERENT from max_bins (input quantization — merges
+    adjacent bins at same density); DIFFERENT from lr (per-tree
+    contribution scalar uniform). min_samples_leaf bites ONLY
+    small-population leaves, which is precisely where chord-cycle
+    FP-specific carve-outs live.
+
+    Orthogonal. NOT 4b1575e/f1e91ec l2 (output shrinkage); NOT 79317c7
+    lr (per-tree contribution); NOT 055285f max_bins (input
+    quantization); NOT d1be6c3 max_iter/max_depth/max_leaf_nodes
+    (tree structure capacity); NOT f6e05a7 early_stopping (adaptive
+    termination); NOT c7ff141 class_weight (per-class loss gradient);
+    NOT 4f94f3e interaction_cst (feature-combinatorial); NOT e4a9c18
+    sample_weight (per-domain loss gradient); NOT any features.py /
+    detector.py / augmentation axis. SAME axis as fcb8f4e keep but at
+    the next natural value — linear continuation, not new axis.
+
+    Blast radius. 1 integer literal in `make_pipeline()`. Training
+    runtime marginally faster (fewer candidate splits survive population
+    threshold). Inference cost unchanged. US-505b sha gate auto-retrains.
+
+(c) IF THIS FAILS. (1) Singing unchanged — chord-cycle FP leaves already
+    had ≥80 rows at 40→80 threshold, so merging doesn't happen → the
+    structural axis for this mechanism is exhausted; pivot to ISOTONIC
+    calibration via `CalibratedClassifierCV(method='isotonic', cv=5)`
+    wrapping the pipeline (cited fallback from 4f94f3e(c)(3), genuinely
+    untouched output-recalibration axis). (2) Speech regresses — 80
+    starves GBM of leaves for phoneme-specific signatures on speech TPs
+    → bisect to 60 (halfway). (3) All domains drop correlated —
+    min_samples_leaf over-restricts tree expressiveness at current
+    max_iter=300 → pair with capacity bump max_iter 300→500 at next
+    iteration instead of narrowing min_samples_leaf further.
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after 75+
+    iterations — cannot verify the 3 singing FPs sit in small-population
+    leaves where min_samples_leaf doubling would bite vs well-populated
+    leaves where it wouldn't. (ii) SHAP rollup STILL empty for 14 keeps.
+    (iii) LEAF-POPULATION HISTOGRAM at current min_samples_leaf=40 NOT
+    surfaced — would directly show whether 40 is near-saturating (most
+    leaves already >80 rows, doubling is no-op) vs binding (many leaves
+    at exactly 40-50 rows, doubling bites). Information asymmetry forces
+    theory-driven choice.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, gbm_predict_proba_vector, gbm_leaf_population,
+    top-5 |SHAP|, top-5 feature VALUES). Would make every regularization
+    choice (especially min_samples_leaf / l2 / max_bins bisection)
+    data-driven rather than theory-driven.
+    (2) SHAP ROLLUP REPAIR — empty for 14 keeps.
+    (3) CLASSIFIER HYPERPARAMETER FRONTIER SNAPSHOT in CURRENT STATE
+    (max_iter / max_depth / max_leaf_nodes / learning_rate /
+    l2_regularization / min_samples_leaf / max_bins / early_stopping /
+    class_weight / interaction_cst — tried kept/failed per axis alongside
+    GBM_* primary tunable frontier). Would prevent the exhaustion-
+    tracking blind spot across 12 recent classifier discards on 12
+    different axes.
+
