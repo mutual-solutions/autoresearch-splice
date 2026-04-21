@@ -3979,3 +3979,56 @@ per-domain: combined_english=0.800000 combined_korean=0.422535 combined_singing=
     tracking blind spot across 12 recent classifier discards on 12
     different axes.
 
+## 2026-04-21T10:58:38+09:00 — 5de4e19 (discard, combined=0.455854)
+subject: wrap HistGBM in BaggingClassifier(n_estimators=5, bootstrap=True)
+per-domain: combined_english=0.804878 combined_korean=0.375000 combined_singing=0.313846
+
+# 2026-04-21 — hypothesis: wrap HistGBM in BaggingClassifier(n_estimators=5, bootstrap=True)
+
+(a) Replace the single HistGradientBoostingClassifier in make_pipeline()
+    with BaggingClassifier(estimator=HistGBM(...), n_estimators=5,
+    bootstrap=True, random_state=RANDOM_STATE, n_jobs=1). Base-GBM
+    hyperparameters stable; FEATURE_NAMES stable 80; US-505b sha gate
+    auto-retrains. Ensemble averages predict_proba across 5 HistGBMs
+    each trained on a bootstrap sample of the ~2000 training rows.
+
+(b) 13 consecutive discards since fcb8f4e keep cover every knob INSIDE a
+    single HistGBM (l2/lr/max_bins/min_samples_leaf/max_iter/max_depth/
+    max_leaf/interaction_cst/class_weight/sample_weight/early_stopping),
+    plus features.py, augmentation, and detector post-filters. Bagging
+    operates ABOVE single-classifier tuning — first ensemble-wrapping
+    experiment in classifier history. The 3 singing chord-cycle FPs at
+    p_splice ≈ 0.983 are MARGINAL: GBM trees that carve the specific
+    chord-cycle feature-space pocket exist in some bootstraps but not
+    others. Averaging across 5 sub-GBMs pulls marginal predictions
+    toward ensemble mean (well below 0.982) → FPs drop. Confident TPs
+    (p≥0.99 via many-feature agreement) are bootstrap-stable → average
+    preserves them. Chosen over CalibratedClassifierCV(isotonic) because
+    calibration is monotonic and cannot re-rank: if a marginal FP
+    outranks a borderline TP under single GBM, isotonic preserves that
+    order; bagging's bootstrap diversity CAN re-rank. Calibration
+    remains in (c)(3) as fallback.
+
+(c) If singing unchanged — FPs have low bootstrap variance (all 5
+    sub-GBMs agree) → n_estimators 5→10 AND max_samples=0.5 to force
+    more diversity. If speech regresses — bootstrap starves phoneme-
+    specific leaves → pair bagging with GBM_THRESHOLD 0.982→0.975 on
+    detector side (primary tunable, no retrain). If all domains drop
+    correlated → revert and pivot to CalibratedClassifierCV(method=
+    'isotonic', cv=5) wrapping the Pipeline (genuinely untouched
+    post-hoc output recalibration).
+
+(d) Same three gaps as last 75+ iterations: CLEAN_FP_POSITIONS still
+    absent so cannot verify FPs sit in variance-heavy marginal pockets
+    where bagging bites; SHAP rollup still empty for 14 keeps; per-seed
+    predict_proba variance at FP positions not surfaced so bagging
+    decision is theory-driven.
+
+(e) NEW: ENSEMBLE-FRONTIER SNAPSHOT — n_estimators / max_samples /
+    bootstrap_features tried kept/failed per axis in CURRENT STATE,
+    alongside CLASSIFIER HYPERPARAMETER FRONTIER and primary-tunable
+    frontier. Also unchanged asks: CLEAN_FP_POSITIONS JSON and SHAP
+    rollup repair. Would make ensemble tuning data-driven; right now
+    I am picking n_estimators=5 from canonical bagging magnitudes
+    without any per-position variance evidence.
+
