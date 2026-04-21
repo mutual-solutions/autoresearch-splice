@@ -4032,3 +4032,88 @@ per-domain: combined_english=0.804878 combined_korean=0.375000 combined_singing=
     I am picking n_estimators=5 from canonical bagging magnitudes
     without any per-position variance evidence.
 
+## 2026-04-21T11:14:02+09:00 — 4fe3877 (discard, combined=0.077430)
+subject: wrap HistGBM in CalibratedClassifierCV(sigmoid, cv=5, ensemble=False)
+per-domain: combined_english=0.255319 combined_korean=0.181818 combined_singing=0.000000
+
+# 2026-04-21 — hypothesis: wrap HistGBM in CalibratedClassifierCV(sigmoid, cv=5, ensemble=False)
+
+(a) Pure `splice/classifier/train_classifier.py` change — wrap the existing
+    HistGradientBoostingClassifier in `CalibratedClassifierCV(estimator=HistGBM(...),
+    method='sigmoid', cv=5, ensemble=False)`. Base-HistGBM hyperparameters
+    stable (max_iter=300, max_depth=5, max_leaf_nodes=32, learning_rate=0.07,
+    l2_regularization=2.0, min_samples_leaf=40). FEATURE_NAMES stable at 80.
+    US-505b train_classifier.py sha gate auto-retrains. Post-hoc Platt
+    (sigmoid) calibration learns a 2-parameter monotonic remapping of
+    predict_proba output trained on OOF predictions via internal 5-fold CV.
+
+(b) WHY over 5de4e19 BaggingClassifier discard and 14 prior classifier-knob
+    failures. `ensemble=False` is the key lever: instead of 5de4e19's ensemble
+    averaging across bootstrap-sampled GBMs (which pulled ALL probabilities
+    toward the mean and hurt TPs), `ensemble=False` uses `cross_val_predict`
+    to get OOF preds, fits ONE sigmoid calibrator on those, then applies
+    that calibrator to ONE final HistGBM trained on all data. Inference =
+    single GBM + single sigmoid remap → no ensemble variance reduction
+    (which was 5de4e19's failure mode). Mechanism on 3 singing chord-cycle
+    FPs: HistGBM's log-odds → sigmoid mapping is known to be over-confident
+    on boosted classifiers with small calibration sets, especially in the
+    high-probability tail. Marginal FPs at p_splice ~0.983 are exactly
+    where sigmoid over-confidence bites hardest (logit ~4.06, close to
+    model's edge-of-training-distribution). Platt calibration fits
+    a * logit(p) + b, shrinking probabilities toward the empirical
+    TP-rate at that predicted level. If the 3 chord-cycle FPs are
+    mislabeled as confident positives but the empirical TP-rate at
+    p_splice=0.983 is actually 0.85-0.90 (because similar chord-cycle
+    patterns exist in OOF negatives), calibration maps 0.983 → ~0.88,
+    dropping them below 0.982 threshold. Confident TPs at p_splice ≥0.99
+    (logit ≥4.6) live in the tail where the sigmoid fit is flat, so
+    they stay well above 0.982 after calibration. Genuinely orthogonal
+    axis: NOT any prior HistGBM hyperparameter (magnitude/structural/
+    loss-gradient knob). Platt sigmoid chosen over isotonic from 5de4e19
+    cited fallback because: (i) 2-parameter fit is less noisy on ~2000
+    rows than isotonic's step-function; (ii) isotonic tends to produce
+    plateau regions that kill granular discrimination; (iii) sigmoid
+    naturally reshapes the over-confidence mode of boosted models.
+    Inner cv=5 uses default KFold, not GroupKFold — this LEAKS file-IDs
+    between inner calibration train/test sets, which is a known risk
+    but acceptable: the OUTER GroupKFold in train() still gives honest
+    cross-validated OOF metrics, and the calibration quality only
+    matters for inference-time output reshaping.
+
+(c) IF THIS FAILS. (1) Singing unchanged — 3 chord-cycle FPs sit at
+    p_splice ≥0.990 where sigmoid is flat → pivot to `method='isotonic',
+    cv=5, ensemble=False` (isotonic allows non-monotonic tail-squashing
+    that sigmoid cannot express). (2) Speech regresses — sigmoid
+    fit shifts english/korean TPs down to 0.982 threshold → the calibrator
+    was trained on leaked OOF and overcorrected → pivot to
+    `cv=GroupKFold(5)` via an iterable split passed to `cv=` (ensures
+    honest OOF preds for calibrator). (3) All domains drop correlated —
+    post-hoc calibration is globally wrong lever for this problem →
+    pivot to RandomForestClassifier swap (replace HistGBM with
+    RandomForest(n_estimators=500, max_features='sqrt', max_depth=None);
+    fundamentally different algorithm — bagging of deep unpruned
+    random-feature-subset trees vs sequential boosting).
+
+(d) Information gaps. (i) CLEAN_FP_POSITIONS JSON STILL absent after 75+
+    iterations — cannot verify the 3 singing FPs sit in the [0.982, 0.990]
+    miscalibration band where sigmoid Platt bites. If they're at p ≥0.998,
+    sigmoid is flat and won't help. (ii) SHAP rollup STILL empty for 14
+    keeps. (iii) Current calibration curve (reliability diagram of HistGBM:
+    predicted p vs empirical TP-rate at p-bin) NOT surfaced in CURRENT
+    STATE — would directly tell whether HistGBM needs calibration at all
+    (if already well-calibrated, sigmoid fit is near-identity; if
+    over-confident in [0.95, 1.0] tail, calibration bites). Forces
+    theory-driven choice on a knob whose impact depends entirely on
+    miscalibration magnitude.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) CLEAN_FP_POSITIONS JSON in CURRENT STATE per-FP (domain, file,
+    t_sec, p_splice, gbm_predict_proba_vector, dsp_phase_z/t2_z/cpe_z,
+    voicing_fraction, top-5 |SHAP|).
+    (2) SHAP ROLLUP REPAIR — empty for 14 keeps.
+    (3) NEW: CALIBRATION SNAPSHOT in CURRENT STATE — reliability diagram
+    of HistGBM on OOF predictions (predicted-p vs empirical-TP-rate at
+    10 equal-frequency bins per class). Would make every calibration
+    / threshold decision data-driven; right now it's impossible to tell
+    whether sigmoid/isotonic are even the right lever.
+
