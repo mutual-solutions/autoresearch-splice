@@ -24,6 +24,8 @@ results.tsv
 
 # Runtime state (must not be git-tracked — git reset --hard wipes tracked files)
 .omc/autoresearch-stop
+# Generic in-flight sentinels (.omc/retest-in-progress, .omc/korean-iter1-regen-in-progress, etc.)
+.omc/*-in-progress
 
 # Stale cache (see ml_eval.py note — no longer written, but guard against reappearance)
 .omc/classifier/patches_korean_splice.npz
