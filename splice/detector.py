@@ -43,7 +43,7 @@ ANALYSIS_STRIDE_S = 0.12
 # ~1:300 splice-per-candidate ratio in real audio, so proba skews high.
 # An aggressive decision threshold compensates for the prior-probability
 # mismatch without retraining.
-GBM_THRESHOLD = 0.982
+GBM_THRESHOLD = 0.978
 # Must exceed evaluate.py's 1.0s tolerance so one real splice cannot inflate
 # into multiple detections when a high-probability plateau spans several
 # adjacent candidates.
