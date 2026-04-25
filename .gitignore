@@ -137,3 +137,6 @@ reports/
 # US-517 supervisor_agent.py --maintain runtime state (crash counter + disable sentinel)
 .omc/supervisor-crash-counter.txt
 .omc/maintainer-disabled
+
+# Determinism check artifact (regenerable via --verify-determinism)
+.omc/korean-iter1-determinism-receipt.json
