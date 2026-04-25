@@ -6,7 +6,7 @@
     "_eval_files": 1030,
     "_test_files": 4278
   },
-  "ground_truth_sha256_prefix": "d7cffd99095b",
+  "ground_truth_sha256_prefix": "7b989e98fbb3",
   "voices_holdout": {
     "test": [
       "DaeBuHo",
