@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-04-25T11:44:58.575102Z",
-  "git_sha": "8530ba891ab3792dac02396abc88ae79853ab012",
-  "phase": "korean_iter1_pivot_initial",
-  "combined": 0.385382,
-  "precision": 0.87,
-  "recall": 0.247511,
+  "timestamp": "2026-04-25T15:29:03.524062Z",
+  "git_sha": "78f1dbfc8aaab3eefbd3a539da2eb39bbceb43e3",
+  "phase": "korean_iter1_pivot_initial_post_bug_fix",
+  "combined": 0.436441,
+  "precision": 0.854772,
+  "recall": 0.29303,
   "n_files": 60,
   "collar_ms": 250,
   "splice_class_breakdown": {
@@ -30,7 +30,7 @@
       "Ondo"
     ]
   },
-  "regen_determinism_receipt_sha": "bd000d1f2ad5",
-  "unknown_label_count": 200,
-  "note": "Iter-0 baseline. Detector emits \"unknown\" labels by default (Item 3); per-class F1 starts at 0 \u2014 agent improves by populating labels with class-specific evidence."
+  "regen_determinism_receipt_sha": "b770313bd527",
+  "unknown_label_count": 241,
+  "note": "Iter-0 baseline AFTER word_alignment absolute-vs-relative bug fix. Cuts now land at proper silence-bounded word boundaries. classifier OOF macro F1 dropped 0.819 -> 0.788 (honest difficulty floor); combined in-corpus baseline rose 0.385 -> 0.436 (in-distribution match)."
 }
