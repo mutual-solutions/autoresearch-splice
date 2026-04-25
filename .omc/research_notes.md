@@ -4438,3 +4438,94 @@ per-domain: (no per-domain data)
     are even gating different posterior tails.
 [auto] (no SHAP data for either b6cbe35 or fa8f7b5)
 
+## 2026-04-26T07:37:20+09:00 — 8093406 (keep, combined=0.551855)
+subject: GBM_THRESHOLD 0.978 -> 0.974 (continue cited descent on contract-fixed classifier; one micro-step below failed legacy 0.975 to test whether legacy non-monotonicity survives contract fix) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from current best keep fa8f7b5(c)(3): 'descent confirmed on corrected classifier; next iter try 0.974 (one micro-step below failed legacy 0.975 -- fresh, tests whether the legacy non-monotonic surface still applies post-contract-fix)'. fa8f7b5 just landed +0.007 going 0.982 -> 0.978 on the contract-fixed classifier (0.537 -> 0.544), confirming threshold descent is productive on the corrected posterior. Linear interpolation predicts ~0.551 at 0.974 if same +0.007/-0.004 slope holds. 0.974 is fresh on frontier (set: failed 0.5 contract-bug catastrophic, failed legacy 0.975, kept legacy 0.97, kept legacy 0.975, kept current 0.978). Why 0.974 not 0.97 (legacy kept): legacy 0.97 was kept on pre-contract-fix classifier where p_splice formula was buggy (1 - P(cross_voice) gated wrong posterior); on current contract-fixed classifier (p_splice = P(cross_voice) + P(same_voice_edit) per resolved no_splice column), posterior distribution shifted, legacy thresholds not directly transferable AND wrapper guard would block 0.97 as repeat. 0.974 is smooth continuation (-0.004 step matching the proven productive 0.982 -> 0.978 step) sitting exactly one micro-step below the legacy-failed 0.975 -- directly tests whether legacy non-monotonic 0.975 dip survives the contract fix. If 0.974 lands at 0.548+, legacy non-monotonicity is gone and descent is monotonic on corrected classifier; next iter can step bigger to 0.97 via operator-owned retest sentinel. If 0.974 saturates or regresses, legacy non-monotonicity preserved (suggests intrinsic posterior cluster gap), pivot to ANALYSIS_STRIDE_S 0.12 -> 0.06 (untouched primary tunable on iter1, only kept value 0.06 from legacy). Mechanism on Korean recall (P=0.855 R=0.293, dominant bottleneck): GBM_THRESHOLD gates which p_splice peaks emit at all (vs GBM_MIN_SEP_S which only dedupes already-emitted neighbors). Marginal Korean voice-switch TPs whose corrected p_splice lands in [0.974, 0.978) currently get suppressed and never reach dedupe; 0.974 opens that band. If any Korean TPs cluster in that 4-thousandth-wide band, they surface; if not, corrected posterior is sharper than legacy and safe descent band is narrower than -0.004 per step. Why not pivot to ANALYSIS_STRIDE_S now: bisection-completion-within-bracket-before-pivoting rule from 7 prior keeps says continue productive axis until saturation/regression. GBM_THRESHOLD just produced +0.007 gain; not saturated. Why smallest fresh step (0.974 not 0.97 via retest): preserves bisection optionality -- if 0.974 produces 0.548+ descent confirmed and operator can step bigger via retest; if regresses, sharp posterior bisects to 0.976 immediately without large rollback. Why not bigger drop (0.97 directly): would need operator-owned retest sentinel workflow (frontier guard blocks repeat), out of autoresearch loop scope. Smoke-verified: GBM_THRESHOLD=0.974 confirmed via import; other tunables stable (GBM_MIN_SEP_S=1.05 ANALYSIS_STRIDE_S=0.12 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_THRESHOLD 0.978 → 0.974 (continue cited descent on contract-fixed classifier)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop GBM_THRESHOLD from
+    0.978 to 0.974. No retrain, no feature change, classifier byte-identical.
+    Other primary tunables stable: GBM_MIN_SEP_S=1.05, ANALYSIS_STRIDE_S=0.12,
+    DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0. FEATURE_NAMES stable at 80.
+    0.974 is fresh on the frontier (frontier set: failed 0.5 contract-bug,
+    failed legacy 0.975, kept legacy 0.97, kept legacy 0.975, kept current
+    0.978).
+
+(b) WHY over recent failures. EXPLICIT CITED NEXT-STEP from current best keep
+    fa8f7b5(c)(3): "Combined exceeds 0.537 marginally — descent confirmed on
+    corrected classifier; next iter try 0.974 (one micro-step below failed
+    legacy 0.975 — fresh, tests whether the legacy non-monotonic surface
+    still applies post-contract-fix)." fa8f7b5 just landed +0.007 going
+    0.982 → 0.978 on the contract-fixed classifier (0.537 → 0.544),
+    confirming threshold descent is productive on the corrected posterior.
+    Linear interpolation predicts ~0.551 at 0.974 if the same +0.007/-0.004
+    slope holds. Why 0.974 not 0.97 (legacy kept): legacy 0.97 was kept on
+    pre-contract-fix classifier where p_splice formula was buggy, posterior
+    distribution since shifted under p_splice = P(cross_voice) +
+    P(same_voice_edit), so legacy values aren't directly transferable; AND
+    wrapper guard would block 0.97 as repeat. 0.974 is a smooth continuation
+    (-0.004 step matching the proven productive 0.982 → 0.978 step) that
+    sits exactly one micro-step below the legacy-failed 0.975 — directly
+    tests whether the legacy non-monotonic 0.975 dip survives the contract
+    fix. If 0.974 lands at 0.548+, the legacy non-monotonicity is gone and
+    descent is monotonic on the corrected classifier; next iter can step
+    bigger to 0.97 via operator-owned retest sentinel. If 0.974 saturates
+    or regresses, the legacy non-monotonicity is preserved (suggests an
+    intrinsic posterior cluster gap), and pivot to ANALYSIS_STRIDE_S
+    0.12 → 0.06 (untouched primary tunable on iter1, only kept value 0.06
+    is from legacy). Mechanism on Korean recall (P=0.855 R=0.293, dominant
+    bottleneck): GBM_THRESHOLD gates which p_splice peaks emit at all.
+    Marginal Korean voice-switch TPs whose corrected p_splice lands in
+    [0.974, 0.978) currently get suppressed; 0.974 opens that band. If any
+    Korean TPs cluster in that 4-thousandth-wide band, they surface; if
+    not, the corrected posterior is sharper than the legacy and the safe
+    descent band is narrower than -0.004 per step. Why not pivot to
+    ANALYSIS_STRIDE_S now: bisection-completion-within-bracket-before-
+    pivoting rule from 7 prior keeps says continue the productive axis
+    until saturation/regression. GBM_THRESHOLD just produced a +0.007 gain;
+    not saturated. Why smallest fresh step (0.974 not 0.97 via retest):
+    preserves bisection optionality — if 0.974 produces 0.548+ descent
+    confirmed and operator can step bigger via retest; if regresses, sharp
+    posterior bisects to 0.976 immediately without large rollback. Why not
+    bigger drop (0.97 directly): would need operator-owned retest sentinel
+    workflow (frontier guard blocks repeat), out of autoresearch loop scope.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.544 — corrected posterior
+    has cluster gap in [0.974, 0.978), threshold descent saturated within
+    that band; pivot to ANALYSIS_STRIDE_S 0.12 → 0.06 (genuinely untouched
+    primary tunable on iter1). (2) Combined matches 0.544 exactly — descent
+    is saturated at 0.544 across [0.974, 0.978]; same pivot to STRIDE
+    descent next iter, OR retest the wrapper-blocked 0.97 hypothesis via
+    operator-owned retest sentinel. (3) Combined exceeds 0.544 marginally
+    — descent confirmed on corrected classifier across two values; next
+    iter try 0.97 via retest sentinel (operator-owned) OR continue with
+    0.972 via wrapper.
+
+(d) Information gaps. Per-domain combined breakdown STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has not
+    captured it yet)". Cannot verify singing/english are not silently
+    regressing while I tune toward Korean recall. The GBM_THRESHOLD
+    frontier text shows kept/failed values but doesn't tag them with
+    classifier-context (pre/post-contract-fix), so legacy 0.975 failed and
+    legacy 0.97 kept cannot be distinguished from current-classifier
+    values. The probability histogram of GBM outputs on the corrected
+    classifier is also not surfaced — would directly tell whether 0.974 vs
+    0.978 are even gating different posterior tails or hitting the same
+    discrete probability buckets.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 6 keeps, still missing.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should carry
+    a tag (e.g., `classifier_sha=<8>`) so legacy 0.97-kept on a
+    pre-contract-fix classifier can be distinguished from a same-value
+    retry on the current classifier — would unlock legitimate retries
+    when the underlying model has changed.
+    (3) GBM PROBABILITY HISTOGRAM SNAPSHOT in CURRENT STATE: on the
+    latest trained classifier, count of p_splice values in 10
+    equal-width buckets across [0.9, 1.0]. Would make every threshold
+    descent decision data-driven.
+[auto] (no SHAP data for either fa8f7b5 or 8093406)
+
