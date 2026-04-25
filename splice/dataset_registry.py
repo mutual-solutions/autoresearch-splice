@@ -78,12 +78,23 @@ DATASETS: list[Dataset] = [
         eval_weight=0.0,
         train_weight=0.0,
     ),
-    # Active: AMI + ICSI headset channels, same-source splicing.
+    # Dormant: AMI + ICSI headset channels, same-source splicing.
     Dataset(
         id="english",
         eval_path=_eval_path(_DATA / "eval" / "english", "english"),
         train_path=_DATA / "train" / "english",
         test_path=_DATA / "test" / "english",
+        eval_weight=0.0,
+        train_weight=0.0,
+    ),
+    # Active: Korean naturalistic long-form corpus, iter1 same-source splicing.
+    Dataset(
+        id="korean_iter1",
+        eval_path=_eval_path(_DATA / "eval" / "korean_iter1" / "eval", "korean_iter1"),
+        train_path=_DATA / "train" / "korean_iter1" / "train",
+        test_path=_DATA / "test" / "korean_iter1" / "test",
+        eval_weight=1.0,
+        train_weight=1.0,
     ),
 ]
 
@@ -193,7 +204,7 @@ def forensic_combined(
 if __name__ == "__main__":
     # Sanity tests
     ids = [d.id for d in DATASETS]
-    assert ids == ["singing", "korean", "english"], ids
+    assert ids == ["singing", "korean", "english", "korean_iter1"], ids
 
     # Geometric mean with floor
     got = aggregate_combined(

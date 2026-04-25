@@ -140,3 +140,8 @@ reports/
 
 # Determinism check artifact (regenerable via --verify-determinism)
 .omc/korean-iter1-determinism-receipt.json
+
+# Regen scratch files (run-local, not artifacts)
+.omc/regen-fulllog.txt
+.omc/regen-pid.txt
+.omc/regen-spot-check/

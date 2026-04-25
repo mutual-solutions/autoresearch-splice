@@ -177,12 +177,17 @@ def _load_gbm_bundle() -> dict | None:
     return _GBM_BUNDLE
 
 
-def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
+def detect_splices(audio: np.ndarray, sr: int) -> list[tuple[float, str]]:
     """Length-agnostic splice detector.
 
     Dense GBM scan at ANALYSIS_STRIDE_S. Requires a multi-class classifier
     bundle at .omc/classifier/fp_classifier.joblib; raises if missing.
     Results are memoized by audio fingerprint.
+
+    Returns list of (time_s: float, label: str) tuples.
+    label ∈ {"cross_voice", "same_voice_edit", "unknown"}.
+    Default label is "unknown" — emit a specific label only when the detector
+    has class-specific evidence.
     """
     key = _cache_key(audio, sr)
     if key in _DETECT_CACHE:
@@ -199,7 +204,7 @@ def detect_splices(audio: np.ndarray, sr: int) -> list[float]:
     merged = _gbm_detect_splices(audio, sr, bundle, key=key)
     if len(_DETECT_CACHE) < _DETECT_CACHE_MAX:
         _DETECT_CACHE[key] = list(merged)
-    return merged
+    return merged  # already list[tuple[float, str]]
 
 
 def _iter_chunks(audio: np.ndarray, sr: int):
@@ -219,7 +224,7 @@ def _iter_chunks(audio: np.ndarray, sr: int):
 
 def _gbm_detect_splices(
     audio: np.ndarray, sr: int, bundle: dict, key: tuple,
-) -> list[float]:
+) -> list[tuple[float, str]]:
     """Dense GBM scan at ANALYSIS_STRIDE_S; see `detect_splices`."""
     import time as _time
     from features import FEATURE_NAMES as _FN, extract_features
@@ -358,7 +363,7 @@ def _gbm_detect_splices(
         for (t, label_id, p, feats_vec) in selected
     ]
 
-    return [t for (t, _, _, _) in selected]
+    return [(t, "unknown") for (t, _, _, _) in selected]
 
 
 def get_detection_meta(audio: np.ndarray, sr: int) -> list[dict]:

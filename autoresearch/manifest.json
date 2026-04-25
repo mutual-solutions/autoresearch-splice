@@ -1,12 +1,25 @@
 {
-  "version": 2,
-  "dataset": "data/eval/singing",
+  "version": 3,
+  "dataset": "data/eval/korean_iter1/eval",
   "expected_counts": {
-    "tier1": 20,
-    "tier2": 20,
-    "clean": 20
+    "_train_files": 4500,
+    "_eval_files": 1100,
+    "_test_files": 1300,
+    "_note": "approx cross-split counts (not subdirs); refined post-regen — update before invoking start"
   },
-  "ground_truth_sha256_prefix": "dc2fa84c0802",
-  "total_files": 61,
-  "notes": "Counts exclude .DS_Store. 20/20/20 layout (post unification + duration/codec mix). GT hash is first 12 chars of sha256 of ground_truth.json. Korean/English eval live under data/eval/{korean,english}/ now."
+  "ground_truth_sha256_prefix": "<PENDING — operator updates after regen>",
+  "voices_holdout": {
+    "test": ["DaeBuHo", "Kanna"],
+    "eval": ["Sunwoo", "Joon"],
+    "train": ["ChloeCha", "DangchanYeo", "Donghyun", "Eunha", "Minho", "Minwoo", "Ondo"]
+  },
+  "protected_paths": [
+    "splice/evaluate.py",
+    "splice/program.md",
+    "data/eval/korean_iter1/**",
+    "data/test/korean_iter1/**",
+    "autoresearch/manifest.json",
+    "autoresearch/preflight.py"
+  ],
+  "notes": "korean-iter1 pivot. _*_files counts are approximate cross-split totals — run `find data/eval/korean_iter1/{train,eval,test}/ -maxdepth 1 -type f ! -name .DS_Store | wc -l` per split after regen completes and update. GT hash is first 12 chars of sha256 of data/eval/korean_iter1/eval/ground_truth.json."
 }
