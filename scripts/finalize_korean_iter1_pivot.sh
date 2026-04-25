@@ -28,7 +28,7 @@ cd "$(dirname "$0")/.."
 
 REPO_ROOT="$PWD"
 TARBALL="/Volumes/HIKSEMI/korean-iter-1-delivery.tar"
-EXTRACT_DIR="/Volumes/HIKSEMI/korean-iter-1-extracted"
+EXTRACT_DIR="/Volumes/HIKSEMI/korean-iter-1-delivery"
 OUTPUT_ROOT="$REPO_ROOT/data/eval/korean_iter1"
 SENTINEL="$REPO_ROOT/.omc/korean-iter1-regen-in-progress"
 PYTHON_RUN="PYTHONPATH=$REPO_ROOT uv run python"
@@ -163,6 +163,14 @@ print('baseline_metrics.json written atomically:', baseline['combined'])
 "
 git add autoresearch/baseline_metrics.json
 git commit -m "MIGRATE-PROTECTED autoresearch/baseline_metrics.json: korean-iter1 iter-0 baseline (atomic from real eval)"
+
+# Re-tag iter1-anchor at the FINAL maintainer commit (the baseline_metrics.json
+# write). Per plan Item 6, this tag must equal HEAD just before run_autoresearch.sh
+# start so a first-iteration discard's _guarded_reset target is the iter-0
+# baseline, not an earlier maintainer commit.
+git tag -d iter1-anchor 2>/dev/null || true
+git tag -a iter1-anchor HEAD -m "Safe first-iteration discard target — iter-0 baseline (post-finalize)"
+grn "iter1-anchor re-tagged at HEAD ($(git rev-parse iter1-anchor | cut -c1-12))"
 
 # Supervisor verify
 eval $PYTHON_RUN autoresearch/supervisor_agent.py --verify \

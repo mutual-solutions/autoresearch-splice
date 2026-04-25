@@ -145,3 +145,15 @@ reports/
 .omc/regen-fulllog.txt
 .omc/regen-pid.txt
 .omc/regen-spot-check/
+
+# korean-iter1 corpus output (1.4 GB regenerable bytes, not committed).
+# Reproducible deterministically via:
+#   ./scripts/finalize_korean_iter1_pivot.sh
+# (extracts tarball, runs regenerate_korean_iter1.py with file-hash seeds).
+data/eval/korean_iter1/
+
+# Finalize-runbook run-local logs + pid file
+.omc/finalize-fulllog.txt
+.omc/finalize-pid.txt
+.omc/train-classifier.log
+.omc/train-pid.txt
