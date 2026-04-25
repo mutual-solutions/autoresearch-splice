@@ -870,6 +870,15 @@ for dom in sorted(per):
         # var before exec'ing claude so dataset_registry in the claude
         # subprocess resolves the default (missing) data/eval/ paths.
         _phase_start claude
+        # 2026-04-26 fix: wrap the claude invocation in set +e so a non-zero
+        # exit (rate limit, network blip, hung subprocess returning eventually
+        # with non-zero) does NOT trip set -e and crash the wrapper. The
+        # existing claude_exit + rate-limit-grep logic below already handles
+        # all non-zero cases gracefully (sleep + continue for rate limits,
+        # backoff for other errors). Caught after a 16-min hang at iter-10
+        # produced loop.crash signal=1 with NO intervening events between
+        # iteration.start (20:37:16) and the crash (20:53:04).
+        set +e
         iteration_output=$(env -u OMC_EVAL_DATA_ROOT -u OMC_FEATURE_CACHE_DIR -u OMC_FEATURES_PY_SHA claude -p "You are forming ONE hypothesis for the audio splice detection project.
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
@@ -979,6 +988,7 @@ Do NOT loop. Execute exactly ONE iteration and exit." \
 
         # Check if claude itself failed (rate limit, token exhausted, crash)
         claude_exit=$?
+        set -e
         _phase_end claude
 
         # Iteration stdout is multi-line and can be thousands of chars. It
