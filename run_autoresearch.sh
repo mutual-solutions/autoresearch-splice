@@ -1306,9 +1306,13 @@ except Exception:
         printf '%s\n' "$verify_output" >>"$CHILD_STDERR_LOG"
 
         if [ $verify_exit -ne 0 ]; then
+            _log INFO wrapper bp.verifyfail step=before_log_to_results_tsv
             log_to_results_tsv "verify-fail" "$hypothesis_commit" "$hypothesis_subject"
+            _log INFO wrapper bp.verifyfail step=before_guarded_reset
             _guarded_reset "$head_before"
+            _log INFO wrapper bp.verifyfail step=before_append_note
             _phase_start note; _append_note "verify-fail" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _log INFO wrapper bp.verifyfail step=before_iter_summary
             _phase_end total
             _iter_summary "$hypothesis_commit" "verify-fail"
             consecutive_discards=$((consecutive_discards + 1))
@@ -1318,6 +1322,7 @@ except Exception:
         fi
 
         # VERIFIED KEEP.
+        _log INFO wrapper bp.keep step=before_keep_path_verified
         consecutive_discards=0
         _log INFO wrapper keep_path.verified combined="$reported" prev="$current_best"
         log_to_results_tsv "keep" "$hypothesis_commit" "$hypothesis_subject"
