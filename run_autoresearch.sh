@@ -1261,17 +1261,30 @@ except Exception:
                     || _log ERROR pipeline failure "script=supervisor_agent.py --diagnose" rc="$?"
                 _maybe_crash_maintain
             fi
+            # ralph-monitor breadcrumb instrumentation — tracks which command
+            # in the discard handler is the last to complete before any crash.
+            # Find the breadcrumb just before loop.crash in autoresearch.jsonl
+            # to know where the failing command is. Remove these once the bug
+            # is identified and fixed.
+            _log INFO wrapper bp.discard step=before_log_to_results_tsv
             log_to_results_tsv "discard" "$hypothesis_commit" "$hypothesis_subject"
+            _log INFO wrapper bp.discard step=before_guarded_reset
             _guarded_reset "$head_before"
+            _log INFO wrapper bp.discard step=before_append_note
             _phase_start note; _append_note "discard" "$hypothesis_commit" "$hypothesis_subject"; _phase_end note
+            _log INFO wrapper bp.discard step=before_phase_skip
             _phase_skip verify
             _phase_end total
+            _log INFO wrapper bp.discard step=before_iter_summary
             _iter_summary "$hypothesis_commit" "discard"
+            _log INFO wrapper bp.discard step=before_counter_reset
             # US-517: reset crash counter on non-catastrophic discard (combined > 0.05)
             if [ "$_catastrophic" != "1" ]; then
                 echo 0 > "$PROJECT_DIR/.omc/supervisor-crash-counter.txt"
             fi
+            _log INFO wrapper bp.discard step=before_periodic_maintain
             _maybe_periodic_maintain
+            _log INFO wrapper bp.discard step=before_continue
             consecutive_discards=$((consecutive_discards + 1))
             continue
         fi
