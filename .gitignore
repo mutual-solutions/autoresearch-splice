@@ -30,6 +30,11 @@ results.tsv
 # Stale cache (see ml_eval.py note — no longer written, but guard against reappearance)
 .omc/classifier/patches_korean_splice.npz
 
+# Transient feature-extraction cache — multi-GB binary, regenerable via features.py.
+# Live cache and any archived snapshot.
+.omc/feature_cache/
+.omc/archive/*/feature_cache_*/
+
 # Raw source-audio pools — 20+ GB from zeroth-korean / LibriSpeech / singing
 # clean WAVs. Reproducible via external downloads; not worth committing.
 data/sources/
