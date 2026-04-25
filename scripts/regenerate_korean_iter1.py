@@ -85,19 +85,29 @@ _MIN_SILENCE_MS = 120
 # Fully-implemented helpers (used by --verify-source)
 # ---------------------------------------------------------------------------
 
-def read_tarball_manifest(tarball: Path) -> dict:
-    """Read manifest.json from the tarball root.
+def read_tarball_manifest(source: Path) -> dict:
+    """Read manifest.json from a corpus source.
 
-    Opens the tarball with tarfile, locates the top-level manifest.json
-    member, and returns its parsed contents.
+    `source` may be either a tarball file (.tar) OR an extracted directory
+    (the directory must contain `manifest.json` at its root or one level deep).
+    The directory mode bypasses tar seek-contention and is recommended for
+    multi-worker regen runs from external/USB storage.
 
-    Raises FileNotFoundError if the tarball does not exist.
-    Raises KeyError if manifest.json is not found inside the tarball.
+    Raises FileNotFoundError if the source does not exist.
+    Raises KeyError if manifest.json is not found.
     """
-    if not tarball.exists():
-        raise FileNotFoundError(f"Tarball not found: {tarball}")
+    if not source.exists():
+        raise FileNotFoundError(f"Source not found: {source}")
 
-    with tarfile.open(tarball, "r:*") as tf:
+    if source.is_dir():
+        # Search for manifest.json at root then one level deep.
+        candidates = list(source.glob("manifest.json")) + list(source.glob("*/manifest.json"))
+        if not candidates:
+            raise KeyError(f"manifest.json not found under {source}")
+        candidates.sort(key=lambda p: len(str(p)))
+        return json.loads(candidates[0].read_text())
+
+    with tarfile.open(source, "r:*") as tf:
         candidates = [
             m for m in tf.getmembers()
             if m.name.endswith("manifest.json") and not m.isdir()
@@ -111,6 +121,26 @@ def read_tarball_manifest(tarball: Path) -> dict:
         if fobj is None:
             raise KeyError(f"Cannot extract {member.name}")
         return json.load(fobj)
+
+
+def _source_root_for_member(source: Path, member_name: str) -> Path:
+    """Resolve a tarball member name to its on-disk path under an extracted source.
+
+    Tarball members like 'audio/conversation_00088.wav' map to
+    `<source>/audio/conversation_00088.wav` if extracted at root, OR to
+    `<source>/<top>/audio/conversation_00088.wav` if there's a single
+    top-level dir. This helper handles both layouts.
+    """
+    direct = source / member_name
+    if direct.exists():
+        return direct
+    # Try one level deep (extractor may have preserved a top-level dir)
+    for top in source.iterdir():
+        if top.is_dir():
+            candidate = top / member_name
+            if candidate.exists():
+                return candidate
+    raise FileNotFoundError(f"Member {member_name} not found under {source}")
 
 
 def voice_diversity_check(
@@ -813,15 +843,22 @@ def _process_one(
     rng = np.random.default_rng(file_seed)
 
     try:
-        with tarfile.open(tarball, "r:*") as tf:
-            audio_member = tf.getmember(file_entry["audio_file"])
-            transcript_member = tf.getmember(file_entry["transcript_file"])
-            audio_fobj = tf.extractfile(audio_member)
-            tx_fobj = tf.extractfile(transcript_member)
-            if audio_fobj is None or tx_fobj is None:
-                raise RuntimeError("tarfile.extractfile returned None")
-            audio_raw = audio_fobj.read()
-            transcript = json.load(tx_fobj)
+        if tarball.is_dir():
+            # Directory mode: read extracted files directly (no tar seeks).
+            audio_path = _source_root_for_member(tarball, file_entry["audio_file"])
+            transcript_path = _source_root_for_member(tarball, file_entry["transcript_file"])
+            audio_raw = audio_path.read_bytes()
+            transcript = json.loads(transcript_path.read_text())
+        else:
+            with tarfile.open(tarball, "r:*") as tf:
+                audio_member = tf.getmember(file_entry["audio_file"])
+                transcript_member = tf.getmember(file_entry["transcript_file"])
+                audio_fobj = tf.extractfile(audio_member)
+                tx_fobj = tf.extractfile(transcript_member)
+                if audio_fobj is None or tx_fobj is None:
+                    raise RuntimeError("tarfile.extractfile returned None")
+                audio_raw = audio_fobj.read()
+                transcript = json.load(tx_fobj)
     except Exception as exc:
         log.emit(
             "ERROR", "regen.regenerate.conv.error",
