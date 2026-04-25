@@ -502,10 +502,14 @@ json.dump(data, open(vf, 'w'), indent=2)
         _log INFO wrapper keep_path.shap_shift line="$shap_shift_line"
         echo "[auto] $shap_shift_line" >> "$PROJECT_DIR/.omc/last_reflection.md"
     fi
+    _log INFO wrapper bp.keep step=after_shap_shift
 
     _phase_start note
+    _log INFO wrapper bp.keep step=before_append_note
     _append_note "$note_status" "$hypothesis_commit" "$note_subject"
+    _log INFO wrapper bp.keep step=after_append_note
     _phase_end note
+    _log INFO wrapper bp.keep step=before_keep_path_done
 
     _log INFO wrapper keep_path.done version="$VERSION"
 }
