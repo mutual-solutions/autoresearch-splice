@@ -4117,3 +4117,79 @@ per-domain: combined_english=0.255319 combined_korean=0.181818 combined_singing=
     / threshold decision data-driven; right now it's impossible to tell
     whether sigmoid/isotonic are even the right lever.
 
+## 2026-04-26T02:39:31+09:00 — babdaa6 (keep, combined=0.529698)
+subject: GBM_MIN_SEP_S 1.25 -> 1.1 (continue bisection within [1.0, 1.25] bracket; trend monotonic) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from current best keep 4f92bdf(c)(2): 'GBM_THRESHOLD lowering remains strongest pivot if 1.25 saturates or regresses' -- 1.25 did NOT saturate (1.5 -> 0.501, 1.25 -> 0.521 is +0.020 gain on the proven productive axis, still pulling toward verify-failed-but-real 1.0 -> 0.537 data point). Bisection completion within [1.0, 1.25] bracket BEFORE pivoting to fresh axis is the explicit cited rule. Frontier marks 1.0 as 'failed' so exact retry blocked; 1.1 is fresh, sits between two known-real points (1.0 -> 0.537 real, 1.25 -> 0.521 real), still 4.4x the 0.25s collar -- comfortable margin against single boundary attracting two emits inside +-0.25s. Linear interpolation between (1.0, 0.537) and (1.25, 0.521) predicts ~0.531 at 1.1 -- modest but high-confidence step. Why 1.1 (not 1.125 exact midpoint, not 1.05): cleaner decimal; biased slightly toward productive end of bracket while staying fresh on frontier; if 1.1 lands in 0.527-0.535 band confirms monotonic continuation and next bisection is [1.0, 1.1] (e.g. 1.05); if regresses, bracket inverts to 1.2/1.15. Mechanism on Korean recall (P=0.855 R=0.293, recall-bottlenecked): greedy dedupe at 1.25s suppresses any adjacent emission within 1.25s of highest-prob hit. Korean voice-switch boundaries spaced ~1.0-1.25s apart still partially lose second TP under 1.25s rule. Cutting to 1.1s lets boundary pairs >=1.1s both surface; pairs spaced 1.1-1.25s gain both TPs while 4.4x-collar margin keeps single-boundary spurious-neighbor suppression intact. Why not pivot to GBM_THRESHOLD 0.982 -> 0.97 yet: cited rule defers pivot until current axis saturates or regresses, neither has happened. GBM_THRESHOLD axis only has the catastrophic 0.5 contract-bug trial in frontier so it remains pocketed for next iter if 1.1 saturates. Why not retry 1.0 exact: frontier guard against repeat hypotheses blocks exact retry; would need retest sentinel workflow which is operator-owned. Smoke-verified: GBM_MIN_SEP_S=1.1 confirmed via import; other tunables stable (GBM_THRESHOLD=0.982 ANALYSIS_STRIDE_S=0.12 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_MIN_SEP_S 1.25 → 1.1 (continue bisection within [1.0, 1.25])
+
+(a) Pure `splice/detector.py` change — drop GBM_MIN_SEP_S from 1.25 to 1.1.
+    No retrain, no feature change, classifier byte-identical. Other primary
+    tunables stable (GBM_THRESHOLD=0.982, ANALYSIS_STRIDE_S=0.12,
+    DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0). FEATURE_NAMES stable at 80.
+
+(b) WHY over recent failures. Cited next-step from current best keep
+    4f92bdf(c)(2): "GBM_THRESHOLD lowering remains strongest pivot if 1.25
+    saturates or regresses." 1.25 did NOT saturate — 1.5 → 0.501,
+    1.25 → 0.521 is a +0.020 gain on the proven productive axis, still
+    pulling toward the verify-failed-but-real 1.0 → 0.537 data point.
+    Bisection completion within the [1.0, 1.25] bracket BEFORE pivoting
+    to a fresh axis is the explicit rule from the cited keep. Frontier
+    marks 1.0 as 'failed' so exact retry is blocked by the wrapper guard;
+    1.1 is fresh, sits between two known-real points (1.0 → 0.537 real,
+    1.25 → 0.521 real), still 4.4x the 0.25s collar — comfortable margin
+    against a single boundary attracting two emits inside ±0.25s. Linear
+    interpolation between (1.0, 0.537) and (1.25, 0.521) predicts ~0.531
+    at 1.1 — a modest but high-confidence step on a proven axis. Why
+    1.1 (not 1.125 exact midpoint, not 1.05): cleaner decimal; biased
+    slightly toward the productive end of the bracket while staying
+    fresh on the frontier; if 1.1 lands in the 0.527-0.535 band it
+    confirms monotonic continuation and the next bisection is [1.0, 1.1]
+    (e.g. 1.05); if it regresses, the bracket inverts and the next step
+    is 1.2 / 1.15. Mechanism on Korean recall (P=0.855 / R=0.293,
+    recall-bottlenecked): greedy dedupe at 1.25s suppresses any adjacent
+    emission within 1.25s of highest-prob hit. Korean voice-switch
+    boundaries spaced ~1.0-1.25s apart still partially lose the second
+    TP under the 1.25s rule. Cutting to 1.1s lets boundary pairs ≥1.1s
+    both surface; pairs spaced 1.1-1.25s gain both TPs while 4.4x-collar
+    margin keeps single-boundary spurious-neighbor suppression intact.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.521 — bracket inverts;
+    bisect upward to 1.2 or 1.15 next iter. (2) Combined saturates near
+    0.521 — GBM_MIN_SEP_S axis exhausted within [1.0, 1.25]; pivot to
+    GBM_THRESHOLD descent (cited strongest pivot — recall is the
+    dominant bottleneck). First step 0.982 → 0.97 (fresh near current;
+    only other GBM_THRESHOLD trial 0.5 was catastrophic 0.289 with
+    contract bug). (3) Combined matches or exceeds 0.537 — direction
+    confirmed across three real points; next iter try 1.05 (continue
+    descent within now-validated band) OR retest the wrapper-blocked
+    1.0 hypothesis via the retest sentinel workflow.
+
+(d) Information gaps. Per-domain combined breakdown still NOT in
+    baseline_metrics.json on this branch — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has
+    not captured it yet)". Cannot tell which of singing/korean/english
+    is dragging the GM floor on korean-iter1, only see aggregate.
+    cross_voice_f1=0 and same_voice_edit_f1=0 in baseline plus
+    unknown_label_count=241 suggest the contract fix may still leak
+    labels — cannot verify without per-domain visibility.
+
+(e) Wrapper enhancements. (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON
+    on the iter1 branch — currently captured for non-iter1 baselines
+    but missing here, forcing every hypothesis to fly blind on per-domain
+    decomposition. (2) GBM_MIN_SEP_S BISECTION HISTORY TABLE in CURRENT
+    STATE — frontier shows the 'tried' set as a flat list {1.0, 1.25,
+    1.5, 2.0} with kept/failed labels but doesn't show combined-per-value,
+    so bisection direction has to be reconstructed from RESEARCH NOTES
+    every iteration. A 4-row sorted table (value, combined,
+    kept/failed/verify-fail-real) would make the next-step choice
+    instant. (3) WRAPPER VERIFY-FAIL "REAL VS GUARDED" DISTINCTION in
+    frontier — 1.0 → 0.537 real but verify-failed for non-metric
+    reasons (per 6f6abbf preflight path bug) is currently treated as
+    'failed' identically to a true regression, blocking the natural
+    exact-retry. A 'verify_fail_reason' tag (corpus_purged |
+    metric_regression | runtime_crash | preflight_path_bug) would let
+    the frontier distinguish 'this value is bad' from 'this value was
+    never actually evaluated'.
+[auto] (no SHAP data for either 4f92bdf or babdaa6)
+
