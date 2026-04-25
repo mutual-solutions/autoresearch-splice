@@ -58,7 +58,21 @@ assert len(TEST_DURATION_S) == len(ENCODING_PLAN) == 10
 CROSSFADE_MS = [10, 10, 10, 50, 50, 50, 100, 100, 200, 200]  # 10 per cell
 assert len(CROSSFADE_MS) == 10
 
-REGIMES = ["random", "quiet_matched"]  # 10 files each
+REGIMES = ["random", "quiet_matched"]  # 10 files each (cross-source regimes)
+
+# US-601: Same-source domains always use quiet_matched (no random regime).
+# Each splice cuts within ONE continuous source file — modeling voice-memo
+# self-editing. Cross-source path (legacy) is preserved for domains where
+# same_source=False (dormant: singing, korean until swapped).
+SAME_SOURCE_DOMAINS = {
+    "english": True,
+    "korean": False,   # dormant this wave, reads same-source flag when data returns
+    "singing": False,  # dormant
+}
+
+# Minimum per-window duration for same-source splices. L1 + L2 = target, each
+# ≥ SAME_SOURCE_MIN_HALF_S seconds, randomized within constraints.
+SAME_SOURCE_MIN_HALF_S = 2.0
 
 SPLICE_FRAC_RANGE = (0.30, 0.70)  # splice lands in 30-70% of the file
 
@@ -101,6 +115,12 @@ def _sorted_korean_speakers() -> list[tuple[str, list[Path]]]:
 
 
 def _sorted_english_speakers() -> list[tuple[str, list[Path]]]:
+    """LibriSpeech speaker pool — dormant after US-601 same-source switch.
+
+    Retained for historical compatibility and for rollback path. The active
+    english source pool is _sorted_english_sources() (AMI + ICSI headset
+    channels) when SAME_SOURCE_DOMAINS['english'] is True.
+    """
     base = _ROOT / "data" / "sources" / "LibriSpeech" / "dev-clean"
     speakers: dict[str, list[Path]] = {}
     if base.exists():
@@ -109,6 +129,32 @@ def _sorted_english_speakers() -> list[tuple[str, list[Path]]]:
             if paths:
                 speakers[spk_dir.name] = paths
     return list(speakers.items())
+
+
+def _sorted_english_sources() -> list[tuple[str, Path]]:
+    """AMI + ICSI headset channels as same-source single-speaker entries.
+
+    Each file = one continuous single-speaker recording with naturalistic
+    meeting-room noise floor. Source id:
+      - AMI: filename stem (e.g. 'IS1000a.Headset-0')
+      - ICSI: '<meeting_id>_<channel>' (e.g. 'Bdb001_chan3')
+    """
+    sources: list[tuple[str, Path]] = []
+
+    ami_root = _ROOT / "data" / "sources" / "ami"
+    if ami_root.exists():
+        for wav in sorted(ami_root.rglob("*.Headset-*.wav")):
+            sources.append((wav.stem, wav))
+
+    icsi_root = _ROOT / "data" / "sources" / "icsi"
+    if icsi_root.exists():
+        # ICSI ships as per-channel NIST SPH files; post-download they may be
+        # converted to WAV. Match both so generator works before + after.
+        for audio in sorted(list(icsi_root.rglob("chan*.wav")) + list(icsi_root.rglob("chan*.sph"))):
+            meeting_id = audio.parent.name
+            sources.append((f"{meeting_id}_{audio.stem}", audio))
+
+    return sources
 
 
 def _slice_pool(items: list, split: str, sizes: tuple[int, int, int]):
@@ -142,6 +188,15 @@ def build_source_pool(domain: str, split: str) -> SourcePool:
         return SourcePool("korean", split, 16000, entries)
 
     if domain == "english":
+        if SAME_SOURCE_DOMAINS.get("english", False):
+            items = _sorted_english_sources()
+            # AMI+ICSI yields ~700 per-speaker WAVs. Bigger splits available;
+            # split sizes chosen to deterministically slice by sorted source id.
+            sizes = (60, 30, 20)
+            picked = _slice_pool(items, split, sizes)
+            entries = [(sid, _make_wav_loader(p, 16000)) for sid, p in picked]
+            return SourcePool("english", split, 16000, entries)
+        # Legacy LibriSpeech cross-source path (dormant).
         items = _sorted_english_speakers()
         sizes = (20, 12, 8)
         picked = _slice_pool(items, split, sizes)
@@ -363,6 +418,7 @@ def regenerate(domain: str, split: str, seed: int = 42) -> None:
         return arr
 
     def _pair(min_samples: int, exclude: set[int]) -> tuple[int, int, np.ndarray, np.ndarray]:
+        """Cross-source: pick two DIFFERENT sources each ≥ min_samples. Legacy."""
         idxs = [i for i in range(len(pool.entries)) if i not in exclude]
         rs.shuffle(idxs)
         a = b = None
@@ -381,7 +437,53 @@ def regenerate(domain: str, split: str, seed: int = 42) -> None:
             raise RuntimeError(f"could not find 2 sources with ≥{min_samples} samples")
         return i_a, i_b, a, b
 
+    def _single_source_windows(
+        target_samples: int, min_half_samples: int,
+    ) -> tuple[int, np.ndarray, np.ndarray, int, int]:
+        """Same-source: pick ONE source long enough for two non-overlapping
+        windows summing to target_samples, each ≥ min_half_samples.
+
+        Returns (src_idx, seg_a, seg_b, L1, L2) where L1 + L2 = target_samples.
+        Window lengths are randomized each call.
+        """
+        min_source_len = 2 * min_half_samples + int(0.5 * pool.sr)
+        idxs = list(range(len(pool.entries)))
+        rs.shuffle(idxs)
+        for cand in idxs:
+            try:
+                full = _load(cand, min_source_len)
+            except ValueError:
+                continue
+            if len(full) < target_samples + min_half_samples:
+                continue
+            # Randomize L1 in [min_half, target - min_half], L2 = target - L1.
+            L1 = int(rs.randint(min_half_samples, target_samples - min_half_samples + 1))
+            L2 = target_samples - L1
+            # start_a ∈ [0, len(full) - L1 - L2] so that start_b = start_a + L1
+            # can still fit L2 samples after it.
+            max_start_a = len(full) - (L1 + L2) - 1
+            if max_start_a < 0:
+                continue
+            start_a = int(rs.randint(0, max_start_a + 1))
+            # Non-overlapping: seg_b starts at least at start_a + L1. Add a
+            # small gap to discourage boundary overlap (quiet-match can cross
+            # the junction on its own).
+            min_start_b = start_a + L1
+            max_start_b = len(full) - L2
+            if min_start_b > max_start_b:
+                continue
+            start_b = int(rs.randint(min_start_b, max_start_b + 1))
+            seg_a = full[start_a:start_a + L1]
+            seg_b = full[start_b:start_b + L2]
+            return cand, seg_a, seg_b, L1, L2
+        raise RuntimeError(
+            f"no source entry ≥{target_samples + min_half_samples} samples for same-source splicing"
+        )
+
     # ---- Spliced files (tier1 + tier2) ----
+    same_source = SAME_SOURCE_DOMAINS.get(domain, False)
+    min_half_samples = int(SAME_SOURCE_MIN_HALF_S * pool.sr)
+
     for spec in [s for s in specs if s.tier in (1, 2)]:
         target_samples = int(spec.duration_s * pool.sr)
         # Margin for crossfade length + safety
@@ -390,28 +492,70 @@ def regenerate(domain: str, split: str, seed: int = 42) -> None:
 
         splice_samples = -1
         info = {}
-        for try_idx in range(15):
-            try:
-                i_a, i_b, full_a, full_b = _pair(target_samples, exclude=set())
-            except RuntimeError as e:
-                raise RuntimeError(f"{spec.filename}: {e}")
-            # Pick a contiguous target_samples slice of each
-            start_a = int(rs.randint(0, len(full_a) - target_samples + 1))
-            start_b = int(rs.randint(0, len(full_b) - target_samples + 1))
-            seg_a = full_a[start_a:start_a + target_samples]
-            seg_b = full_b[start_b:start_b + target_samples]
-            try:
-                splice_samples, info = find_splice_point(
-                    seg_a, seg_b, pool.sr, rs,
-                    mode=spec.regime,
-                    splice_range=SPLICE_FRAC_RANGE,
-                    margin_samples=margin,
+
+        if same_source:
+            # Same-source splice: pick ONE source, two non-overlapping windows.
+            # Always quiet_matched (regime stored accordingly).
+            if target_samples < 2 * min_half_samples:
+                raise RuntimeError(
+                    f"{spec.filename}: duration {spec.duration_s}s too short "
+                    f"for same-source (need ≥ {2 * SAME_SOURCE_MIN_HALF_S}s)"
                 )
-                break
-            except ValueError:
-                continue
-        if splice_samples < 0:
-            raise RuntimeError(f"{spec.filename}: regime {spec.regime!r} unsatisfiable after 15 tries")
+            i_s = -1
+            seg_a = seg_b = None
+            L1 = L2 = 0
+            for try_idx in range(15):
+                try:
+                    i_s, seg_a, seg_b, L1, L2 = _single_source_windows(
+                        target_samples, min_half_samples,
+                    )
+                except RuntimeError as e:
+                    raise RuntimeError(f"{spec.filename}: {e}")
+                try:
+                    splice_samples, info = find_splice_point(
+                        seg_a, seg_b, pool.sr, rs,
+                        mode="quiet_matched",
+                        splice_range=SPLICE_FRAC_RANGE,
+                        margin_samples=margin,
+                    )
+                    break
+                except ValueError:
+                    continue
+            if splice_samples < 0:
+                raise RuntimeError(
+                    f"{spec.filename}: same-source quiet_matched unsatisfiable after 15 tries"
+                )
+            src_a = src_b = pool.entries[i_s][0]
+            # `i_a, i_b, full_a, full_b` kept below as aliases so the tier-specific
+            # concat/crossfade code stays unified across both paths.
+            i_a, i_b = i_s, i_s
+            full_a, full_b = seg_a, seg_b  # only used in debug prints; unused downstream
+
+        else:
+            # Legacy cross-source path (two different sources).
+            for try_idx in range(15):
+                try:
+                    i_a, i_b, full_a, full_b = _pair(target_samples, exclude=set())
+                except RuntimeError as e:
+                    raise RuntimeError(f"{spec.filename}: {e}")
+                start_a = int(rs.randint(0, len(full_a) - target_samples + 1))
+                start_b = int(rs.randint(0, len(full_b) - target_samples + 1))
+                seg_a = full_a[start_a:start_a + target_samples]
+                seg_b = full_b[start_b:start_b + target_samples]
+                try:
+                    splice_samples, info = find_splice_point(
+                        seg_a, seg_b, pool.sr, rs,
+                        mode=spec.regime,
+                        splice_range=SPLICE_FRAC_RANGE,
+                        margin_samples=margin,
+                    )
+                    break
+                except ValueError:
+                    continue
+            if splice_samples < 0:
+                raise RuntimeError(f"{spec.filename}: regime {spec.regime!r} unsatisfiable after 15 tries")
+            src_a = pool.entries[i_a][0]
+            src_b = pool.entries[i_b][0]
 
         if spec.tier == 1:
             spliced = np.concatenate([seg_a[:splice_samples], seg_b[splice_samples:]])
@@ -429,8 +573,6 @@ def regenerate(domain: str, split: str, seed: int = 42) -> None:
         encode_file(spliced.astype(np.float32), pool.sr, spec.encoding, out_path)
 
         splice_time_sec = splice_samples / pool.sr
-        src_a = pool.entries[i_a][0]
-        src_b = pool.entries[i_b][0]
         ground_truth[spec.filename] = {
             "path": f"tier{spec.tier}/{spec.filename}",
             "spliced": True,
@@ -439,15 +581,17 @@ def regenerate(domain: str, split: str, seed: int = 42) -> None:
             "splice_time_sec": round(splice_time_sec, 6),
             "duration_s": spec.duration_s,
             "encoding": spec.encoding,
-            "boundary_energy": spec.regime,
+            "boundary_energy": "quiet_matched" if same_source else spec.regime,
             "boundary_rms_db_a": round(info["rms_db_a"], 2),
             "boundary_rms_db_b": round(info["rms_db_b"], 2),
             "source_a": src_a,
             "source_b": src_b,
+            "same_source": same_source,
             "n_candidates": info.get("n_candidates", -1),
         }
+        regime_label = "same-source/quiet_matched" if same_source else spec.regime
         print(f"  {spec.filename}: splice@{splice_time_sec:.2f}s  "
-              f"[{spec.regime}]  cf={spec.crossfade_ms}ms  enc={spec.encoding}")
+              f"[{regime_label}]  cf={spec.crossfade_ms}ms  enc={spec.encoding}")
 
     # ---- Clean files (one source each) ----
     for spec in [s for s in specs if s.tier == 0]:

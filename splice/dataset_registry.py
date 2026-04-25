@@ -60,18 +60,25 @@ class Dataset:
 
 
 DATASETS: list[Dataset] = [
+    # Dormant: awaiting same-source corpus data swap. Code paths preserved.
     Dataset(
         id="singing",
         eval_path=_eval_path(_DATA / "eval" / "singing", "singing"),
         train_path=_DATA / "train" / "singing",
         test_path=_DATA / "test" / "singing",
+        eval_weight=0.0,
+        train_weight=0.0,
     ),
+    # Dormant: no naturalistic long-form Korean corpus available yet.
     Dataset(
         id="korean",
         eval_path=_eval_path(_DATA / "eval" / "korean", "korean"),
         train_path=_DATA / "train" / "korean",
         test_path=_DATA / "test" / "korean",
+        eval_weight=0.0,
+        train_weight=0.0,
     ),
+    # Active: AMI + ICSI headset channels, same-source splicing.
     Dataset(
         id="english",
         eval_path=_eval_path(_DATA / "eval" / "english", "english"),

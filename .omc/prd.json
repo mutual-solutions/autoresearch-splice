@@ -354,7 +354,8 @@
       "id": "US-518B",
       "title": "Prune feature_cache on discard path — prevent runaway growth during discard streaks",
       "priority": 72,
-      "passes": false,
+      "passes": true,
+      "shipped_in": "7845270",
       "note": "Discovered during the 24h-stability monitor: with 9 consecutive discards post-SIGPIPE-fix, feature_cache grew 8 GB → 25 GB (disk 16 GB → 4.2 GB, below preflight 5 GB floor). Root cause: existing _prune_feature_cache_gb only fires at loop-start + post-keep. Each discarded hypothesis that bumps features.py sha adds ~4 GB cache that never gets reclaimed until the next keep. Fix: invoke _prune_feature_cache_gb at top of while-loop (post-disk-check, pre-iteration.start), with OMC_FEATURES_PY_SHA unset so the guard uses post-reset (baseline) sha via git hash-object fallback. Idempotent no-op when cache ≤ 8 GB cap.",
       "acceptanceCriteria": [
         "run_autoresearch.sh has a _prune_feature_cache_gb invocation at the top of the run_loop while loop (between _check_disk_space soft and iteration.start)",
@@ -364,6 +365,140 @@
         "`PYTHONPATH=$PWD uv run python scripts/validate_logs.py --audit` reports 0 violations",
         "After loop restart with 25 GB cache, first iteration observes cache ≤ 8 GB (prune fires at L692 loop-start, before any new sha work)",
         "Over ≥ 3 consecutive discard iterations post-restart, feature_cache stays ≤ 10 GB (demonstrates the new top-of-loop prune reclaims discard-added shas)"
+      ]
+    },
+    {
+      "id": "US-600",
+      "title": "Acquire AMI + ICSI headset channels to external drive",
+      "priority": 100,
+      "passes": false,
+      "note": "100 GB raw audio doesn't fit locally. HIKSEMI external drive has 430 GB free. Pattern matches existing zeroth-korean external-drive storage. Only per-speaker headset WAV channels are needed (not far-field array mics).",
+      "acceptanceCriteria": [
+        "/Volumes/HIKSEMI/autoresearch-splice-sources/ami/ contains per-speaker headset WAVs for ≥80 AMI meetings (filename pattern: <meeting_id>.Headset-<n>.wav)",
+        "/Volumes/HIKSEMI/autoresearch-splice-sources/icsi/ contains per-speaker headset WAVs for ≥60 ICSI meetings",
+        "data/sources/ami and data/sources/icsi symlink to the external drive paths",
+        "Both corpora carry CC-BY-4.0 attribution documented in data/sources/ami/LICENSE + data/sources/icsi/LICENSE",
+        "soundfile can open a spot-check sample from each corpus without error"
+      ]
+    },
+    {
+      "id": "US-601",
+      "title": "Generator same-source splice mode (randomized windows, quiet_matched only)",
+      "priority": 101,
+      "passes": false,
+      "acceptanceCriteria": [
+        "scripts/regenerate_datasets.py accepts a `same_source=True` flag per domain in the spec-building code path",
+        "When same_source is True, the generator picks ONE source file and samples two non-overlapping windows of randomized lengths L1+L2=target_duration with L1,L2 ≥ 2s from within that source",
+        "Both windows are fed to find_splice_point(seg_a, seg_b, sr, mode='quiet_matched', ...) — boundary_energy is always quiet_matched (no 'random' regime)",
+        "Ground truth row carries source_a == source_b (same id) AND an explicit same_source: true field",
+        "`bash -n run_autoresearch.sh` + existing selftest + pytest autoresearch/tests/ all pass",
+        "Cross-source path code is preserved (commented or gated on flag) for future domain re-activation"
+      ]
+    },
+    {
+      "id": "US-602",
+      "title": "dataset_registry.py dormant-domain weights + English stays active",
+      "priority": 102,
+      "passes": false,
+      "acceptanceCriteria": [
+        "splice/dataset_registry.py retains Dataset entries for all 3 domain ids (singing, korean, english)",
+        "singing entry: eval_weight=0, train_weight=0",
+        "korean entry: eval_weight=0, train_weight=0",
+        "english entry: eval_weight=1, train_weight=1 (unchanged from current)",
+        "DATASETS list order preserves existing domain position so iteration order is stable",
+        "`uv run python -c 'from splice.dataset_registry import DATASETS; assert len(DATASETS) == 3' ` passes",
+        "train_classifier.py + evaluate.py iterate DATASETS with the existing `train_weight > 0` / `eval_weight > 0` filters and skip dormant domains gracefully without raising"
+      ]
+    },
+    {
+      "id": "US-603",
+      "title": "Regenerate English data as same-source splices",
+      "priority": 103,
+      "passes": false,
+      "acceptanceCriteria": [
+        "data/train/english/, data/eval/english/, data/test/english/ each contain tier1/ (20 spliced files) + tier2/ (20 spliced files) + clean/ (20 clean files) + ground_truth.json",
+        "All spliced entries in ground_truth.json have same_source=true, source_a==source_b, boundary_energy='quiet_matched'",
+        "Per-file duration envelopes honor existing schema: EVAL_TRAIN_DURATION_S for train+eval, TEST_DURATION_S for test",
+        "Spot-check 3 random spliced files per split: splice_time_sec lies within [0.30*duration, 0.70*duration], both halves audibly from the same speaker",
+        "Total plaintext size under 10 GB combined across the 3 english splits"
+      ]
+    },
+    {
+      "id": "US-604",
+      "title": "Archive old encrypted blobs + re-encrypt new English corpus",
+      "priority": 104,
+      "passes": false,
+      "acceptanceCriteria": [
+        "data/eval.tar.gz.enc.pre-samesource and data/test.tar.gz.enc.pre-samesource exist (renamed from originals)",
+        "New data/eval.tar.gz.enc produced via scripts/eval_crypto.py encrypt (session-keychain key, no biometric)",
+        "New data/test.tar.gz.enc produced via scripts/test_crypto.py encrypt (Touch ID prompt confirmed)",
+        "Plaintext data/eval/english, data/train/english, data/test/english trees shredded per encrypt lifecycle (scripts/eval_crypto.py encrypt handles this)",
+        "Decrypting the new eval blob via scripts/eval_crypto.py decrypt --keep and running preflight.py on it produces 0 integrity violations"
+      ]
+    },
+    {
+      "id": "US-605",
+      "title": "Retrain classifier on new English data",
+      "priority": 105,
+      "passes": false,
+      "acceptanceCriteria": [
+        "PYTHONPATH=$PWD uv run python splice/classifier/train_classifier.py runs to completion on new data without raising",
+        "splice/classifier/fp_classifier.joblib regenerated; timestamp newer than current",
+        "splice/classifier/fp_classifier.meta.json records features_py_sha AND train_classifier_py_sha (US-505b schema) + new training_timestamp",
+        "classification_report shows non-trivial precision/recall on hard_cut + crossfade classes (not both 0.0 — proves the task has learnable signal)"
+      ]
+    },
+    {
+      "id": "US-606",
+      "title": "Establish empirical baseline metric",
+      "priority": 106,
+      "passes": false,
+      "acceptanceCriteria": [
+        "autoresearch/baseline_metrics.json regenerated with the new English-only configuration (combined score, per-domain dict with only 'english' populated, clean_fp_total, splice_f1, training_timestamp, git_sha)",
+        "combined value is empirically measured on the new eval set — no precommitted target, whatever the value is becomes the baseline",
+        "baseline_metrics.json.pre-samesource archive of the OLD baseline is preserved for reference",
+        "The new baseline is committed as a standalone commit with subject 'baseline: combined=<value> after samesource-english rebuild' (matching existing baseline-commit conventions so autoresearch loop recognizes it)"
+      ]
+    },
+    {
+      "id": "US-607",
+      "title": "Clear agent state (logs / research notes / feature cache / results ledger)",
+      "priority": 107,
+      "passes": false,
+      "acceptanceCriteria": [
+        ".omc/logs/autoresearch.jsonl* all removed (rotated copies too)",
+        ".omc/research_notes.md, .omc/last_reflection.md, .omc/enhancement-backlog.md removed",
+        ".omc/feature_cache/ directory removed entirely",
+        "results.tsv archived to results.tsv.pre-samesource; a fresh empty results.tsv with header row in place",
+        ".omc/specs/archived-pre-samesource/ directory exists containing the old agent-drafted deep-interview specs (deep-interview-*.md files moved there)",
+        "autoresearch/baseline_metrics.json.pre-samesource preserved (from US-606) while the new active baseline is used",
+        ".omc/regime-samples/, .omc/fp-samples/ — cleanup/remove if present (operator debug artifacts)",
+        ".omc/supervisor-crash-counter.txt reset to 0"
+      ]
+    },
+    {
+      "id": "US-608",
+      "title": "PRD reset, loop restart, 24h monitor armed",
+      "priority": 108,
+      "passes": false,
+      "acceptanceCriteria": [
+        "prd.json stories referencing singing FPs / Korean FPs / cross-source behavior (existing US entries) stay as historical record with passes=true — NOT deleted",
+        "US-600..US-608 (this rebuild set) marked passes=true",
+        ".omc/autoresearch-stop sentinel removed",
+        "./run_autoresearch.sh start launches; tmux session 'autoresearch' alive; loop.started event appears in fresh .omc/logs/autoresearch.jsonl",
+        "First post-restart iteration produces iteration.start + claude phase + retrain (features.py sha may be unchanged on iter 1) + eval events within 30 min without loop.crash",
+        "24h monitor T0 set to the loop.started timestamp; wakeup chain scheduled at 1h cadence"
+      ]
+    },
+    {
+      "id": "US-609",
+      "title": "Extensibility smoke test — dormant domain plugability",
+      "priority": 109,
+      "passes": false,
+      "acceptanceCriteria": [
+        "Temporarily add a dummy 4th dataset to DATASETS (eval_weight=0, train_weight=0, path='/tmp/nonexistent') — train_classifier.py and evaluate.py both run without raising",
+        "After verification, remove the dummy entry (rollback to the 3-domain state)",
+        "Documents in .omc/specs/deep-interview-same-source-rebuild.md that future domain re-activation requires only: (a) populate data/<split>/<domain>/, (b) bump weights to >0, (c) retrain."
       ]
     }
   ]

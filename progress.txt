@@ -1,0 +1,31 @@
+# Ralph progress — same-source rebuild
+
+## Completed
+- PRD expansion: US-600..US-609 added to .omc/prd.json (10 stories)
+- US-601: scripts/regenerate_datasets.py refactored
+  - Added SAME_SOURCE_DOMAINS flag ({"english": True, "korean": False, "singing": False})
+  - Added _sorted_english_sources() reading AMI+ICSI headset WAVs
+  - Added _single_source_windows() helper with randomized L1+L2=target window sampling
+  - Refactored regenerate() spliced-file loop to branch on same_source flag
+  - Added `same_source` field to ground_truth schema
+  - Legacy cross-source path preserved
+- US-602: splice/dataset_registry.py weights updated
+  - singing: eval_weight=0, train_weight=0
+  - korean: eval_weight=0, train_weight=0  
+  - english: eval_weight=1, train_weight=1 (active)
+  - All 3 Dataset entries preserved for future plug-in extensibility
+- US-607 (partial): archived old deep-interview specs to .omc/specs/archived-pre-samesource/
+  Deleted .omc/regime-samples/ and .omc/fp-samples/ operator debug artifacts
+- Gates: pytest 49/49 passed post-edit. AST parse OK.
+
+## In flight (background)
+- US-600: corpus download agent running — AMI + ICSI headset channels to /Volumes/HIKSEMI/autoresearch-splice-sources/
+
+## Blocked on US-600
+- US-603: English data regeneration
+- US-604: Blob archival + re-encryption
+- US-605: Classifier retrain
+- US-606: Empirical baseline establishment
+- US-607 (destructive parts): logs, research_notes, feature_cache, results.tsv, baseline_metrics
+- US-608: Loop restart
+- US-609: Extensibility smoke test
