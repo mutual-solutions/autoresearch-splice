@@ -108,7 +108,8 @@ m['expected_counts'] = {'_train_files': $NTRAIN, '_eval_files': $NEVAL, '_test_f
 open('autoresearch/manifest.json','w').write(json.dumps(m, indent=2) + '\n')
 "
 git add autoresearch/manifest.json
-git commit -m "MIGRATE-PROTECTED autoresearch/manifest.json: korean-iter1 real GT SHA + counts (post-regen)"
+# --allow-empty so re-runs against an already-correct manifest don't trip set -e.
+git commit --allow-empty -m "MIGRATE-PROTECTED autoresearch/manifest.json: korean-iter1 real GT SHA + counts (post-regen)"
 
 # ------- F. TRAIN CLASSIFIER --------
 banner "F. Train 3-class GBM classifier (~10 min)"
