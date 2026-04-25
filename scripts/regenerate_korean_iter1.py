@@ -274,9 +274,18 @@ def _file_seed(file_id: str, seed_base: int) -> int:
 def _flatten_word_alignment(turns: list[dict]) -> list[dict]:
     """Flatten transcript turns into a list of words with absolute timestamps.
 
+    BUG FIX (2026-04-25): the iter-1 manifest's word_alignment start_ms /
+    end_ms fields are ABSOLUTE timestamps (i.e., already offset within the
+    full audio), NOT relative-to-turn. Earlier code added turn.start_ms,
+    double-counting and shifting cuts ~turn_start_ms forward — landing some
+    cuts in inter-turn silences (cutting nothing meaningful) and others
+    inside unrelated words (e.g. mid-syllable "지난번" → "지번"). Verified
+    by comparing turn 5's first word_alignment.start_ms (21688) against
+    its turn.start_ms (21478) — they're nearly equal, confirming absolute.
+
     Each returned dict carries:
-        word, start_ms, end_ms, turn_idx, prev_word_end_ms (or turn start),
-        next_word_start_ms (or turn end).
+        word, start_ms, end_ms, turn_idx, prev_end_ms, next_start_ms
+        (all in ABSOLUTE-audio-time milliseconds).
     """
     out: list[dict] = []
     for turn in turns:
@@ -284,14 +293,14 @@ def _flatten_word_alignment(turns: list[dict]) -> list[dict]:
         turn_start = int(turn.get("start_ms", 0))
         turn_end = int(turn.get("end_ms", 0))
         for j, w in enumerate(wa):
-            ws = int(w.get("start_ms", 0)) + turn_start
-            we = int(w.get("end_ms", 0)) + turn_start
+            ws = int(w.get("start_ms", 0))
+            we = int(w.get("end_ms", 0))
             prev_end = (
-                int(wa[j - 1].get("end_ms", 0)) + turn_start
+                int(wa[j - 1].get("end_ms", 0))
                 if j > 0 else turn_start
             )
             next_start = (
-                int(wa[j + 1].get("start_ms", 0)) + turn_start
+                int(wa[j + 1].get("start_ms", 0))
                 if j + 1 < len(wa) else turn_end
             )
             out.append({

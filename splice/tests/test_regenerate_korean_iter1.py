@@ -314,3 +314,46 @@ def test_file_seed_deterministic() -> None:
 def test_file_seed_in_uint32_range() -> None:
     seed = regen._file_seed("conversation_99999", seed_base=12345)
     assert 0 <= seed <= 0xFFFFFFFF
+
+
+# Regression test for the 2026-04-25 word_alignment absolute-vs-relative bug.
+# The iter-1 manifest's word_alignment fields are ABSOLUTE timestamps, not
+# relative-to-turn. Earlier code added turn.start_ms, double-counting and
+# producing out-of-bounds positions. This test guards against regression.
+def test_flatten_word_alignment_treats_timestamps_as_absolute():
+    from scripts.regenerate_korean_iter1 import _flatten_word_alignment
+    # Synthetic transcript: 2 turns, word_alignment is in absolute audio time.
+    turns = [
+        {
+            "idx": 0,
+            "start_ms": 0,
+            "end_ms": 2000,
+            "word_alignment": [
+                {"word": "hello", "start_ms": 100, "end_ms": 500},
+                {"word": "world", "start_ms": 800, "end_ms": 1500},
+            ],
+        },
+        {
+            "idx": 1,
+            "start_ms": 2500,    # turn 2 starts at 2.5 sec (post-gap)
+            "end_ms": 5000,
+            "word_alignment": [
+                # ABSOLUTE positions within full audio:
+                {"word": "foo", "start_ms": 2700, "end_ms": 3200},
+                {"word": "bar", "start_ms": 3500, "end_ms": 4500},
+            ],
+        },
+    ]
+    flat = _flatten_word_alignment(turns)
+    assert len(flat) == 4
+    # The pre-fix bug would have produced 2700 + 2500 = 5200 here.
+    assert flat[2]["word"] == "foo"
+    assert flat[2]["start_ms"] == 2700, \
+        f"expected absolute 2700; got {flat[2]['start_ms']} (regression of the +turn_start bug)"
+    assert flat[2]["end_ms"] == 3200
+    assert flat[3]["word"] == "bar"
+    assert flat[3]["start_ms"] == 3500
+    # prev_end for turn-2's first word should be the turn boundary, not turn-1's last word
+    assert flat[2]["prev_end_ms"] == 2500  # turn 2's start_ms
+    # next_start for the last word in a turn should be the turn end
+    assert flat[3]["next_start_ms"] == 5000  # turn 2's end_ms
