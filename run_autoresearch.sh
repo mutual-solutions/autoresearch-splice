@@ -242,6 +242,11 @@ _guarded_reset() {
 # or the baseline commit (keep). Orphan detectors ignore `note:`
 # subjects because they only match `hypothesis:`.
 _append_note() {
+    # ralph-monitor instrumentation: localize set-e crashes inside this function.
+    # set -x prints each command to stderr (captured into child-stderr.log via
+    # the wrapper's >&2 redirect). ERR trap fires on any non-zero exit.
+    set -x
+    trap '_log ERROR wrapper append_note_err_trap command="$BASH_COMMAND" line="$LINENO"; set +x' ERR
     local status="$1"        # keep | discard | verify-fail
     local short_sha="$2"
     local subject="$3"       # stripped of `hypothesis: ` prefix
@@ -292,6 +297,8 @@ _append_note() {
         git add "$notes"
         git commit -m "note: digest compaction" >>"$CHILD_STDERR_LOG" 2>&1 || true
     fi
+    set +x
+    trap - ERR
 }
 
 # Flag `hypothesis:` commits in the last N that lack a paired `baseline:`
