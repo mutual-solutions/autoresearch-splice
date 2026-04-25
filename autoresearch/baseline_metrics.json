@@ -1,0 +1,36 @@
+{
+  "timestamp": "2026-04-25T11:44:58.575102Z",
+  "git_sha": "8530ba891ab3792dac02396abc88ae79853ab012",
+  "phase": "korean_iter1_pivot_initial",
+  "combined": 0.385382,
+  "precision": 0.87,
+  "recall": 0.247511,
+  "n_files": 60,
+  "collar_ms": 250,
+  "splice_class_breakdown": {
+    "cross_voice_f1": 0.0,
+    "same_voice_edit_f1": 0.0
+  },
+  "voices_holdout": {
+    "test": [
+      "DaeBuHo",
+      "Kanna"
+    ],
+    "eval": [
+      "Sunwoo",
+      "Joon"
+    ],
+    "train": [
+      "ChloeCha",
+      "DangchanYeo",
+      "Donghyun",
+      "Eunha",
+      "Minho",
+      "Minwoo",
+      "Ondo"
+    ]
+  },
+  "regen_determinism_receipt_sha": "bd000d1f2ad5",
+  "unknown_label_count": 200,
+  "note": "Iter-0 baseline. Detector emits \"unknown\" labels by default (Item 3); per-class F1 starts at 0 \u2014 agent improves by populating labels with class-specific evidence."
+}
