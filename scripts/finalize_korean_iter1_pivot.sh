@@ -31,7 +31,14 @@ TARBALL="/Volumes/HIKSEMI/korean-iter-1-delivery.tar"
 EXTRACT_DIR="/Volumes/HIKSEMI/korean-iter-1-delivery"
 OUTPUT_ROOT="$REPO_ROOT/data/eval/korean_iter1"
 SENTINEL="$REPO_ROOT/.omc/korean-iter1-regen-in-progress"
-PYTHON_RUN="PYTHONPATH=$REPO_ROOT uv run python"
+# NOTE: use `env KEY=VAL ...` not bare `KEY=VAL ...` so that variable
+# expansion of $PYTHON_RUN word-splits cleanly under bash without `eval`.
+# The bare-KEY=VAL form requires bash to recognize the prefix at parse
+# time, but variable expansion happens AFTER parse, so without eval the
+# entire expansion is treated as one command name and fails. With `env`,
+# the leading word is just `env` (a real command) which handles the env-
+# var assignment itself — no eval, no multi-line argument re-tokenization.
+PYTHON_RUN="env PYTHONPATH=$REPO_ROOT uv run python"
 
 red() { printf "\033[31m%s\033[0m\n" "$*"; }
 grn() { printf "\033[32m%s\033[0m\n" "$*"; }
@@ -66,7 +73,7 @@ fi
 banner "C. Regenerate corpus (workers=8, ~12 min)"
 rm -rf "$OUTPUT_ROOT"
 mkdir -p "$OUTPUT_ROOT"
-eval $PYTHON_RUN scripts/regenerate_korean_iter1.py --regenerate \
+$PYTHON_RUN scripts/regenerate_korean_iter1.py --regenerate \
   --workers 8 --tarball "$EXTRACT_DIR" --output-root "$OUTPUT_ROOT" \
   2>&1 | tee .omc/regen-fulllog.txt | tail -3
 
@@ -80,20 +87,20 @@ grn "Regen wrote $NTOTAL .opus files (train=$NTRAIN, eval=$NEVAL, test=$NTEST)"
 
 # ------- D. VERIFY DETERMINISM --------
 banner "D. Verify determinism (10 random samples byte-diff)"
-eval $PYTHON_RUN scripts/regenerate_korean_iter1.py --verify-determinism \
+$PYTHON_RUN scripts/regenerate_korean_iter1.py --verify-determinism \
   --tarball "$EXTRACT_DIR" --output-root "$OUTPUT_ROOT" --sample 10 \
   2>&1 | tee -a .omc/regen-fulllog.txt | tail -3
 grn "Determinism receipt at .omc/korean-iter1-determinism-receipt.json"
 
 # ------- E. UPDATE MANIFEST SHA --------
 banner "E. Update autoresearch/manifest.json with real ground_truth SHA + counts"
-GT_SHA=$(eval $PYTHON_RUN -c "
+GT_SHA=$($PYTHON_RUN -c "
 import hashlib, sys
 print(hashlib.sha256(open('$OUTPUT_ROOT/eval/ground_truth.json','rb').read()).hexdigest()[:12])
 ")
 grn "ground_truth.json SHA-256 prefix = $GT_SHA"
 
-eval $PYTHON_RUN -c "
+$PYTHON_RUN -c "
 import json
 m = json.load(open('autoresearch/manifest.json'))
 m['ground_truth_sha256_prefix'] = '$GT_SHA'
@@ -105,7 +112,7 @@ git commit -m "MIGRATE-PROTECTED autoresearch/manifest.json: korean-iter1 real G
 
 # ------- F. TRAIN CLASSIFIER --------
 banner "F. Train 3-class GBM classifier (~10 min)"
-eval $PYTHON_RUN splice/classifier/train_classifier.py 2>&1 | tee .omc/train-classifier.log | tail -10
+$PYTHON_RUN splice/classifier/train_classifier.py 2>&1 | tee .omc/train-classifier.log | tail -10
 [[ -f splice/classifier/fp_classifier.joblib ]] || { red "FAIL: classifier bundle not produced."; exit 1; }
 grn "Classifier bundle written: $(ls -la splice/classifier/fp_classifier.joblib)"
 git add splice/classifier/fp_classifier.joblib splice/classifier/fp_classifier.meta.json
@@ -113,11 +120,11 @@ git commit -m "korean-iter1: train iter-0 3-class classifier (cross_voice / no_s
 
 # ------- G. SMOKE ITERATION + BASELINE WRITE + VERIFY --------
 banner "G. Smoke iteration + atomic baseline write + supervisor verify"
-eval $PYTHON_RUN splice/evaluate.py 2>&1 | tee .omc/last_eval.log | tail -3
+$PYTHON_RUN splice/evaluate.py 2>&1 | tee .omc/last_eval.log | tail -3
 COMBINED=$(grep '^combined:' .omc/last_eval.log | tail -1 | awk '{print $2}')
 grn "Smoke iter combined = $COMBINED"
 
-eval $PYTHON_RUN -c "
+$PYTHON_RUN -c "
 import json, tempfile, os, subprocess, datetime, hashlib
 from pathlib import Path
 
@@ -173,7 +180,7 @@ git tag -a iter1-anchor HEAD -m "Safe first-iteration discard target — iter-0 
 grn "iter1-anchor re-tagged at HEAD ($(git rev-parse iter1-anchor | cut -c1-12))"
 
 # Supervisor verify
-eval $PYTHON_RUN autoresearch/supervisor_agent.py --verify \
+$PYTHON_RUN autoresearch/supervisor_agent.py --verify \
   --agent-name maintainer-pivot --reported-combined "$COMBINED" \
   || { red "FAIL: supervisor --verify failed."; exit 1; }
 grn "Supervisor verify PASSED."
