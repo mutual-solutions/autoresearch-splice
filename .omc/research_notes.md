@@ -4266,3 +4266,96 @@ per-domain: (no per-domain data)
     actually evaluated".
 [auto] (no SHAP data for either babdaa6 or b6cbe35)
 
+## 2026-04-26T04:26:23+09:00 — e357941 (discard, combined=0.537055)
+subject: GBM_MIN_SEP_S 1.05 -> 1.025 (bisection within saturated [1.0, 1.05] bracket; 1.05 -> 0.537 matched verify-failed-but-real 1.0 -> 0.537, definitive saturation test) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from current best keep b6cbe35(c)(3): 'next iter try 1.025 OR retest the wrapper-blocked 1.0 hypothesis via retest sentinel workflow'. b6cbe35 just landed 1.05 at 0.537 -- EXACT match with verify-failed-but-real 1.0 -> 0.537 data point (real per 6f6abbf preflight bug; verify-failed only because legacy data/eval.tar.gz.enc had no korean_iter1 subdir). GBM_MIN_SEP_S axis now has 6 monotonic-then-plateau real data points: 2.0 -> 0.481, 1.5 -> 0.501, 1.25 -> 0.521, 1.1 -> 0.530, 1.05 -> 0.537, 1.0 -> 0.537. Productive descent from 2.0 to 1.05 plateaued at 0.537 within [1.0, 1.05] band -- strong saturation signal. 1.025 is bisection midpoint and definitively settles saturation: if 1.025 -> 0.537 or below, full saturation confirmed and next iter cleanly pivots to GBM_THRESHOLD 0.982 -> 0.975 (cited strongest pivot, recall is dominant bottleneck per P=0.855 R=0.293); if 1.025 -> 0.538+, descent continues marginally and next bisection is [1.0, 1.025]. Either outcome high-information. 1.025 is fresh on frontier (frontier set: {1.0 failed-but-real, 1.05 kept, 1.1 kept, 1.25 kept, 1.5 kept, 2.0 kept}); sits between two known-real points (1.0 -> 0.537, 1.05 -> 0.537); 4.1x the 0.25s collar -- still comfortable margin against single boundary attracting two emits inside +-0.25s; satisfies docstring 'Must exceed evaluate.py 1.0s tolerance' rule (1.025 > 1.0). Why 1.025 not 1.0 retry: frontier guard against repeat hypotheses blocks exact retry; 1.0 recovery requires operator-owned retest sentinel workflow. Why not pivot directly to GBM_THRESHOLD now: bisection-completion-within-bracket-before-pivoting-to-fresh-axis is the explicit cited rule from 5 consecutive keeps (b6cbe35, babdaa6, 720bd9c, 665d50e, original 1.0 try); one more data point gives definitive evidence to pivot with high confidence rather than abandoning a productive axis prematurely. Mechanism on Korean recall (P=0.855 R=0.293, recall-bottlenecked): greedy dedupe at 1.05s still suppresses any adjacent emission within 1.05s of highest-prob hit. Korean voice-switch boundaries occasionally span 1.025-1.05s band; cutting to 1.025s lets pairs >=1.025s both surface. If this band is empty (no GT boundary pairs spaced 1.025-1.05s apart in Korean corpus), result will saturate at 0.537 -- clean signal that the recall floor is boundary-pair-spacing-bounded and next lever is GBM_THRESHOLD descent. Smoke-verified: GBM_MIN_SEP_S=1.025 confirmed via import; other tunables stable (GBM_THRESHOLD=0.982 ANALYSIS_STRIDE_S=0.12 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_MIN_SEP_S 1.05 → 1.025 (bisection within saturated [1.0, 1.05] bracket)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop GBM_MIN_SEP_S
+    from 1.05 to 1.025. No retrain, no feature change, classifier
+    byte-identical. Other primary tunables stable: GBM_THRESHOLD=0.982,
+    ANALYSIS_STRIDE_S=0.12, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    FEATURE_NAMES stable at 80. 1.025 is fresh on the frontier
+    (frontier set: {1.0 failed-but-real, 1.05 kept, 1.1 kept, 1.25 kept,
+    1.5 kept, 2.0 kept}).
+
+(b) WHY over recent failures. EXPLICIT CITED NEXT-STEP from current best
+    keep b6cbe35(c)(3): "Combined matches or exceeds 0.537 — direction
+    confirmed even more strongly across 6 real points; next iter try
+    1.025 OR retest the wrapper-blocked 1.0 hypothesis via retest
+    sentinel workflow." Bisection-completion-within-bracket-before-
+    pivoting-to-fresh-axis is the explicit cited rule from 5 consecutive
+    keeps (b6cbe35, babdaa6, 720bd9c, 665d50e, original 1.0 try).
+    GBM_MIN_SEP_S axis now has 6 real data points: 2.0→0.481, 1.5→0.501,
+    1.25→0.521, 1.1→0.530, 1.05→0.537, 1.0→0.537 (real per 6f6abbf
+    preflight bug fix). The exact match of 1.05→0.537 with the
+    verify-failed-but-real 1.0→0.537 is STRONG saturation signal — the
+    productive descent from 2.0 down to 1.05 has plateaued at 0.537
+    within the [1.0, 1.05] band. 1.025 is the bisection midpoint and
+    will definitively settle saturation: if 1.025 → 0.537 or below,
+    saturation is fully confirmed and next iter cleanly pivots to
+    GBM_THRESHOLD 0.982 → 0.975 (recall is the bottleneck per P=0.855
+    R=0.293, threshold drop is the cited strongest pivot). If 1.025
+    → 0.538+, the descent continues marginally and the next bisection
+    is [1.0, 1.025]. Either outcome is informative. 1.025 sits between
+    two known-real points (1.0 → 0.537, 1.05 → 0.537), at 4.1x the
+    0.25s collar — still comfortable margin against single-boundary
+    spurious-neighbor inflation, and still satisfies docstring's
+    "Must exceed evaluate.py's 1.0s tolerance" rule (1.025 > 1.0).
+    Why 1.025 not 1.0 retry: frontier guard against repeat hypotheses
+    blocks exact retry; 1.0 recovery requires operator-owned retest
+    sentinel workflow. Why not pivot directly to GBM_THRESHOLD now:
+    the bisection rule says complete the active bracket first; one
+    more data point (1.025) gives definitive evidence to pivot with
+    high confidence rather than abandoning a productive axis prematurely.
+    Mechanism on Korean recall: greedy dedupe at 1.05s still suppresses
+    boundary pairs spaced 1.025-1.05s apart. Korean voice-switch
+    boundaries occasionally span this band — cutting to 1.025s lets
+    pairs ≥1.025s both surface. If this band is already empty (no GT
+    boundary pairs spaced 1.025-1.05s apart in Korean corpus), result
+    will saturate at 0.537 — clean signal that the recall floor is
+    boundary-pair-spacing-bounded and the next lever is GBM_THRESHOLD.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.537 — GBM_MIN_SEP_S
+    saturation confirmed and 1.025 is just-below-noise; pivot
+    immediately to GBM_THRESHOLD 0.982 → 0.975 (cited strongest pivot,
+    recall bottleneck, fresh value between current 0.982 and historical
+    0.97-kept). (2) Combined matches 0.537 exactly — full saturation
+    confirmation; same pivot to GBM_THRESHOLD 0.982 → 0.975 next iter
+    with rock-solid evidence that GBM_MIN_SEP_S band is exhausted in
+    the [1.0, 1.05] productive range. (3) Combined exceeds 0.538 —
+    descent continues marginally; next iter try 1.0125 or pivot to
+    operator-owned retest sentinel for the wrapper-blocked 1.0 exact
+    point.
+
+(d) Information gaps. Per-domain combined breakdown STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has
+    not captured it yet)". Cannot verify singing/english are not
+    silently regressing while I tune toward Korean recall. Frontier
+    text shows GBM_MIN_SEP_S 'tried' as a flat list without paired
+    combined values per attempt — bisection direction has to be
+    reconstructed from RESEARCH NOTES every iteration. The 1.0 →
+    0.537 verify-failed-but-real point is shown as 'failed' identical
+    to a true regression, blocking the natural exact-retry without an
+    operator workflow.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch
+    — currently captured for non-iter1 baselines but missing here,
+    forcing every hypothesis to fly blind on per-domain decomposition.
+    Even if just `combined_korean / combined_english / combined_singing`
+    in three keys would unlock per-axis targeting.
+    (2) GBM_MIN_SEP_S BISECTION HISTORY TABLE in CURRENT STATE — a
+    6-row sorted table (value, combined, kept/failed/verify-fail-real)
+    would make the saturation vs descent judgment instant rather than
+    requiring me to reconstruct the trajectory from RESEARCH NOTES every
+    iteration. Generalize to any frequently-bisected primary tunable.
+    (3) WRAPPER VERIFY-FAIL "REAL VS GUARDED" DISTINCTION in frontier
+    — a `verify_fail_reason` tag (corpus_purged | metric_regression |
+    runtime_crash | preflight_path_bug) would let the frontier
+    distinguish "this value is bad" from "this value was never actually
+    evaluated", unlocking exact-retry of preflight-bugged points
+    without manual operator retest sentinel workflow.
+
