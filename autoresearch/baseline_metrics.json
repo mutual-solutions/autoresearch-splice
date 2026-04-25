@@ -1,8 +1,8 @@
 {
-  "timestamp": "2026-04-25T15:29:03.524062Z",
-  "git_sha": "78f1dbfc8aaab3eefbd3a539da2eb39bbceb43e3",
+  "timestamp": "2026-04-25T16:57:20Z",
+  "git_sha": "665d50e",
   "phase": "korean_iter1_pivot_initial_post_bug_fix",
-  "combined": 0.436441,
+  "combined": 0.48073,
   "precision": 0.854772,
   "recall": 0.29303,
   "n_files": 60,
