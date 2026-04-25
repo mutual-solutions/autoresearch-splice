@@ -1485,11 +1485,17 @@ def _regenerate_in_memory(
     file_seed = _file_seed(conv_id, seed_base)
     rng = np.random.default_rng(file_seed)
 
-    with tarfile.open(tarball, "r:*") as tf:
-        audio_member = tf.getmember(file_entry["audio_file"])
-        transcript_member = tf.getmember(file_entry["transcript_file"])
-        audio_raw = tf.extractfile(audio_member).read()
-        transcript = json.load(tf.extractfile(transcript_member))
+    if tarball.is_dir():
+        audio_path = _source_root_for_member(tarball, file_entry["audio_file"])
+        transcript_path = _source_root_for_member(tarball, file_entry["transcript_file"])
+        audio_raw = audio_path.read_bytes()
+        transcript = json.loads(transcript_path.read_text())
+    else:
+        with tarfile.open(tarball, "r:*") as tf:
+            audio_member = tf.getmember(file_entry["audio_file"])
+            transcript_member = tf.getmember(file_entry["transcript_file"])
+            audio_raw = tf.extractfile(audio_member).read()
+            transcript = json.load(tf.extractfile(transcript_member))
 
     audio = _decode_audio_bytes(audio_raw, fmt, target_sr=_TARGET_SR)
     sr = _TARGET_SR
