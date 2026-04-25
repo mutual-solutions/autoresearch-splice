@@ -266,17 +266,27 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
             continue
 
         # --- Feature extraction ---
-        # For each candidate we build a window centred on the boundary time
-        # and extract features at the boundary-local position within that window.
-        for t_abs, label_str in candidates:
-            chunk, win_start_s, win_dur_s = _extract_window(audio, sr, t_abs)
-            t_local = t_abs - win_start_s
-            # Clamp t_local to valid range
-            t_local = float(np.clip(t_local, 0.5, win_dur_s - 0.5))
+        # OPTIMIZATION: build the DSP chunk context ONCE per conversation on
+        # the whole audio, then query features at each candidate's absolute
+        # time. The original per-candidate context build was redundant (window
+        # half-width was 30s, conversations average 48s — so every "window"
+        # was essentially the whole audio anyway, rebuilt 30× per conv at
+        # ~1.7s/build → ~30 hours for the full corpus). Per-conv build is
+        # ~30× faster.
+        try:
+            conv_ctx = _build_chunk_context(audio, sr)
+        except Exception as e:
+            log.emit("WARN", "diag.train.ctx_failed",
+                     conv_id=conv_id, error=str(e))
+            n_skip += 1
+            continue
+        audio_dur = len(audio) / sr
 
+        for t_abs, label_str in candidates:
+            # Clamp absolute time to valid query range within the audio.
+            t_query = float(np.clip(t_abs, 0.5, max(audio_dur - 0.5, 0.5)))
             try:
-                ctx = _build_chunk_context(chunk, sr)
-                feats = extract_features(chunk, sr, t_local, chunk_ctx=ctx)
+                feats = extract_features(audio, sr, t_query, chunk_ctx=conv_ctx)
             except Exception as e:
                 log.emit("WARN", "diag.train.feature_failed",
                          conv_id=conv_id, t_abs=round(t_abs, 3), error=str(e))
@@ -292,8 +302,7 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
             manifest.append({
                 "conv_id": conv_id,
                 "t_abs": round(t_abs, 3),
-                "t_local": round(t_local, 3),
-                "win_start_s": round(win_start_s, 3),
+                "t_query": round(t_query, 3),
                 "label": label_str,
                 "y": y_int,
                 "conv_fid": fid,
@@ -313,7 +322,7 @@ def build_dataset() -> tuple[np.ndarray, np.ndarray, np.ndarray, list[dict]]:
         f"positives={n_pos_total} negatives={n_neg_total} elapsed={elapsed:.1f}s",
         flush=True,
     )
-    log.emit("classifier.train.data_loaded",
+    log.emit("INFO", "classifier.train.data_loaded",
              n_files=n_files, n_positive=n_pos_total, n_negative=n_neg_total,
              per_class_count=json.dumps(per_class_count))
 
@@ -346,13 +355,13 @@ def _hash_object(p: Path) -> str | None:
 
 def train() -> dict:
     log = get_logger("classifier.train")
-    log.emit("classifier.train.start")
+    log.emit("INFO", "classifier.train.start")
     print("=== Building training set ===", flush=True)
 
     try:
         X, y, groups, manifest = build_dataset()
     except Exception as e:
-        log.emit("classifier.retrain.failed", error=str(e))
+        log.emit("ERROR", "classifier.retrain.failed", error=str(e))
         raise
 
     n_samples, n_features = X.shape
@@ -361,7 +370,7 @@ def train() -> dict:
     n_groups = len(set(groups.tolist()))
     if n_groups < 2:
         err = f"Need at least 2 conversation groups for CV, got {n_groups}."
-        log.emit("classifier.retrain.failed", error=err)
+        log.emit("ERROR", "classifier.retrain.failed", error=err)
         raise RuntimeError(err)
 
     n_splits = min(N_FOLDS, n_groups)
@@ -377,7 +386,7 @@ def train() -> dict:
         try:
             pipe.fit(X[tr], y[tr])
         except Exception as e:
-            log.emit("classifier.retrain.failed", error=f"fold {fold_idx+1}: {e}")
+            log.emit("ERROR", "classifier.retrain.failed", error=f"fold {fold_idx+1}: {e}")
             raise
         pred = pipe.predict(X[te])
         oof_pred[te] = pred
@@ -390,7 +399,7 @@ def train() -> dict:
             "f1_weighted": f1_w,
             "f1_macro": f1_m,
         })
-        log.emit("classifier.train.oof_fold",
+        log.emit("INFO", "classifier.train.oof_fold",
                  fold=fold_idx + 1, train_size=len(tr),
                  val_size=len(te), val_f1=round(f1_m, 4))
         print(f"  Fold {fold_idx+1}: n_train={len(tr)} n_test={len(te)} "
@@ -427,7 +436,7 @@ def train() -> dict:
     try:
         final.fit(X, y)
     except Exception as e:
-        log.emit("classifier.retrain.failed", error=str(e))
+        log.emit("ERROR", "classifier.retrain.failed", error=str(e))
         raise
 
     joblib.dump(final, MODEL_OUT)
@@ -476,7 +485,7 @@ def train() -> dict:
     with open(META_OUT, "w") as fh:
         json.dump(meta, fh, indent=2)
 
-    log.emit("classifier.train.complete",
+    log.emit("INFO", "classifier.train.complete",
              f1_macro=round(oof_f1_m, 4),
              classes_count=len(CLASS_NAMES),
              model_size_kb=model_size_kb)
