@@ -242,11 +242,6 @@ _guarded_reset() {
 # or the baseline commit (keep). Orphan detectors ignore `note:`
 # subjects because they only match `hypothesis:`.
 _append_note() {
-    # ralph-monitor instrumentation: localize set-e crashes inside this function.
-    # set -x prints each command to stderr (captured into child-stderr.log via
-    # the wrapper's >&2 redirect). ERR trap fires on any non-zero exit.
-    set -x
-    trap '_log ERROR wrapper append_note_err_trap command="$BASH_COMMAND" line="$LINENO"; set +x' ERR
     local status="$1"        # keep | discard | verify-fail
     local short_sha="$2"
     local subject="$3"       # stripped of `hypothesis: ` prefix
@@ -261,9 +256,14 @@ _append_note() {
     local combined per_domain_line
     combined=$(printf '%s' "$tsv_line" | grep -oE "\\bcombined=[0-9.]+" | head -1 | cut -d= -f2)
     combined="${combined:-NA}"
+    # 2026-04-26 fix: korean-iter1 RESULTS_TSV no longer contains
+    # combined_(singing|korean|english) fields. grep matches nothing,
+    # pipeline exits 1 under pipefail, and the assignment trips set -e.
+    # `|| true` swallows the harmless empty match. Confirmed via ERR-trap
+    # diagnostic in 266dd25; this is the SURGICAL fix.
     per_domain_line=$(printf '%s' "$tsv_line" \
         | grep -oE "\\bcombined_(singing|korean|english)=[0-9.]+" \
-        | paste -sd' ' -)
+        | paste -sd' ' - || true)
     per_domain_line="${per_domain_line:-(no per-domain data)}"
 
     local reflection="(no reflection — claude did not write .omc/last_reflection.md this iteration)"
@@ -297,8 +297,6 @@ _append_note() {
         git add "$notes"
         git commit -m "note: digest compaction" >>"$CHILD_STDERR_LOG" 2>&1 || true
     fi
-    set +x
-    trap - ERR
 }
 
 # Flag `hypothesis:` commits in the last N that lack a paired `baseline:`
