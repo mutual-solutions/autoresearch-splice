@@ -4871,3 +4871,109 @@ per-domain: (no per-domain data)
     Either show all 3 values or fix the count.
 [auto] (no SHAP data for either 83c31eb or 40e565e)
 
+## 2026-04-26T11:40:06+09:00 — 2d6069d (keep, combined=0.594203)
+subject: ANALYSIS_STRIDE_S 0.10 -> 0.08 (continue cited descent on freshly productive STRIDE axis after 40e565e landed +0.012 going 0.12 -> 0.10) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from current best keep 40e565e(c)(3): 'Combined exceeds 0.557 -- STRIDE descent productive; next iter bisect downward to STRIDE=0.08 to continue'. 40e565e just delivered the largest single-iter gain since contract fix (0.5546 -> 0.567079, +0.012), decisively above the 0.557 trigger threshold for continuing cited descent. Bisection-completion-within-bracket-before-pivoting rule from 10 consecutive keeps says continue productive axis until saturation/regression; STRIDE just produced +0.012, not saturated. Both threshold-style primaries (GBM_THRESHOLD saturated at 0.5546 across [0.971, 0.972], GBM_MIN_SEP_S saturated at 0.537 across [1.0, 1.05]) remain saturated; STRIDE is the only axis with active descent momentum. 0.08 is fresh on frontier (frontier inspection: STRIDE values list {0.06x3 legacy keeps, 0.10x2 current keeps} -- 0.08 has never been tried on either classifier). Why -0.02 step (0.08 not 0.09 or 0.06): -0.02 mirrors proven productive 0.12 -> 0.10 step magnitude that just delivered +0.012, smooth continuation. 0.06 wrapper-blocked (legacy keep on pre-contract-fix classifier; frontier guard would block as repeat), so 0.08 is smallest fresh step matching cited magnitude. 0.09 would be half-step retreat from cited recommendation without saturation signal warranting it. Mechanism: STRIDE controls dense-scan candidate grid (line 268: t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)). At STRIDE=0.10, candidate emit times near GT boundary at 10.04s are 9.90/10.00/10.10; closest sample (10.00) is 40ms off-peak. At STRIDE=0.08 candidates become 9.92/10.00/10.08; closest still 10.00 but surrounding samples (+-80ms vs +-100ms) access different feature windows and thus different p_splice values. The 40e565e keep proves probability surface is NOT flat at 0.10 grain: going 0.12 -> 0.10 surfaced new TPs whose p_splice peak fell between 0.12 grid samples but landed above 0.972 on 0.10 grid. Same mechanism applies again at finer grain -- TPs whose p_splice peak rolls off below 0.972 within +-50ms of true peak get caught by 0.08 samples that 0.10 missed. Compute cost: STRIDE 0.10 -> 0.08 is +25% candidate evaluations on top of prior +20% (so ~50% over original 0.12 baseline); 40e565e completed eval at STRIDE=0.10 within 300s budget so +25% on most recent timing should still clear comfortably. Why not retrain pivot now: STRIDE has just one fresh data point on productive axis (0.10); cited rule says complete the bracket; retrain is most expensive lever (~3min vs zero), reserving until STRIDE saturates ensures eventual retrain decision rests on rock-solid evidence that ALL three primary axes exhausted. Smoke-verified: ANALYSIS_STRIDE_S=0.08 confirmed via import; other tunables stable (GBM_THRESHOLD=0.972 GBM_MIN_SEP_S=1.05 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: ANALYSIS_STRIDE_S 0.10 → 0.08 (continue cited descent on freshly productive STRIDE axis)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop ANALYSIS_STRIDE_S from
+    0.10 to 0.08. No retrain, no feature change, classifier byte-identical.
+    Other primary tunables stable: GBM_THRESHOLD=0.972, GBM_MIN_SEP_S=1.05,
+    DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0. FEATURE_NAMES stable at 80.
+    0.08 is fresh on the frontier (frontier inspection: STRIDE values list
+    {0.06×3 legacy keeps, 0.10×2 current keeps} — 0.08 has never been tried
+    on either classifier).
+
+(b) WHY over recent failures. EXPLICIT CITED NEXT-STEP from current best
+    keep 40e565e(c)(3): "Combined exceeds 0.557 — STRIDE descent productive;
+    next iter bisect downward to STRIDE=0.08 to continue." 40e565e just
+    landed +0.012 going 0.12 → 0.10 (0.5546 → 0.567079) — the largest
+    single-iter gain since the contract fix landed and decisively above
+    the 0.557 trigger threshold for continuing the cited descent.
+    Bisection-completion-within-bracket-before-pivoting rule from 10
+    consecutive keeps says continue productive axis until saturation/
+    regression. STRIDE just produced +0.012, not saturated. Both threshold-
+    style primaries (GBM_THRESHOLD, GBM_MIN_SEP_S) remain saturated; STRIDE
+    is the only axis with active descent momentum.
+
+    Why -0.02 step (0.08 not 0.09 or 0.06): -0.02 mirrors the proven
+    productive 0.12 → 0.10 step magnitude that just delivered +0.012;
+    smooth continuation. 0.06 is wrapper-blocked (legacy keep on
+    pre-contract-fix classifier; frontier guard would block as repeat),
+    so 0.08 is the smallest fresh step matching cited magnitude. 0.09
+    would be a half-step retreat from cited recommendation without a
+    saturation signal warranting it.
+
+    Mechanism: STRIDE controls the dense-scan candidate grid (line 268:
+    `t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)`).
+    At STRIDE=0.10, candidate emit times near a GT boundary at 10.04s
+    are 9.90/10.00/10.10; closest sample (10.00) is 40ms off-peak.
+    At STRIDE=0.08, candidates become 9.92/10.00/10.08; closest is still
+    10.00 but the surrounding samples (±80ms vs ±100ms) access different
+    feature windows and thus different p_splice values. The 40e565e
+    keep proves the probability surface is NOT flat at 0.10 grain:
+    going 0.12 → 0.10 surfaced new TPs whose p_splice peak fell between
+    0.12 grid samples but landed above 0.972 on the 0.10 grid. Same
+    mechanism applies again at finer grain — TPs whose p_splice peak
+    rolls off below 0.972 within ±50ms of true peak get caught by 0.08
+    samples that 0.10 missed.
+
+    Compute cost: STRIDE 0.10 → 0.08 is +25% candidate evaluations on top
+    of the prior +20% (so ~50% over original 0.12 baseline). 40e565e
+    completed eval at STRIDE=0.10 within the 300s budget; +25% on the
+    most recent timing should still clear comfortably. If not, this
+    discards on runtime not metric and the cliff itself is informative.
+
+    Why not retrain pivot now: STRIDE has just one fresh data point on
+    the productive axis (0.10); cited rule says complete the bracket.
+    Retrain is the most expensive lever (~3min vs zero); reserving it
+    until STRIDE saturates ensures the eventual retrain decision rests
+    on rock-solid evidence that ALL three primary axes are exhausted.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.567 — denser scan
+    surfaces marginal off-grid candidates that fail dedupe (more
+    candidates → more chance of intra-1.05s collisions → worse outcome)
+    OR opens FP candidates the 0.10 grid never saw; bisect upward to
+    STRIDE=0.09 next iter for finer evidence on the [0.08, 0.10] band,
+    OR pivot to RETRAIN axis (HistGBM min_samples_leaf 20→40, fcb8f4e
+    proved productive on legacy and is genuinely untouched on iter1).
+    (2) Combined matches 0.567 exactly — STRIDE descent saturated at
+    0.567 in [0.08, 0.10]; ALL three primary tunables exhausted on
+    iter1 contract-fixed classifier; pivot immediately to RETRAIN axis
+    (min_samples_leaf 20→40 most promising). (3) Combined exceeds 0.575
+    marginally — STRIDE descent confirmed across two values on
+    contract-fixed classifier; next iter bisect downward to STRIDE=0.07
+    to continue (still fresh, smaller -0.01 step matching diminishing-
+    returns pattern observed elsewhere).
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable)". 11 keeps in a row tuning
+    toward Korean recall by mechanism, still cannot verify singing /
+    english are not silently regressing. The frontier text shows
+    "ANALYSIS_STRIDE_S: 5 tried (kept: 0.06, 0.10; failed: -)" — same
+    pattern as before where named keeps total fewer than `tried` count;
+    only manual frontier inspection clarifies that the 5 tries are 0.06×3
+    and 0.10×2 with 0.08 still genuinely fresh. Per-grid emission count
+    delta (how many candidates above 0.972 at STRIDE 0.10 vs 0.08) would
+    directly resolve saturation-vs-productive without burning an iter.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 10 keeps, still missing. Even three keys
+    `combined_korean / combined_english / combined_singing` would unlock
+    per-axis targeting and let me catch silent regressions during
+    Korean-recall tuning.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should
+    carry a tag (e.g., `classifier_sha=<8>`) so legacy-kept values
+    (ANALYSIS_STRIDE_S 0.06, GBM_THRESHOLD 0.97) can be distinguished
+    from same-value retries on the current contract-fixed classifier.
+    (3) FRONTIER FULL-VALUE LIST WITH PAIRED METRICS: prompt currently
+    shows "5 tried (kept: 0.06, 0.10; failed: -)" — 5 tried but only
+    2 named with no per-value combined. A sorted table (value,
+    combined, kept/failed/verify-fail-real) would make bisection
+    direction instantly visible without me reconstructing trajectory
+    from RESEARCH NOTES every iter.
+[auto] (no SHAP data for either 40e565e or 2d6069d)
+
