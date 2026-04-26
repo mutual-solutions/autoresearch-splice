@@ -757,18 +757,16 @@ run_loop() {
         recent_keeps=""
         iter_summary=""
         if [ -f "$RESULTS" ]; then
-            # Last 30 discards/verify-fails WITH per-dataset breakdown so
-            # claude sees which domain the failure came from, not just the
-            # aggregate. NA rows (parse failures) are dropped.
+            # Korean-iter1 single-dataset: per-domain columns ($7..$12) are
+            # always NA in the new TSV. Drop them from the agent prompt so
+            # the agent doesn't waste tokens on phantom domain breakdowns.
             recent_failures=$(awk -F'\t' '
                 NR==1 {next}
                 ($13 == "discard" || $13 == "verify-fail") && $2 != "NA" {
-                    printf "  - combined=%s [singing %s / korean %s / english %s]: %s\n", \
-                           $2, $7, $8, $9, $14
+                    printf "  - combined=%s: %s\n", $2, $14
                 }' "$RESULTS" | tail -30)
 
-            # Top 5 keeps by combined — lets claude see what has worked,
-            # not only what has failed.
+            # Top 5 keeps by combined — lets claude see what has worked.
             # NOTE: `head -5` closes stdin early; under `set -euo pipefail`
             # that SIGPIPEs upstream `cut` → exit 141 → loop.crash. Disable
             # pipefail in the subshell so the head-based truncation can't
@@ -778,8 +776,7 @@ run_loop() {
                 awk -F'\t' '
                     NR==1 {next}
                     $13 == "keep" && $2 != "NA" {
-                        printf "%s\t  + combined=%s [singing %s / korean %s / english %s]: %s\n", \
-                               $2, $2, $7, $8, $9, $14
+                        printf "%s\t  + combined=%s: %s\n", $2, $2, $14
                     }' "$RESULTS" | sort -rn -k1,1 -t$'\t' | cut -f2- | head -5
             )
 
@@ -799,16 +796,26 @@ run_loop() {
         # aggregate GM plus each domain's individual combined so claude
         # can spot the weakest domain to target.
         current_best=$(python3 -c "import json; print(json.load(open('autoresearch/baseline_metrics.json')).get('combined', 0))" 2>/dev/null || echo "0")
+        # korean-iter1 single-dataset metric breakdown. Surfaces every
+        # field the agent needs to reason about the F0.5 × clean_fp_penalty
+        # objective: F0.5 ceiling, what's currently dragging it down,
+        # and per-class diagnostic F1.
         per_domain_state=$(python3 -c "
 import json
 d = json.load(open('autoresearch/baseline_metrics.json'))
-per = d.get('per_dataset_combined', {})
-fp = d.get('per_dataset_clean_fp', {})
-if not per:
-    print('  (per-dataset breakdown unavailable — baseline_metrics.json has not captured it yet)')
-else:
-    for ds in sorted(per):
-        print(f'    {ds:<8}  combined={per[ds]:.6f}  clean_fp={fp.get(ds, \"?\")}')
+def _f(k, fmt='.6f', default='?'):
+    v = d.get(k)
+    return format(v, fmt) if isinstance(v, (int, float)) else default
+print(f'  combined         = {_f(\"combined\")}    (= F0.5 × clean_fp_penalty)')
+print(f'  F0.5             = {_f(\"f0_5\")}    (precision-weighted F-beta ceiling)')
+print(f'  clean_fp_penalty = {_f(\"clean_fp_penalty\")}    (multiplicative drag)')
+print(f'  precision        = {_f(\"precision\")}')
+print(f'  recall           = {_f(\"recall\")}')
+print(f'  clean_fp_per_min = {_f(\"clean_fp_per_min\")}    (TAU=1.0 → halves penalty per +1)')
+print(f'  f1 (diagnostic)  = {_f(\"f1\")}')
+breakdown = d.get('splice_class_breakdown', {})
+print(f'  per-class F1     = cross_voice {format(breakdown.get(\"cross_voice_f1\", 0), \".6f\")}, same_voice_edit {format(breakdown.get(\"same_voice_edit_f1\", 0), \".6f\")} (DIAGNOSTIC — not in combined)')
+print(f'  unknown_label_count = {d.get(\"unknown_label_count\", \"?\")}    (preds coerced to unknown — high count = label-blind detector)')
 " 2>/dev/null)
 
         # SHAP rollup (US-500): biases claude's feature-engineering
@@ -888,18 +895,36 @@ for dom in sorted(per):
         iteration_output=$(env -u OMC_EVAL_DATA_ROOT -u OMC_FEATURE_CACHE_DIR -u OMC_FEATURES_PY_SHA claude -p "You are forming ONE hypothesis for the audio splice detection project.
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
-splice/evaluate.py iterates splice.dataset_registry.DATASETS (singing / korean / english)
-and for each dataset computes:
-    splice_f1   = harmonic_mean(precision, recall) over spliced files
-    clean_score = 1 - clean_fp / n_clean_files          (clamped to [0,1])
-    dataset_combined = splice_f1 * clean_score
-    combined    = geometric_mean_with_floor(per_ds, floor=0.01)
-The GEOMETRIC MEAN is dominated by the WEAKEST domain. Bounds:
-clean_fp_<domain> <= 15 per dataset, total clean_fp <= 45.
+splice/evaluate.py runs boundary-F1 on a deterministic random.sample(60)
+of data/eval/korean_iter1/eval/. SINGLE dataset only — no per-domain GM.
+Greedy 1-to-1 matching with 250 ms collar gives precision (P) and recall (R).
+
+  combined         = F0.5(P, R) × clean_fp_penalty
+  F0.5             = 1.25·P·R / (0.25·P + R)             # P weighted 2× R
+  clean_fp_penalty = 1 / (1 + clean_fp_per_min / 1.0)
+  clean_fp         = unmatched prediction > 500 ms (= 2× collar)
+                     from EVERY cross_voice GT in same file
+
+Why: F0.5 favors high-precision detectors (forensic audit-defense — false
+alarms in real audio are operationally expensive; misses are recoverable).
+Penalty surfaces dense in-turn false alarms F-beta cannot see alone:
+detectors that score 'precise' globally because cross_voice TPs at turn
+boundaries swamp the FP count, while spraying spurious detections inside
+continuous single-speaker stretches. Per-file isolation (>2× collar from
+every cv GT) catches those without double-counting near-miss turn-boundary
+errors. TAU=1.0 means 1 clean FP/min halves the score.
+
+OPTIMIZATION GRADIENT: dropping predictions inside clean turn audio
+improves BOTH precision AND clean-fp rate simultaneously → combined
+climbs fast. The detector currently emits ~9 clean FP/min, so penalty
+(~0.10) dominates F0.5 (~0.79). There is enormous room to climb just
+by quieting the detector inside clean audio.
+
+NOTE: anything in older research notes referring to per-domain GM,
+weakest domain, splice_f1 × clean_score, or clean_fp ≤ 15/45 bounds
+applied to the OBSOLETE apr15 framework, not this one.
 
 ==== CURRENT STATE (authoritative — baseline_metrics.json) ================
-combined (aggregate GM): ${current_best}
-per-domain:
 ${per_domain_state}
 
 TOP PREDICTIVE FEATURES (rolling sum_|shap| over last 5 keeps, per domain):
@@ -972,8 +997,9 @@ Read-only artifacts for deeper context:
          block, a new wrapper subcommand). If nothing comes to mind,
          write \"(no enhancements noted)\". The human operator reads these
          periodically to decide what to build next.
-2. Read baseline_metrics.json and any history you need. Target the
-   WEAKEST domain (GM is dragged down by it).
+2. Read baseline_metrics.json and any history you need. Identify which
+   factor is dragging combined the most: low precision (P), low recall (R),
+   or high clean_fp_per_min (penalty drag). Target THAT.
 3. Form a hypothesis. Prefer PRIMARY tunables (instant). Touch RETRAIN
    tunables only when primary feels exhausted.
    CRITICAL: Do NOT repeat a hypothesis from RECENT FAILED HYPOTHESES.
