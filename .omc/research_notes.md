@@ -4819,3 +4819,157 @@ per-domain: (no per-domain data)
     full rollup.
 [auto] (no SHAP data for either 335ca87 or 9699545)
 
+## 2026-04-26T19:23:44+09:00 — d5d0f37 (keep, combined=0.111446)
+subject: DSP_CONFIRMATION_MIN 2.0 -> 2.5 (FRESH AXIS PIVOT — first DSP-gate tweak in 30-iter korean-iter1 history; structural change triggered per prompt step 0 after detector-side saturation across 6 consecutive iters under F0.5 x clean_fp_penalty metric: 4 dedupe keeps 1.05-5.5 with decelerating gains, 1 threshold flat 0.985->0.99 discarded, 1 stationarity feature noise-band +0.0005; OOF same_voice_edit F1 barely moved 0.487->0.490 confirming GBM didn't find new feature informative; DSP_CONFIRMATION_MIN gates MAX of {phase_z, t2_z, cpe_z} z-scores AFTER GBM gate BEFORE dedupe at detector.py:310; per docstring 'GBM softmax can emit on overwhelming spec_*_delta alone (chord transition: big rolloff/centroid delta but smooth phase, modest T², low CPE); real cross-source splices produce at least one DSP spike'; raising 2.0->2.5 cuts borderline single-channel-firing FPs (phoneme transitions T²~2.2, sustained-vowel artifacts) while preserving real splices firing multiple channels at 3-5 z-score; penalty drag dominates: combined=0.110 / F0.5=0.788 = penalty 0.140 so clean_fp/min ~6.14; penalty leverage ~6x F0.5 sensitivity per unit; +0.5 step is +25% conservative first probe of fresh axis; pessimistic R 0.55 + clean_fp 5.0 yields combined 0.131 +18%; optimistic R 0.58 + clean_fp 3.5 yields combined 0.178 +61%; bad-case R 0.45 + clean_fp 5.5 yields combined ~0.110 flat; asymmetric upside; smoke-verified DSP_CONFIRMATION_MIN=2.5 imports cleanly, other tunables stable, FEATURE_NAMES stable at 81)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: DSP_CONFIRMATION_MIN 2.0 → 2.5 (fresh axis pivot — first DSP-gate tweak in entire iter1; attack clean_fp at orthogonal DSP-confirmation stage after ALL three primary axes saturated and one feature-engineering iter delivered noise-band gain)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    `DSP_CONFIRMATION_MIN` from 2.0 to 2.5. No retrain, no feature edit.
+    Other tunables stable: GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=5.5,
+    ANALYSIS_STRIDE_S=0.0635, DSP_SUM_MIN=5.0. Classifier hyperparams
+    stable. FEATURE_NAMES stable at 81. DSP_CONFIRMATION_MIN axis is
+    GENUINELY FRESH: zero prior hypotheses in results.tsv touch DSP
+    gating; it does not appear in any frontier text. This is the FIRST
+    DSP-gate tweak in the entire 30-iteration korean-iter1 history.
+
+(b) WHY OVER RECENT FAILURES — STRUCTURAL CHANGE TRIGGERED. Prompt step 0
+    explicitly says "If 5+ recent entries all failed on the same tunable
+    axis, seriously consider a structural change". Detector-side
+    saturation now confirmed across 6 consecutive iters under new metric:
+      4a98c85 THRESH 0.972→0.985: kept (precision-buying clean_fp gain)
+      2dfb3d4 GBM_MIN_SEP_S 1.05→2.5: kept +0.0153
+      f4c8ad8 GBM_MIN_SEP_S 2.5→3.5: kept +0.0054
+      5657d2f GBM_MIN_SEP_S 3.5→4.5: kept +0.0084
+      335ca87 GBM_MIN_SEP_S 4.5→5.5: kept +0.0033 (noise-band edge)
+      cbe8cf2 THRESH 0.985→0.99: discarded (flat, dedupe-saturated tail)
+      9699545 stationarity_centroid_cv_1s feature: kept +0.0005 (NOISE)
+    Just-kept stationarity feature gained only +0.0005 — squarely in
+    noise band. OOF same_voice_edit F1 barely moved 0.487 → 0.490
+    confirming GBM didn't find the new feature informative. Both
+    PRIMARY-tunable saturation AND first feature-engineering pivot
+    delivered noise-band gain. Pivot to fresh DSP axis.
+
+    DSP_CONFIRMATION_MIN gates whether MAX of {phase_z, t2_z, cpe_z}
+    z-scores exceeds threshold — applied AFTER GBM gate but BEFORE
+    dedupe at detector.py:310. Mechanism per docstring (lines 52-58):
+    "GBM's softmax can emit on an overwhelming spec_*_delta signal
+    alone (chord transition → big rolloff/centroid/bandwidth delta but
+    smooth phase, modest T², low CPE). Real cross-source splices
+    produce at least one DSP spike." MAX gate at 2.0 was set as a
+    floor. Raising to 2.5 cuts borderline FPs (phoneme transitions /
+    chord transitions / sustained-vowel artifacts where ONE channel
+    fires at 2.0-2.5 z-score) while preserving real splices that fire
+    multiple channels at 3-5 z-score.
+
+    Decomposition of current state: combined=0.110660, F0.5≈0.788
+    (near-saturated), penalty derived = 0.140 (so clean_fp_per_min ≈
+    6.14, down from baseline 9.14 across the dedupe descent). Penalty
+    leverage at x=6.14: ∂penalty/∂x = -1/(1+x)² ≈ -0.020 per Δclean_fp/min.
+    F0.5 ∂/∂R ≈ 0.34. Penalty leverage ~6x F0.5 sensitivity per unit.
+    Every clean_fp/min cut translates ~directly to combined.
+
+    Why DSP_CONFIRMATION_MIN over DSP_SUM_MIN: MAX gate selects on the
+    STRONGEST single channel — cleaner discriminator between
+    "single-DSP-channel artifact" (phoneme T² at 2.2) and "multi-channel
+    real splice" (T² 3.5 + phase 4.0). SUM_MIN at 5.0 already catches
+    "two channels at 2.5 each = 5.0" cases. MAX raise targets orthogonal
+    cases where one channel fires high but others don't — exactly the
+    chord-transition / phoneme-shift FP signature documented in the
+    docstring.
+
+    Why DSP_CONFIRMATION_MIN over GBM_THRESHOLD 0.985→0.987 micro-step:
+    cbe8cf2 already showed THRESH 0.985→0.99 was flat. Smaller +0.002
+    step would be inside ~0.003 eval noise — uninformative.
+
+    Why DSP_CONFIRMATION_MIN over feature engineering: 9699545
+    stationarity feature was a wash (+0.0005). Adding another feature
+    requires retrain (~3min) and risks similar noise-band outcome.
+    DSP gate is instant, single-knob, mechanically targeted at exactly
+    the kind of clean-region artifacts the stationarity feature failed
+    to suppress at the GBM level.
+
+    Why DSP_CONFIRMATION_MIN over classifier hyperparam: retrain-axis
+    levers are orthogonal but untargeted — they don't directly address
+    penalty drag. DSP gate mechanically targets clean FPs.
+
+    Why +0.5 step (2.5 not 2.25 or 3.0): 2.25 too small to discriminate
+    inside ~0.003 eval noise relative to clean_fp counts. 3.0 too
+    aggressive on a fresh axis with NO prior data points — risks
+    killing real splices whose strongest channel is in [2.5, 3.0]
+    (some same_voice_edit boundaries with weaker DSP signature). +0.5
+    is a clean +25% step, conservative first probe of fresh axis,
+    preserves bisection optionality (down to 2.25 if over-aggressive,
+    up to 3.0 if productive).
+
+    Pessimistic math (R 0.55, P 0.87, clean_fp/min 6.14 → 5.0):
+      F0.5(0.87, 0.55) = 0.781, penalty = 0.167
+      combined = 0.131 (+18% vs 0.110)
+    Optimistic (R 0.58, P 0.88, clean_fp/min 6.14 → 3.5):
+      F0.5(0.88, 0.58) = 0.802, penalty = 0.222
+      combined = 0.178 (+61%)
+    Bad case (R 0.45, P 0.86, clean_fp/min 6.14 → 5.5):
+      F0.5(0.86, 0.45) = 0.717, penalty = 0.154
+      combined = 0.110 (flat — preserves current best)
+    Asymmetric upside; downside floor is roughly current.
+
+    Compute cost: zero. DSP_CONFIRMATION_MIN is post-GBM-gate filter.
+    Eval runtime unchanged at ~290s.
+
+    Smoke-verifiable: DSP_CONFIRMATION_MIN=2.5 trivially imports;
+    one-line change to splice/detector.py:60.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.110 — DSP MAX at 2.5
+    killed real Korean cross_voice/same_voice_edit TPs whose strongest
+    channel sits in [2.0, 2.5] without proportionate clean_fp drop;
+    bracket [2.0, 2.5] now known, next iter bisect downward to
+    DSP_CONFIRMATION_MIN=2.25 (still fresh) for finer evidence on the
+    cliff, OR pivot to DSP_SUM_MIN 5.0→6.0 (fresh axis, attacks
+    multi-channel-borderline clean FPs orthogonally). (2) Combined
+    matches 0.110 within ±0.003 noise — DSP MAX gate at 2.5 is
+    redundant with current 2.0 (most clean FPs already pass 2.5
+    because their MAX is high but SUM is what filtered them); pivot
+    to DSP_SUM_MIN 5.0→6.0 next iter (target multi-channel-borderline
+    cases) OR pivot to feature-engineering with different signal
+    (MFCC variance over ±1s — orthogonal to centroid CV). (3) Combined
+    exceeds 0.120 — DSP MAX gate productive on iter1 under new metric;
+    next iter step further DSP_CONFIRMATION_MIN 2.5→3.0 to continue
+    (still fresh), OR layer DSP_SUM_MIN 5.0→6.0 on top for compound
+    gain.
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — knowing whether clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice-labeled vs unknown-labeled
+    would inform whether DSP MAX or SUM is the better lever for the
+    dominant FP source. (2) DSP z-score distribution at clean FPs
+    (P50, P90 of MAX dsp_val on emitted clean FPs) NOT surfaced —
+    would tell me directly whether 2.5 cuts a real population of clean
+    FPs vs sliding past them. (3) Per-step P/R/clean_fp_per_min not
+    in CURRENT STATE — can't directly verify the inferred 6.14
+    clean_fp/min post-dedupe (computed from combined/F0.5/penalty
+    math). (4) Per-tunable frontier `current` column blank. (5) The
+    frontier text doesn't list DSP tunables at all — confirms axis is
+    genuinely fresh but also means no prior data points for bisection
+    if regression occurs. (6) Eval runtime per iteration not surfaced.
+
+(e) Wrapper enhancements (now 23 consecutive iters with persistent gaps;
+    structural pivot to fresh DSP axis):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at fresh DSP
+    axis pivot, knowing whether clean FPs are same_voice_edit-labeled
+    vs cross_voice-labeled vs unknown-labeled directly determines
+    whether next DSP-axis step (after MAX) should be SUM_MIN or
+    something else. ~5 lines in splice/evaluate.py
+    compute_clean_fps_per_file would surface this.
+    (2) DSP Z-SCORE DISTRIBUTION HISTOGRAM in CURRENT STATE — a
+    one-line "post-emit DSP MAX z-score: P50=X.XX, P90=Y.YY" emitted
+    once per iter would directly inform DSP_CONFIRMATION_MIN
+    saturation cliff prediction. With DSP axis now active, single
+    most consequential prompt fix for next 3-5 iters.
+    (3) FRONTIER COVERAGE FOR DSP TUNABLES: DSP_CONFIRMATION_MIN /
+    DSP_SUM_MIN don't appear in the per-tunable frontier — having
+    them surface as fresh "current=?" entries with no tried values
+    would have made this pivot self-evident much earlier rather than
+    requiring me to grep detector.py manually for fresh-axis discovery.
+[auto] (no SHAP data for either 9699545 or d5d0f37)
+
