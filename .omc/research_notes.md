@@ -4121,3 +4121,142 @@ per-domain: (no per-domain data)
     the binding constraint on rapid lever rotation.
 [auto] (no SHAP data for either 4a98c85 or 2dfb3d4)
 
+## 2026-04-26T17:43:41+09:00 — f4c8ad8 (keep, combined=0.098474)
+subject: GBM_MIN_SEP_S 2.5 -> 3.5 (continue cited dedupe descent on freshly productive lever after 2dfb3d4 landed +0.015 going 1.05 -> 2.5 under new F0.5 x clean_fp_penalty metric where penalty=0.099 is 10x drag; F0.5=0.788 near-saturated so every clean_fp/min cut translates ~directly to combined gain; dense scan at STRIDE=0.0635 + 2.5s dedupe still leaves clusters spanning 2.5-3.5s as multi-FP; 3.5 fresh on frontier above explored band [1.0, 2.5]; cited 2dfb3d4(c)(3); pessimistic R 0.50 + clean_fp 6.0 still nets combined ~0.107 +15%)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_MIN_SEP_S 2.5 → 3.5 (continue cited dedupe descent on freshly productive lever after 2dfb3d4 landed +0.015 going 1.05 → 2.5 under new F0.5 × penalty metric)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    GBM_MIN_SEP_S from 2.5 to 3.5. No retrain, no feature edit.
+    Other primary tunables stable: GBM_THRESHOLD=0.985,
+    ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    Classifier hyperparams stable (class_weight={0:1,1:1,2:2},
+    max_iter=300, etc.). FEATURE_NAMES stable at 80. 3.5 is fresh on
+    frontier (set: kept 1.05/1.1/1.25/1.5/2.0/2.5, failed 1.0/1.025 = 8
+    tried; 3.5 has never been tried, sits cleanly above the explored
+    range [1.0, 2.5]).
+
+(b) WHY OVER RECENT FAILURES — CITED CONTINUATION ON ONLY
+    POST-METRIC-PIVOT PRODUCTIVE LEVER. Just-kept 2dfb3d4 raised
+    GBM_MIN_SEP_S 1.05 → 2.5 and gained +0.0153 combined (0.0777 → 0.0930,
+    +20%). EXPLICIT CITED next-step from 2dfb3d4(c)(3): "Combined
+    exceeds 0.090 — dedupe productive on iter1 under new metric; next
+    iter step further GBM_MIN_SEP_S 2.5→3.5 to continue, OR layer
+    GBM_THRESHOLD 0.985→0.99 on top." I am taking the 2.5→3.5 single-
+    knob path (vs layering threshold) for cleaner attribution: combining
+    two changes makes a regression hard to localize.
+
+    Decomposition of current state: combined=0.0930, F0.5=0.788,
+    penalty=0.0986, P=0.853, R=0.603, clean_fp_per_min=9.14. F0.5 is
+    near-saturated. Penalty is the 10× drag (TAU=1.0 means 1 clean
+    FP/min HALVES the score). Every clean_fp_per_min reduction
+    translates ~directly into combined gain — the asymmetric leverage
+    on this metric.
+
+    Mechanism for dedupe attacking clean FPs: the dense scan at
+    STRIDE=0.0635 emits every 63.5ms. A "noisy" clean region (chord
+    transition, breath, sustained vowel formant drift) triggers high
+    p_splice across many adjacent candidates spanning 1.5-3.5s. With
+    GBM_MIN_SEP_S=2.5 we still leave clusters spanning 2.5-3.5s as
+    multiple FPs; raising to 3.5s collapses these wider clusters. Each
+    collapsed cluster removes N-1 clean FPs at the cost of at most
+    one real TP.
+
+    Why over GBM_THRESHOLD 0.985→0.99: 0.972→0.985 (4a98c85 keep) cut
+    clean_fp_per_min only ~4% — the survivor distribution is peaked at
+    p>>0.985, so another tightening yields the same diminishing return
+    AND costs recall (R already dropped 0.632→0.603 in the 0.985 step;
+    another similar step would push R below 0.55, hitting F0.5 hard
+    since F0.5 = 1.25·P·R / (0.25·P + R) is highly recall-sensitive
+    when R << P).
+
+    Why over class_weight tweaks: c681ee7 just verify-failed reverting
+    class_weight 2x→None (combined essentially flat ~0.078) — class_weight
+    is NOT the source of confident clean FPs.
+
+    Why over feature engineering pivot (e.g. clean-audio guard): would
+    require retrain (~3min) plus uncertain mechanism design — this is
+    the cited next-iter fallback if dedupe saturates, not the first move.
+
+    Why +1.0 step (3.5 not 3.0 or 4.0): 3.0 is also fresh and conservative,
+    but the cited recommendation specifically calls out 3.5 — and a
+    larger step at this point in the search maps the saturation cliff
+    more efficiently. If 3.5 saturates or regresses, next iter bisects
+    cleanly to 3.0 with [2.5, 3.5] as a known bracket. If 3.5 is still
+    productive, next iter steps to 5.0 or higher. Korean conversational
+    turn dynamics typically space cross_voice GTs > 3.5s apart in
+    30-120s files (turn-taking averages 3-5s), so TP loss should be
+    minimal at 3.5s. 4.0 would be a bigger swing but cited recommends
+    3.5; sticking to cited.
+
+    Pessimistic math (R drops 0.603 → 0.50, clean_fp_per_min drops
+    9.14 → 6.0): F0.5(0.85, 0.50) = 0.745, penalty = 0.143,
+    combined = 0.107 (+15% vs 0.093). Optimistic (R 0.55, clean_fp
+    4.0): F0.5(0.85, 0.55) = 0.762, penalty = 0.20, combined = 0.152
+    (+63%). Even pessimistic outcomes net positive because penalty
+    leverage dominates F0.5 sensitivity. Asymmetric upside under new
+    metric.
+
+    Compute cost: zero. GBM_MIN_SEP_S is a post-emission greedy dedupe
+    pass; raising it only changes which emits survive selection, no
+    extra computation. Eval runtime unchanged at ~290s.
+
+    Smoke-verifiable: GBM_MIN_SEP_S=3.5 trivially imports; one-line
+    change to splice/detector.py:50.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.0930 — dedupe at 3.5s
+    killed real TPs (Korean cross_voice boundaries spaced 2.5-3.5s
+    apart) without proportionate clean_fp reduction; next iter bisect
+    downward to GBM_MIN_SEP_S=3.0 (still fresh, midpoint of [2.5, 3.5])
+    for finer evidence, OR pivot to GBM_THRESHOLD 0.985→0.99 (smaller
+    diminishing-return push), OR pivot to feature-engineering axis
+    adding a clean-audio guard feature in splice/features.py (rolling
+    spectral stationarity over ±1s — high stationarity = continuous
+    speech = should not emit). (2) Combined matches 0.0930 (within
+    ±0.003 noise) — dedupe saturated in [2.5, 3.5]; pivot to
+    GBM_THRESHOLD 0.985→0.99 OR feature-engineering pivot (clean-audio
+    guard feature is the highest-expected-payoff feature add given the
+    diagnosis). (3) Combined exceeds 0.110 — dedupe descent productive
+    on iter1 under new metric; next iter step further GBM_MIN_SEP_S
+    3.5→5.0 to continue (still fresh, larger step matching expanded
+    productive band), OR layer GBM_THRESHOLD 0.985→0.99 on top for
+    compound gain.
+
+(d) Information gaps. (1) PROMPT METRIC DEFINITION block at the top of
+    the prompt is now the NEW correct one — that gap from prior
+    reflections is fixed. (2) Per-class clean_fp breakdown still NOT
+    surfaced — cannot confirm clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice-labeled. With dedupe
+    targeting clusters regardless of label, this matters less for the
+    current hypothesis but would determine the next classifier-side
+    hypothesis. (3) Per-tunable frontier `current` column is blank
+    ("current ?") — had to grep detector.py manually. (4) The frontier
+    doesn't tag metric_version, so OLD-metric kept GBM_MIN_SEP_S values
+    [1.05, 1.1, 1.25, 1.5, 2.0] appear blocking even though they should
+    be retestable under the new metric (some might now be optimal).
+    (5) Eval runtime per iteration not surfaced — would tell me how
+    close 2.5 ran to the 300s cliff before committing 3.5 (3.5 has same
+    compute cost so not directly load-bearing this iter, but matters
+    for STRIDE re-exploration later).
+
+(e) Wrapper enhancements (now 18 consecutive iters with persistent gaps):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at new metric
+    where clean_fp dominates 10×, knowing whether clean FPs are
+    same_voice_edit-labeled vs cross_voice-labeled directly determines
+    the next classifier-side hypothesis. ~5 lines added in
+    splice/evaluate.py's compute_clean_fps_per_file would surface this.
+    Highest-priority operator fix.
+    (2) FRONTIER METRIC-VERSION TAG: each frontier entry should carry
+    `metric_version=v1|v2` so OLD-metric kept values that are now stale
+    optima can be retested without operator-owned sentinel. With
+    dedupe values 1.05/1.1/1.25/1.5/2.0 frontier-blocked under stale
+    metric assumptions, this is the binding constraint on rapid lever
+    rotation under the new metric.
+    (3) PER-TUNABLE `current` COLUMN POPULATED in CURRENT STATE: the
+    frontier already tracks tried values; populating "current" with
+    the actual checked-in value (read from splice/detector.py) would
+    save 1 grep per iter and prevent confusion about which value is
+    deployed vs tested.
+[auto] (no SHAP data for either 2dfb3d4 or f4c8ad8)
+
