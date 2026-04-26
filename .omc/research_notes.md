@@ -4019,3 +4019,105 @@ per-domain: (no per-domain data)
     the key sanity check on the revert mechanism. Would reduce
     attribution ambiguity to zero.
 
+## 2026-04-26T17:37:17+09:00 — 2dfb3d4 (keep, combined=0.093046)
+subject: GBM_MIN_SEP_S 1.05 -> 2.5 (attack clean-FP clusters under new F0.5 x clean_fp_penalty metric where penalty=0.099 is 10x drag; just-discarded c681ee7 confirmed class_weight not the FP source; just-kept 4a98c85 THRESH 0.985 only cut clean_fp 4% so survivors are confident; dense-scan at STRIDE=0.0635 + 1.05s dedupe leaves multi-second clean-region clusters as multiple FPs; under F0.5 weighting P 2x R, aggressive dedupe favorable trade; 2.5 fresh on frontier above old-metric tested band [1.0, 2.0])
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_MIN_SEP_S 1.05 → 2.5 (attack clean-FP clusters under new F0.5 × penalty metric where penalty is 10× drag)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    GBM_MIN_SEP_S from 1.05 to 2.5. No retrain, no feature edit. Other
+    primary tunables stable: GBM_THRESHOLD=0.985, ANALYSIS_STRIDE_S=0.0635,
+    DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0. Classifier hyperparams
+    stable (class_weight={0:1,1:1,2:2}, max_iter=300, etc.). FEATURE_NAMES
+    stable at 80. 2.5 is fresh on frontier (set: kept 1.05/1.1/1.25/1.5/2.0,
+    failed 1.0/1.025 = 7 tried; 2.5 never tried).
+
+(b) WHY OVER RECENT FAILURES — METRIC-PIVOT-AWARE LEVER ROTATION.
+    Current state: combined=0.0777, F0.5=0.788, P=0.853, R=0.603,
+    clean_fp_per_min=9.14, penalty=0.099. F0.5 already near-saturated;
+    penalty is the 10× drag. Each clean_fp_per_min reduction translates
+    ~directly into combined gain (TAU=1.0).
+
+    Just-discarded c681ee7 (revert class_weight 2x→None) verify-failed
+    at essentially flat combined (~0.078) — class_weight is NOT the
+    primary source of clean FPs. Just-kept 4a98c85 (THRESH 0.972→0.985)
+    only moved clean_fp_per_min ~9.54→9.14 (-4%) — surviving clean FPs
+    are highly confident (well above 0.99 likely), so further threshold
+    push (0.985→0.99) yields diminishing return on the same lever.
+
+    NEW MECHANISM: clean FPs in continuous single-speaker audio aren't
+    isolated point emissions — the dense scan at STRIDE=0.0635 emits
+    every 63.5ms, so a "noisy" clean region (chord transition, breath,
+    plosive) triggers high p_splice across multiple adjacent candidates.
+    GBM_MIN_SEP_S=1.05 only collapses neighbors within 1.05s. A cluster
+    spanning 1.05–2.5s survives as multiple FPs. Raising to 2.5s
+    collapses wider clusters to one emit.
+
+    Under NEW metric (F0.5 × penalty), the trade favors aggressive
+    dedupe even at recall cost. Math: if R drops 0.603→0.45 and
+    clean_fp_per_min drops 9.14→4.0, F0.5(0.85,0.45)=0.722 (down 8%)
+    but penalty(4.0)=0.20 (up 100%); combined → 0.144, +85%. Even
+    pessimistic (R→0.5, clean_fp→6.0): F0.5≈0.745 × 0.143 = 0.107, +37%.
+
+    Why 2.5 not 2.0 or 3.0: 2.0 frontier-blocked (kept under OLD metric
+    at 0.481, but old combined was F1×clean_score×GM where R loss
+    dominated). 2.5 is fresh, sits cleanly above the OLD-metric tested
+    band, preserves bisection optionality (down to 1.75 if over-aggressive,
+    up to 3.5 if productive). 3.0 is bigger swing; 2.5 is conservative
+    first probe of the fresh band.
+
+    Why over GBM_THRESHOLD 0.985→0.99: 0.972→0.985 cut FP only 4%; the
+    survivor distribution is peaked at p>>0.985, so one more tightening
+    likely yields similar marginal return AND costs recall (R already
+    dropped 0.632→0.603 in the 0.985 step). Dedupe attacks an orthogonal
+    mechanism (cluster collapse).
+
+    Why over class_weight={0:1,1:1,2:0.5}: c681ee7 already showed
+    class_weight revert (2x→1x) was flat combined, so further
+    class_weight tweaks are diminishing-return — the FP source isn't
+    class_weight-driven.
+
+    Smoke-verifiable: GBM_MIN_SEP_S=2.5 trivially imports; one-line
+    change to splice/detector.py:50.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.0777 — dedupe lost
+    too many real TPs without proportionate clean_fp reduction; next
+    iter try smaller step GBM_MIN_SEP_S 1.05→1.75 (compromise, fresh
+    on frontier), OR pivot to GBM_THRESHOLD 0.985→0.99 (cited next-step,
+    smaller diminishing-return push). (2) Combined matches 0.0777
+    (within ±0.003 noise) — clean FPs aren't cluster-driven (they're
+    isolated single-emit FPs); pivot to feature-engineering axis next
+    iter (add a "clean-audio guard" feature targeting rolling spectral
+    stationarity over ±1s), OR GBM_THRESHOLD 0.985→0.99. (3) Combined
+    exceeds 0.090 — dedupe productive on iter1 under new metric; next
+    iter step further GBM_MIN_SEP_S 2.5→3.5 to continue, OR layer
+    GBM_THRESHOLD 0.985→0.99 on top.
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — cannot confirm clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice. (2) PROMPT METRIC
+    DEFINITION block still cites OLD metric (splice_f1 × clean_score,
+    multi-domain GM, clean_fp ≤ 15/45 bounds) — dangerously misleading.
+    (3) Per-tunable frontier `current` column blank ("current ?") —
+    had to grep detector.py manually. (4) Frontier doesn't tag
+    classifier_sha or metric_version, so OLD-metric kept values
+    (1.05/1.1/1.25/1.5/2.0) appear blocking even though they should be
+    retestable under new metric. (5) Eval runtime per iteration not
+    surfaced.
+
+(e) Wrapper enhancements (re-prioritized for new-metric reality):
+    (1) PROMPT METRIC DEFINITION REFRESH — top-of-prompt block
+    describes OLD metric and OLD multi-dataset GM. Single most
+    consequential prompt fix; should auto-emit from splice/evaluate.py.
+    (2) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at new metric
+    where clean_fp dominates 10×, knowing whether clean FPs are
+    same_voice_edit-labeled vs cross_voice-labeled directly determines
+    next classifier-side hypothesis.
+    (3) FRONTIER METRIC-VERSION TAG: each frontier entry should carry
+    `metric_version=v1|v2` so OLD-metric kept values that are now stale
+    optima can be retested without operator-owned sentinel. With 7
+    GBM_MIN_SEP_S values frontier-blocked under stale metric, this is
+    the binding constraint on rapid lever rotation.
+[auto] (no SHAP data for either 4a98c85 or 2dfb3d4)
+
