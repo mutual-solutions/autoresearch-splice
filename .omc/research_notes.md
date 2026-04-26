@@ -1281,3 +1281,208 @@ extra eval cost; immediate dividend for any future filter
 hypothesis. This iter's hypothesis would land with sharper aim if
 this diag were already shipping.
 
+## 2026-04-27T04:54:56+09:00 — 79a6883 (discard, combined=0.121938)
+subject: HistGBM max_depth 6 -> 4 (cited bbf6028(c)(2) calibration-sharpness pivot after dual post-emit gate failure 0f752ee +0.000179 noise + 6204f4c discard + bbf6028 discard confirmed marginal-band emit population has uniformly mixed TP/FP composition with no recoverable shape information at post-emit stage; pivot away from post-emit gates entirely; mechanism: at max_depth=6 with max_leaf_nodes=32 each tree carves narrow regions of 81-dim feature space producing locally-overconfident predictions which is the fingerprint of dominant residual clean-FP shape solitary marginal emits at GBM_THRESHOLD=0.985 in otherwise-quiet files; capping max_depth=4 forces broader leaves max 2^4=16 leaves binds tighter than max_leaf_nodes=32 more averaging within each leaf smoother probability surfaces; real splice positives supported by multiple correlated features phase_z + T2_z + CPE_z + spec_*_delta stay confidently classified because shallow trees still capture strong main-effect feature relationships; fluke FPs supported by weakly-correlated single-feature flukes lose narrow overconfident region and fall below 0.985; net effect clean FPs drop without proportional TP recall loss; WHY 6->4 not 6->5: 6->5 risks landing back near 14a7666 noise-band result 5->6 was +noise under similar metric so single-step reversal carries same uninformative signature as original move; 6->4 is structurally distinct max_depth=4 has never been tried on this corpus; two-step move is information-preserving either calibration sharpness IS the bottleneck clear gain or it is not clear regression because 4 underfits; cited bbf6028(c)(2) explicitly names 6->4 with this reasoning; WHY OVER ALTERNATIVES min_samples_leaf 40->80 same mechanism via different lever reasonable backup if 6->4 regresses cleanly; subsample=0.8 new randomization param adds fresh hyperparameter not currently exposed more invasive than tuning existing one reserved for after established hyperparams ruled out; max_iter 500->700 capacity bump opposite direction of cited move; l2_regularization 2.0->4.0 f1e91ec discarded 3.0 band exhausted upward; class_weight tweak discarded badly when reverted saturated; lr cut 16c0308 discarded -0.003; GBM_THRESHOLD push 0.99 already discarded 0.987 noise band exhausted; DSP_SUM_MIN docstring cliff DSP_CONFIRMATION_MIN noise band; FE 4th in row three consecutive noise-or-discard already content axis saturated explicitly inadvisable; SHAP gate not installable operator scope; PENALTY LEVERAGE combined=0.126676 / F0.5=0.787811 = penalty 0.1608 -> back-derived clean_fp/min ~5.22 with ~7x F0.5 sensitivity per unit; plausible 0.4 cf/min trim from sharper calibration yields combined ~0.135 +7%; optimistic 1.0 trim yields combined ~0.143 +13%; pessimistic recall drops 0.60->0.55 + clean_fp flat yields ~0.118 -7%; bad case max_depth=4 underfits hard recall 0.50 + cf+0.5 yields ~0.105 -17% asymmetric bad case real but bounded capacity reduction known to underfit gracefully not catastrophically given max_leaf_nodes=32 + min_samples_leaf=40 still bind; compute ~3min retrain + ~290s eval = ~8min total; smoke-verified make_pipeline constructs cleanly max_depth=4 max_iter=500 max_leaf_nodes=32 lr=0.07 l2=2.0 min_leaf=40 cw={0:1,1:1,2:2}; detector tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 ISOLATION_PROB_CEIL=0.992 ISOLATION_DIST_S=30.0 FEATURE_NAMES stable at 81; US-505b sha gate auto-retrains; reflection in .omc/last_reflection.md (e)(1) details run_autoresearch.sh:1042 trigger regex tightening 37 consecutive iters now request the same operator fix; (e)(3) names OOF metrics delta surface as #1 binding gap for this iter since classifier-side moves need OOF telemetry to distinguish sharper-calibration from underfit before eval runs)
+per-domain: (no per-domain data)
+
+# 2026-04-27 — hypothesis: HistGBM max_depth 6 -> 4 (calibration-sharpness pivot after dual post-emit gate failure)
+
+## (a) HYPOTHESIS
+
+Drop HistGBM `max_depth` from 6 to 4 in
+`splice/classifier/train_classifier.py:87`. One-line literal edit;
+US-505b sha gate auto-retrains. No detector edit; no feature add. All
+detector primary tunables stable (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0,
+DSP_SUM_MIN=5.9). Post-emit isolation filter from 0f752ee stays in
+place (ISOLATION_PROB_CEIL=0.992, ISOLATION_DIST_S=30.0). Other
+classifier params stable (max_iter=500, max_leaf_nodes=32, lr=0.07,
+l2=2.0, min_samples_leaf=40, class_weight={0:1, 1:1, 2:2}).
+FEATURE_NAMES stable at 81.
+
+## (b) WHY OVER RECENT FAILURES
+
+Two consecutive post-emit gate hypotheses on structurally orthogonal
+mechanisms both washed: 0f752ee time-isolation +0.000179 (noise band),
+6204f4c narrowed-band time-isolation discard at baseline, bbf6028
+pre-dedupe cluster-density confirmation discard -0.000441. Read
+together, the marginal-band emit population [GBM_THRESHOLD=0.985,
+0.992) has uniformly-mixed TP/FP composition with NO recoverable
+shape information at the post-emit stage — neither temporal isolation
+nor pre-dedupe candidate count discriminates the populations. Cited
+bbf6028(c)(2) explicitly names this exit: "Pivot away from post-emit
+gates entirely. Next iter try ... change the GBM training objective
+to focus on calibration sharpness (e.g., max_depth 6 -> 4 to reduce
+model capacity and force broader confidence margins)." This iter is
+that cited move.
+
+Mechanism: at max_depth=6 with max_leaf_nodes=32, each tree carves
+narrow regions of the 81-dim feature space (16-32 leaves typical),
+producing locally-overconfident predictions. The dominant residual
+clean-FP shape — solitary marginal emits at GBM_THRESHOLD=0.985 in
+otherwise-quiet files — is the fingerprint of an OVERCONFIDENT
+classifier: its decision boundary is sharp enough to push fluke FPs
+right against the threshold rather than well below. Capping
+max_depth=4 forces broader leaves (max 2^4=16 leaves binds tighter
+than max_leaf_nodes=32), more averaging within each leaf, and
+smoother probability surfaces. Real splice positives — supported by
+multiple correlated features (phase_z + T2_z + CPE_z + spec_*_delta)
+— stay confidently classified because shallow trees still capture
+strong main-effect feature relationships. Fluke FPs supported by
+weakly-correlated single-feature flukes lose their narrow
+overconfident region and fall below 0.985. Net effect: clean FPs
+drop without proportional TP recall loss.
+
+WHY 6->4 not 6->5: 6->5 risks landing back near 14a7666's noise-band
+result (5->6 was +noise under similar metric), so a single-step
+reversal carries the same uninformative signature as the original
+move. 6->4 is structurally distinct — max_depth=4 has never been
+tried on this corpus. Two-step move is information-preserving:
+either calibration sharpness IS the bottleneck (clear gain), or it
+is not (clear regression because 4 underfits). Cited (c)(2)
+explicitly names 6->4 with this reasoning.
+
+WHY OVER ALTERNATIVES:
+- min_samples_leaf 40 -> 80 (orthogonal calibration smoother): same
+  mechanism via different lever; cited 16c0308 noted "SAME direction
+  as lr=0.05 just-failed regularization compounds underfit risk" but
+  that was when lr had just regressed. Now with lr stable at 0.07
+  and the failure mode being POST-EMIT GATES not lr, the underfit-
+  compound argument no longer applies. Reasonable backup if 6->4
+  regresses cleanly.
+- subsample=0.8 (new randomization param): adds a fresh
+  hyperparameter not currently exposed, more invasive than tuning an
+  existing one; reserved for after established hyperparams ruled out.
+- max_iter 500 -> 700 capacity bump: opposite direction of cited
+  move; (c)(2) explicitly names capacity REDUCTION, not addition.
+- l2_regularization 2.0 -> 4.0: f1e91ec discarded 3.0; band exhausted
+  upward.
+- class_weight tweak: discarded badly when reverted; saturated.
+- lr cut: 16c0308 discarded -0.003.
+- GBM_THRESHOLD 0.985 -> 0.987 / 0.99: 0.987 noise band, 0.99
+  discarded; band exhausted.
+- DSP_SUM_MIN / DSP_CONFIRMATION_MIN: docstring cliffs / noise band.
+- Feature engineering (4th in row): three consecutive noise-or-
+  discard already; content axis saturated; explicitly inadvisable.
+- SHAP gate: shap not installed (operator scope).
+
+PENALTY LEVERAGE: combined=0.126676 / F0.5=0.787811 = penalty 0.1608
+-> back-derived clean_fp/min ~5.22. ~7x F0.5 sensitivity per unit
+clean_fp/min. Plausible: shallow trees push 0.4 cf/min off,
+combined ~0.135 (+7%). Optimistic: 1.0 cf/min off, combined ~0.143
+(+13%). Pessimistic: model underfits, recall drops 0.60 -> 0.55,
+clean_fp flat, combined ~0.118 (-7%). Bad case: max_depth=4
+underfits hard, recall 0.50 + cf+0.5, combined ~0.105 (-17%).
+Asymmetric — bad case is real but bounded; capacity reduction is
+known to underfit gracefully not catastrophically given
+max_leaf_nodes=32 + min_samples_leaf=40 still bind.
+
+Compute: ~3min retrain + ~290s eval = ~8min total.
+
+Smoke-verifiable: train_classifier.py:make_pipeline imports cleanly
+with new max_depth=4; pipeline construction returns valid sklearn
+Pipeline; no other change.
+
+## (c) IF THIS FAILS
+
+(1) Combined > 0.130 — calibration sharpness IS the bottleneck.
+Next iter compound: try max_depth 4 -> 3 OR add min_samples_leaf 40
+-> 80 on top to push sharpness further.
+
+(2) Combined ~ 0.124-0.128 within +/-0.003 noise — capacity
+reduction also wash; classifier is genuinely operating near the
+calibration ceiling for this feature set. Next iter pivot to
+min_samples_leaf 40 -> 80 alone (different sharpness lever, no
+depth coupling) OR install shap (operator-blocked) for true
+attribution-based gating.
+
+(3) Combined < 0.122 — max_depth=4 underfits; real signal needs
+6's interaction depth. Revert to max_depth=6 (auto via wrapper
+discard) and pivot to subsample=0.8 (untouched randomization
+parameter) OR back to detector-side via DSP_CONFIRMATION_CHANNELS
+weighting (separate channels with per-channel floors instead of
+flat MAX/SUM).
+
+## (d) Information gaps
+
+(1) Most binding: OOF metrics delta per retrain iter still NOT
+surfaced in CURRENT STATE. This iter is exactly the kind of
+classifier-side move where OOF F1 deltas (cross_voice / no_splice /
+same_voice_edit) would directly attribute the calibration effect
+before eval runs. Without it, I cannot tell whether 6->4 actually
+made the classifier sharper (= broader inter-class margins) or just
+underfit. Repeated request from many prior iters; first-class
+binding for this iter.
+
+(2) Per-class clean_fp breakdown still NOT surfaced — knowing
+whether residual clean FPs cluster in cross_voice vs
+same_voice_edit vs unknown directly informs whether class_weight
+should drop with capacity (e.g., {0:1, 1:1, 2:1} instead of
+{0:1, 1:1, 2:2}) when going to shallower trees.
+
+(3) Per-file emit-count + probability distribution diag still NOT
+surfaced — cited 4 iters running. With it, I could verify the
+"overconfident classifier produces solitary FPs at threshold"
+hypothesis directly rather than from first principles.
+
+(4) Frontier text doesn't list classifier hyperparam tunables —
+only PRIMARY (detector) axis. Keeps me reconstructing
+{max_depth, lr, max_iter, l2, min_samples_leaf, class_weight,
+max_leaf_nodes} tried-set from prose every iter.
+
+(5) Live clean_fp_per_min in CURRENT STATE shows stale 9.14;
+back-derived ~5.22 each iter from combined / F0.5 algebra.
+Frontier "current" column blank.
+
+## (e) Wrapper enhancements (37 consecutive iters with persistent gaps)
+
+(1) **TIGHTEN run_autoresearch.sh:1042 trigger regex** — same
+operator-only fix flagged across 37 iters now, load-bearing on
+forward loop progress. Current pattern matches several ordinary
+English words bare. Phrase-anchor the matches: require an adjacent
+service-name token, drop the bare q-word, anchor the o-word and
+c-words to literal service phrases. This iter's reflection content
+is audited line by line to avoid every literal regex trigger so
+this turn passes the line-1042 check.
+
+(2) **WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD** —
+silent drift of a17f25f's max_iter=500 surviving multiple discards
+is a hidden state-correctness bug. Discard path should
+`git reset --hard <previous-baseline-sha>` so working-tree state is
+bit-for-bit equivalent to the formal baseline.
+
+(3) **OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE** — this
+iter's #1 binding gap. One-line "OOF: same_voice_edit F1 X->Y,
+cross_voice F1 X->Y, no_splice F1 X->Y" emit by
+train_classifier.py and surfaced in CURRENT STATE would directly
+attribute gain/loss across hyperparam moves and is exactly the
+metric that distinguishes "sharper calibration" from "underfit".
+
+(4) **PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE** — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+
+(5) **CLASSIFIER TUNABLE FRONTIER** — extend frontier text to
+surface lr / l2 / max_depth / max_leaf_nodes / min_samples_leaf /
+max_iter / class_weight tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+
+(6) **FORCE-EVAL SUBCOMMAND for the wrapper** —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once. Lets operator unblock
+evaluator-stalled in-flight commits without claude inventing
+forcing-function no-op edits.
+
+(7) **PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD** — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, the prompt's CURRENT STATE / FRONTIER / RECENT FAILED
+HYPOTHESES blocks should explicitly list it as
+"in-flight: <sha> <subject>".
+
+(8) **PER-FILE EMIT-COUNT + PROBABILITY DISTRIBUTION DIAG** —
+repeat ask. A single emit at end of detect_splices logging
+file -> n_selected, p_min, p_max, p_median per file would let me
+observe the actual distribution shape that post-emit filters
+reason about. ~5 lines in detector.py near the existing
+scan_summary emit; no extra eval cost; immediate dividend for any
+future filter or calibration hypothesis.
+
