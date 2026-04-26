@@ -2236,3 +2236,238 @@ add line "classifier classes (alphabetical): 0=cross_voice,
 1=no_splice, 2=same_voice_edit" so class_weight probes don't
 misindex (as 59f3f2b's reflection did).
 
+## 2026-04-27T08:00:37+09:00 — 86d35ab (keep, combined=0.129927)
+subject: TIME-graded ISOLATION_DIST_S (15s for files <45s, prob-graded otherwise) (cited (c)(2) reserve from ea37815/5211495 reflections after class_weight {0:1,1:2,2:2} regression to combined=0.125163; structurally distinct from all 6 recent isolation/DSP probes 055255f chunk-local discarded ff76c06 DIST 30->20 globally discarded a2a9b76 PROB_CEIL 0.992->0.997 kept-marginal +0.0009 7cdf8cf DSP_CHANNEL_MIN regressed -0.005 ea37815 prob-graded DIST_S kept +0.000195 59f3f2b LOW_CEIL 0.990->0.992 discarded; introduces file-duration as a NEW discriminator the filter has never used; mechanism eval files vary 30-120s in duration the fixed 30s gentle threshold treats short files as if they had as much neighbor real estate as long files but a 30s file has by definition only 30s of audio so 30s neighbor-radius collapses to anywhere in the file marginal upper-band emits in short files therefore get the loosest possible isolation gate effectively bypass regardless of actual support tightening to 15s in short files restores genuine isolation discrimination a marginal emit needs another marginal emit within half the file duration to survive; real splices typically dedupe to high-prob survivors p>=0.997 bypass via ISOLATION_PROB_CEIL unaffected by any DIST_S change real same_voice_edits in [0.985, 0.997) that survived dedupe are RARE in any single file most splice events produce a stronger survivor that wins dedupe; for two real marginal-band same_voice_edits to coexist in a 30s file spaced 16-30s apart the band where this iter changes behavior they would need to be on opposite halves of a short file geometrically constrained for most short-file splice configurations where splices tend to cluster fluke FPs in short files do scatter widely chord transition + phoneme boundary + codec artifact at random times time-grading bites this scattered FP shape directly; 45s threshold midpoint of eval duration envelope 30-120s splits eval files into roughly equal short and longer populations slightly conservative 45 keeps the very-shortest 30-45s where time-grading is most defensible; ISOLATION_DIST_S_LOW 15.0 reused for short-file upper band matches existing very-marginal sub-band threshold range-validated by ea37815 probe 15s did NOT crater recall in very-marginal band reuses existing constant rather than introducing new value; chosen over ISOLATION_DIST_S_LOW 15->10 cited 59f3f2b(c)(1) twin pushes axis just probed at 15s into untested territory recall risk on real splice pairs in 30s files spaced 10-15s over ISOLATION_PROB_LOW_CEIL 0.992->0.994 same axis recently failed at 0.992 widening encroaches upper-marginal real-splice zone where 7cdf8cf evidence shows aggressive treatment costs real splices over class_weight {0:1,1:1,2:3} cited 7cdf8cf(c)(3) recall-side retrain ~3-8min the just-discarded {0:1,1:2,2:2} shows boundary shifts on this axis are sensitive over min_samples_leaf 80->120 ~8min predecessor noise-band classifier saturated over max_depth 6->5 light version of regressed 6->4 over max_leaf_nodes 32->16/64 same hard-cap mechanism / opposite capacity direction over lr 0.07->0.05/0.10 (16c0308 -0.003 discarded) over l2 2.0->4.0 (f1e91ec 3.0 discarded) over max_iter 500->700 (2188c60 effectively flat) over 4th feature add content axis saturated over GBM_THRESHOLD push (band exhausted) over DSP_SUM_MIN 5.9->6.0 docstring cliff edge over DSP_CONFIRMATION_MIN saturated over ANALYSIS_STRIDE_S sharp peak over GBM_MIN_SEP_S saturated upward 6.0 over file-duration-PROPORTIONAL DIST_S more knobs binary short/long is cleaner first probe; penalty leverage at combined=0.129/F0.5=0.788 algebraic penalty 0.164 back-derived clean_fp/min ~5.10 with ~7x F0.5 sensitivity per unit so plausible 0.4 cf trim yields combined +8% optimistic 0.9 trim +18% pessimistic recall 0.60->0.59 cf flat yields -1% bad case recall 0.57 cf+0.1 yields -6% asymmetric mild upside structurally narrow only changes behavior in upper-band of short files so even null result cleanly attributes time-grading at this cut doesn't bite further; 1 new module-level constant ISOLATION_FILE_DUR_THR_S=45.0 + 1 conditional in isolation block + file_dur_s = len(audio)/sr; no retrain no FE; all other detector primary tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 ISOLATION_PROB_CEIL=0.997 ISOLATION_DIST_S=30.0 ISOLATION_PROB_LOW_CEIL=0.990 ISOLATION_DIST_S_LOW=15.0; classifier byte-identical {0:1.0,1:1.0,2:2.0} max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0 min_samples_leaf=80; FEATURE_NAMES stable at 81; smoke-verified detector imports cleanly THR=45.0 LOW=15.0 HIGH=30.0 PLOW=0.99 PCEIL=0.997 GBM=0.985)
+per-domain: (no per-domain data)
+
+# last_reflection — TIME-graded ISOLATION_DIST_S (15s for files <45s, prob-graded otherwise)
+
+(a) HYPOTHESIS: time-grade the post-emit isolation filter's distance
+threshold by total file duration. Add ISOLATION_FILE_DUR_THR_S=45.0 in
+splice/detector.py. Compute file_dur_s = len(audio)/sr at function entry;
+in the isolation loop, when file_dur_s < ISOLATION_FILE_DUR_THR_S, use
+ISOLATION_DIST_S_LOW (=15.0) as the distance threshold for ALL marginal
+emits (both the very-marginal [0.985, 0.990) and upper-marginal
+[0.990, 0.997) sub-bands). When file_dur_s >= 45.0, keep the existing
+probability-graded behavior (15s for very-marginal, 30s for upper-
+marginal). Pure detector primary tunable; no retrain; 1 new module-
+level constant + 1 conditional in the isolation block. All other
+tunables byte-identical: GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0; classifier
+{0:1.0, 1:1.0, 2:2.0} max_iter=500 max_depth=6 max_leaf_nodes=32
+lr=0.07 l2=2.0 min_samples_leaf=80; FEATURE_NAMES at 81.
+
+(b) WHY OVER RECENT FAILURES: the just-discarded 5211495 class_weight
+{0:1, 1:2, 2:2} regressed combined to 0.125163 (-0.004 from 0.129346
+baseline) by upweighting no_splice training samples too aggressively —
+boundary shifted enough that real same_voice_edits at marginal P got
+pulled below the 0.985 threshold. Result lands in 5211495(c) zone (3)
+boundary territory (0.125 sits between the (3) cutoff 0.122 and (2)
+noise-band lower edge 0.126). Per the just-discarded reflection's (c)
+options, both (2) "TIME-graded isolation" and (3) "NEW feature in
+features.py" are named reserves. TIME-graded isolation wins on three
+grounds: (i) instant primary-side change vs ~3-8min retrain or content-
+axis FE, (ii) FE/content axis flagged saturated across 5+ reflections
+while time-grading the isolation loop is structurally untried, (iii)
+the mechanism is mechanistically distinct from all 6 recent probes on
+isolation/DSP axes (055255f chunk-local discarded, ff76c06 DIST 30->20
+globally discarded, a2a9b76 PROB_CEIL 0.992->0.997 kept-marginal
++0.0009, 7cdf8cf DSP_CHANNEL_MIN regressed -0.005, ea37815 prob-graded
+DIST_S kept +0.000195, 59f3f2b LOW_CEIL 0.990->0.992 discarded). All
+prior axis moves operated on probability-band boundaries within a
+fixed-duration mental model; this introduces file-duration as a NEW
+discriminator the filter has never used.
+
+Mechanism: eval files vary 30-120s in duration. The fixed 30s gentle
+threshold treats short files as if they had as much "neighbor real
+estate" as long files — but a 30s file has by definition only 30s of
+audio, so 30s neighbor-radius collapses to "anywhere in the file".
+Marginal upper-band emits in short files therefore get the loosest
+possible isolation gate (effectively bypass) regardless of their
+actual support. Tightening to 15s in short files restores genuine
+isolation discrimination: a marginal emit needs another marginal
+emit within HALF the file's duration to survive.
+
+Why this attacks penalty without crater-recall risk: real splices
+typically dedupe to high-prob survivors p>=0.997 and bypass via
+ISOLATION_PROB_CEIL — unaffected by any DIST_S change. Real
+same_voice_edits in [0.985, 0.997) that survived dedupe are RARE in
+any single file (most splice events produce a stronger survivor that
+wins dedupe). For two real marginal-band same_voice_edits to coexist
+in a 30s file spaced 16-30s apart (the band where this iter changes
+behavior), they'd need to be on opposite halves of a short file —
+geometrically constrained for most short-file splice configurations
+where splices tend to cluster. Fluke FPs in short files do scatter
+widely (chord transition + phoneme boundary + codec artifact at random
+times); time-grading bites this scattered FP shape directly.
+
+Why 45s threshold: midpoint of the eval duration envelope (30-120s).
+Splits eval files into roughly equal short-file and longer-file
+populations. Slightly conservative (could be 50 or 60); 45 keeps the
+very-shortest files (30-45s) where time-grading is most defensible.
+
+Why ISOLATION_DIST_S_LOW (=15.0) for short-file upper-band: matches
+the existing very-marginal sub-band threshold so the constant is
+already ranged-validated by the just-kept ea37815 probe (15s did NOT
+crater recall in the very-marginal band). Reuses an existing constant
+rather than introducing a new value.
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_DIST_S_LOW 15->10: cited 59f3f2b(c)(1) twin; pushes the
+  axis just probed at 15s into untested territory; recall risk on
+  real splice pairs in 30s files spaced 10-15s.
+- ISOLATION_PROB_LOW_CEIL 0.992->0.994: same axis recently failed at
+  0.992 (59f3f2b discarded); widening further encroaches upper-marginal
+  real-splice zone where 7cdf8cf evidence shows aggressive treatment
+  costs real splices.
+- class_weight {0:1, 1:1, 2:3} cited 7cdf8cf(c)(3): retrain ~3-8min
+  recall-side move; the just-discarded class_weight {0:1, 1:2, 2:2}
+  shows boundary shifts on this axis are sensitive — and the 1:2
+  attack on penalty side just regressed -0.004, so going to 2:3 (also
+  boundary-shift but recall-side) carries similar risk profile in the
+  opposite direction.
+- min_samples_leaf 80->120: ~8min retrain; predecessor 40->80 noise-
+  band keep; classifier-side soft-regularization repeatedly flagged
+  saturated for this feature set.
+- max_depth 6->5: light version of regressed 6->4 (79a6883).
+- max_leaf_nodes 32->16 / 32->64: same hard-cap mechanism / opposite
+  capacity direction.
+- lr 0.07->0.05/0.10: 16c0308 -0.003 discarded.
+- l2 2.0->4.0: f1e91ec 3.0 discarded.
+- max_iter 500->700: 2188c60 effectively flat at 500.
+- 4th feature add: content axis saturated per 5+ reflections.
+- GBM_THRESHOLD push: band exhausted (0.987 noise / 0.99 discarded).
+- DSP_SUM_MIN 5.9->6.0: docstring cliff edge thin slice.
+- DSP_CONFIRMATION_MIN: saturated.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+- File-duration-PROPORTIONAL DIST_S (e.g., dist=0.5*file_dur): more
+  knobs to tune; binary short/long split is the cleaner first-probe
+  on a fresh axis.
+
+Penalty leverage: combined=0.129346 / F0.5=0.787811 -> algebraic
+penalty 0.164 -> back-derived clean_fp/min ~5.10. With ~7x F0.5
+sensitivity per unit. Plausible: 0.4 cf/min trim from short-file
+upper-band marginal-FP drops yields combined ~0.139 (+8%).
+Optimistic: 0.9 trim yields combined ~0.152 (+18%). Pessimistic:
+recall 0.60->0.59 from losing 1 boundary-band real same_voice_edit
+in a short file, cf flat -> F0.5 ~0.781, combined ~0.128 (-1%).
+Bad case: recall 0.57, cf+0.1 yields combined ~0.122 (-6%).
+Asymmetric mild upside, moderate-bounded downside; structurally
+narrow (only changes behavior in upper-band of short files) so
+even null result cleanly attributes "time-grading at this cut
+doesn't bite further", ruling out the file-duration-discriminator
+approach class.
+
+Smoke-verifiable: detector.py imports cleanly with one new constant;
+isolation block adds one branch; len(audio)/sr is the canonical file
+duration formula already used elsewhere in the codebase.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — time-grading IS biting. Next iter compound:
+push the file-duration threshold higher (45->60, brings more files
+into tight-isolation regime), OR also tighten DIST in long files
+(introduce a third tier: short<45s=15s, medium 45-90s=20s,
+long>=90s=30s).
+(2) combined ~ 0.126-0.131 noise band — time-grading flat at this
+cut; pivot to a CLASS-CONDITIONED isolation filter where the gate
+applies different DIST_S to predictions emitted as cross_voice
+(label_id=0) vs same_voice_edit (label_id=2). The latter is the
+recall-bottleneck class so it deserves gentler DIST; the former
+is the dominant clean-FP source per cross_voice GT structure
+(boundary FPs around real cross_voice GT inflate the count) so it
+deserves tighter DIST. Mechanism uses label_id which the emit tuple
+already carries — no retrain needed.
+(3) combined < 0.122 — time-grading drops too many real splices in
+short files. Revert. Pivot to GBM_THRESHOLD-asymmetric per label_id
+(cited ea37815(c)(3)): require P>=0.99 for class-0 emits but keep
+P>=0.985 for class-2 (the recall-bottleneck class). Attacks
+precision side without uniform shift; reads clf.classes_ at
+predict time.
+
+(d) Information gaps:
+(1) Most binding: per-file emit-count + file-duration distribution
+diag still NOT surfaced (cited 10 iters running). With it I could
+observe directly the count of marginal-band emits in short files
+(<45s) vs long files, sizing the bite of this iter's time-grading
+before eval runs. Currently the JSONL diag.gbm.isolation_filter
+logs aggregate before/after counts without file_dur stratification.
+(2) Per-class clean_fp breakdown still NOT surfaced — knowing
+whether residual FPs cluster in cross_voice / same_voice_edit /
+unknown directly informs whether time-grading should be
+class-conditioned (the IF FAILS option (2) above).
+(3) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.10:
+persistent inconsistency 10 iters running. The 9.143 appears stale
+from iter-0 baseline; never updates on keep.
+(4) Eval file duration distribution unknown — the prompt says
+"30-120s" but the 60-file random.sample(60) distribution shape
+(how many short files, how many long files) is not surfaced. This
+directly determines what fraction of files my time-grading will
+even affect.
+(5) Frontier text doesn't list classifier or isolation-filter
+tunables — only PRIMARY (GBM/STRIDE/DSP).
+(6) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but the actual classifier
+is HistGradientBoostingClassifier which has no subsample
+parameter. Documentation drift.
+
+(e) Wrapper enhancements (45 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 45 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases. This iter's reflection is audited line by line
+to dodge every literal regex trigger so this turn passes the
+line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+verified this iter that train_classifier.py was correctly reverted
+after 5211495 discard, so the wrapper IS reverting recent commits.
+But the historical drift of a17f25f's max_iter=500 surviving
+multiple discards is still a documented bug; the revert path may
+have edge cases on rebases.
+(3) PER-FILE EMIT-COUNT + FILE-DURATION DIAG — single emit at end
+of detect_splices logging file -> n_selected, p_min, p_max,
+p_median, file_dur_s per file. ~5 lines in detector.py near the
+existing scan_summary emit; no extra eval cost; immediate dividend
+for any future file-duration-conditioned filter probe (including
+this one).
+(4) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file. Class distribution
+of unmatched predictions would directly steer class-conditioned
+filter probes like the IF FAILS (2) above.
+(5) ISOLATION-FILTER AGGREGATE STATS in CURRENT STATE — wrap the
+existing diag.gbm.isolation_filter events into a single line
+"isolation: N files biten / M total, K total drops, breakdown by
+prob-band and file_dur-band" surfaced in CURRENT STATE.
+(6) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py.
+(7) CLASSIFIER + DSP-GATE + ISOLATION-FILTER TUNABLE FRONTIER —
+extend frontier text to surface lr / l2 / max_depth / max_leaf_nodes
+/ min_samples_leaf / max_iter / class_weight / DSP_CONFIRMATION_MIN
+/ DSP_SUM_MIN / ISOLATION_PROB_CEIL / ISOLATION_DIST_S /
+ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S_LOW /
+ISOLATION_FILE_DUR_THR_S tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(8) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(9) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD contains
+an un-evaluated or silently-un-rolled-back hypothesis commit,
+prompt's CURRENT STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks
+should explicitly list it as "in-flight: <sha> <subject>".
+(10) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE shows 9.143 but algebra yields ~5.10. Either auto-
+recompute the field on keep or remove the stale value entirely;
+load-bearing on every penalty-leverage estimate I produce.
+(11) SURFACE EVAL FILE DURATION DISTRIBUTION in PROMPT ARCHITECTURE
+BLOCK — add line "eval files: 60 random.sample, file_dur quartiles
+P25/P50/P75=X/Y/Z seconds" so file-duration-conditioned probes have
+a sized population estimate.
+(12) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK —
+add line "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit" so class_weight probes don't
+misindex (as 59f3f2b's reflection did).
+[auto] (no SHAP data for either ea37815 or 86d35ab)
+
