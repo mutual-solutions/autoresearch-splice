@@ -3723,3 +3723,159 @@ per-domain: (no per-domain data)
     in the prompt.
 [auto] (no SHAP data for either 322fa29 or 36657c6)
 
+## 2026-04-26T15:19:51+09:00 — 00bafe5 (discard, combined=0.721951)
+subject: HistGBM max_iter 300 -> 500 (capacity bump after class_weight 2x landed only +0.001 noise-band gain on combined; OOF same_voice_edit F1 dropped 0.53 -> 0.487 confirming class_weight saturated; cited 36657c6(c)(2) retrain lever rotation; class_weight 2x retained so marginal 200 iters preferentially fit same_voice_edit residual)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: HistGBM max_iter 300 → 500 (capacity bump on retrain axis after class_weight 2x delivered only +0.001 noise-band gain)
+
+(a) HYPOTHESIS. Pure `splice/classifier/train_classifier.py:make_pipeline()`
+    one-line change — bump `max_iter` from 300 to 500. No detector edit, no
+    feature edit. Wrapper auto-retrains via US-505b sha gate (~5min, was
+    ~3min at 300). Other classifier hyperparams stable (max_depth=5,
+    max_leaf_nodes=32, learning_rate=0.07, l2_regularization=2.0,
+    min_samples_leaf=40, class_weight={0:1,1:1,2:2} kept from 36657c6,
+    loss=log_loss, random_state=42). Other primary tunables stable
+    (GBM_THRESHOLD=0.972, GBM_MIN_SEP_S=1.05, ANALYSIS_STRIDE_S=0.0635).
+    FEATURE_NAMES stable at 80.
+
+(b) WHY OVER RECENT FAILURES — CITED RETRAIN-LEVER ROTATION. Just-kept
+    36657c6 (class_weight 2x) landed combined=0.721951 — only +0.00104
+    over prior 0.720911. That is squarely in the c(2) trigger band from
+    36657c6 itself: "Combined matches 0.721 (within ~0.002 noise) —
+    class_weight 2x had no effect on Korean voice-switch TP recovery;
+    next iter try a different retrain lever (max_iter 300→500 to add
+    capacity, or learning_rate 0.07→0.05 + max_iter→500 for slower
+    careful learning), OR feature-engineering pivot." Stronger evidence
+    that class_weight 2x was a wash: OOF same_voice_edit F1 actually
+    DROPPED from baseline 0.53 to 0.487 under class_weight 2x — the boost
+    distorted calibration (raised recall by trading away precision on
+    OOF), and the +0.001 combined gain at deployment is essentially the
+    GBM_THRESHOLD=0.972 filter masking that distortion. Pushing
+    class_weight harder (3x, balanced) would likely deepen the
+    calibration distortion without further combined gain — probably
+    regress as FP inflation crosses the clean_fp budget cap.
+
+    Why max_iter 300→500 over learning_rate 0.07→0.05+max_iter→500: both
+    cited; max_iter alone is the smallest single-knob change. Adding 200
+    more weak learners gives the GBM more chances to find finer-grained
+    discriminating splits for the rare same_voice_edit class (4056 of
+    67947 = 6%) without uniformly upweighting it. With class_weight 2x
+    already in place, every additional iter focuses 2x its gradient
+    energy on same_voice_edit — so the marginal capacity is targeted at
+    exactly the weak class. learning_rate 0.07→0.05 changes step size
+    AND requires max_iter compensation to avoid undertraining; harder
+    to attribute outcomes cleanly. max_iter alone is the cleaner first
+    probe.
+
+    Why max_iter over feature engineering pivot: feature engineering is
+    open-ended (which features? targeting which signature?), high-risk
+    (10+ feature additions historically caused regression and forced
+    rollback), and slower (each feature requires retrain plus
+    OOF-validation thinking). max_iter is a one-line, low-risk capacity
+    bump that's strictly orthogonal to existing features. If max_iter
+    saturates at 0.722 too, that's a signal that capacity isn't the
+    bottleneck and feature engineering becomes the cited next move
+    with high confidence. Strict ordering: cheap→expensive.
+
+    Why max_iter over min_samples_leaf 40→20: also fresh on iter1, but
+    min_samples_leaf at 40 already covers only 0.06% of training rows
+    (very permissive); halving to 20 = 0.03% mostly affects tiny rare-
+    pattern leaves and risks overfitting noise within the same_voice_edit
+    cohort (4056 samples). max_iter is the cited first move; revisit
+    min_samples_leaf if max_iter saturates.
+
+    Mechanism on Korean recall (P=0.855 R=0.293, dominant bottleneck
+    even after STRIDE descent and class_weight 2x): Korean voice-switch
+    boundaries are exactly the same_voice_edit class. With OOF
+    same_voice_edit recall=0.39, ~60% of training same_voice_edit
+    samples cannot be classified correctly even on training-distribution
+    OOF — the model's hypothesis space is undercovered for this class.
+    max_iter 300→500 adds 200 more weak learners; each additional learner
+    can subdivide an existing leaf where same_voice_edit samples are
+    confused with no_splice (HistGBM continues fitting residual loss on
+    misclassified samples). With class_weight 2x focusing gradient on
+    same_voice_edit, the marginal 200 iterations preferentially target
+    same_voice_edit decision boundaries. Expected outcome: OOF
+    same_voice_edit F1 lifts from 0.487 toward 0.55+ (recall side).
+    Combined deployment gain depends on how many of those new TPs survive
+    GBM_THRESHOLD=0.972; given the +0.001 combined gain when OOF F1
+    dropped 0.043, even modest OOF F1 lift could yield meaningful
+    combined gain.
+
+    Compute cost: max_iter 300→500 is ~+66% retrain time (was ~3min,
+    becomes ~5min). Eval cost unchanged at STRIDE=0.0635. Total iter
+    time ~8min vs ~5.5min, comfortable. No risk of feature-extraction
+    blow-up.
+
+    Smoke-verifiable: HistGradientBoostingClassifier supports max_iter
+    natively (it's the early-stopping-or-fixed-iteration count); accepts
+    integer 500 trivially.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.722 — added capacity
+    overfits training data (same_voice_edit minority gets perfectly
+    separated on OOF but generalizes poorly to eval), or capacity
+    interacts badly with class_weight 2x (accelerated overconfidence
+    for both classes); next iter try max_iter=500 with class_weight
+    REVERTED to None (default) to isolate the lever, OR pivot to
+    learning_rate 0.07→0.05 (slower careful learning, max_iter→500
+    compensation already in place), OR pivot to min_samples_leaf 40→20
+    (tighter leaves for rare same_voice_edit patterns).
+    (2) Combined matches 0.722 (within ~0.002 noise) — capacity wasn't
+    the bottleneck; pivot to feature-engineering axis next iter (add
+    new same_voice_edit-targeted features in splice/features.py — short-
+    time MFCC delta-delta, sub-second voice-likelihood discontinuity,
+    formant transition slope; pick ONE single feature first to keep
+    attribution clean), OR revert class_weight and try max_iter alone
+    (cleaner attribution).
+    (3) Combined exceeds 0.730 — capacity productive on iter1 contract-
+    fixed classifier; next iter step max_iter further (500→700) OR pivot
+    to learning_rate 0.07→0.05 + max_iter→700 for synergistic slow
+    careful learning (combined cited path), OR revert class_weight to
+    None at max_iter=500 to test whether capacity alone beats
+    capacity+class_weight (cleaner attribution).
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1. 16 keeps + 2 STRIDE
+    regressions in (now 17 keeps + 6 discards), still cannot verify
+    which domain delivered the +0.286 aggregate gain across iter1
+    (0.436 → 0.722). At the SECOND retrain pivot — already burning
+    +5min compute — direct per-domain attribution would directly
+    determine next retrain lever (e.g. if Korean is finally above
+    sing/eng, focus shifts to maintaining cross-domain balance not
+    boosting Korean further). The OOF metrics show same_voice_edit F1
+    dropped from 0.53 (pre-class_weight) to 0.487 (post-class_weight),
+    even though combined eval went UP +0.001 — the OOF→combined gap
+    is widening and I have no per-domain visibility into why.
+    Eval runtime per iteration also still not surfaced — at +85% over
+    0.12 baseline plus retrain time, total iter time is the most
+    consequential constraint and isn't reported. The
+    combined_<domain>=NA in the FAILED HYPOTHESES history block (every
+    entry shows "[singing NA / korean NA / english NA]") confirms the
+    iter1 results.tsv writer simply never captures per-domain — this
+    is the single most consequential operator fix.
+
+(e) Wrapper enhancements. Three updated highest-priority asks (now 17
+    consecutive keeps + this iter with these gaps unfilled):
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON AND results.tsv
+    on iter1 branch — same ask as last 16 iters, still missing. NOW
+    MOST consequential at retrain-lever rotation: knowing whether
+    class_weight 2x specifically helped or hurt Korean (vs the +0.001
+    aggregate masking cross-domain rebalance) directly determines
+    whether to revert it before adding capacity. Estimated <30min
+    operator fix; non-iter1 baseline already captures this.
+    (2) ACTUAL CURRENT HYPERPARAMETER SNAPSHOT in CURRENT STATE prompt
+    — same ask as 36657c6 reflection. Last 14 reflections cited "min_
+    samples_leaf 20→40 untouched" which was WRONG (it's already 40);
+    a one-block dump of HistGBM hyperparams in CURRENT STATE would have
+    saved 14 iterations of inherited misinformation. With the retrain
+    axis now active, this gap multiplies in cost.
+    (3) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE: a single
+    block like "iter1_classifier_oof: same_voice_edit F1 0.530→0.487
+    (Δ-0.043, recall ~0.39→~0.45, precision ~0.81→~0.53)" would directly
+    distinguish productive class_weight effect from calibration distortion.
+    Available in fp_classifier.meta.json's oof_metrics — just needs to
+    be diffed against prior keep's meta and surfaced. With retrain axis
+    active, this is the second-highest-priority fix after per-domain
+    combined.
+
