@@ -38,7 +38,7 @@ ANALYSIS_STEP_S = 30.0  # 50% overlap — W-S=30s, every splice within 30s of a 
 _DETECT_CACHE: dict = {}
 _DETECT_CACHE_MAX = 512
 
-ANALYSIS_STRIDE_S = 0.12
+ANALYSIS_STRIDE_S = 0.10
 # Training class ratio (~45/55 splice/not_splice) is far denser than the
 # ~1:300 splice-per-candidate ratio in real audio, so proba skews high.
 # An aggressive decision threshold compensates for the prior-probability
