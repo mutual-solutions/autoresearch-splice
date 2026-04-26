@@ -47,7 +47,7 @@ GBM_THRESHOLD = 0.985
 # Must exceed evaluate.py's 1.0s tolerance so one real splice cannot inflate
 # into multiple detections when a high-probability plateau spans several
 # adjacent candidates.
-GBM_MIN_SEP_S = 4.5
+GBM_MIN_SEP_S = 5.5
 
 # DSP-confirmation floor: drop hit_mask emits whose strongest DSP z-score
 # signal (phase_z / T²_z / CPE_z) is below DSP_CONFIRMATION_MIN. GBM's
