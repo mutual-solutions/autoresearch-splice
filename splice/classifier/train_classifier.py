@@ -89,6 +89,7 @@ def make_pipeline() -> Pipeline:
             learning_rate=0.07,
             l2_regularization=2.0,
             min_samples_leaf=40,
+            class_weight={0: 1.0, 1: 1.0, 2: 2.0},
             loss="log_loss",          # multiclass-compatible default
             random_state=RANDOM_STATE,
         )),
