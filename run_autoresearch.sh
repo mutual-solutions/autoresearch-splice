@@ -447,8 +447,14 @@ for k in list(re.findall(r"\bcombined_([A-Za-z_]+)=", tsv)):
 if per_ds:
     data["per_dataset_combined"] = per_ds
 
+# clean_fp_<X>= keys: <X> is normally a dataset slug (singing/korean/english)
+# carrying an INTEGER count. The korean-iter1 metric pivot added float-valued
+# scalar fields `clean_fp_per_min` and `clean_fp_penalty` that share this
+# prefix; exclude them or `int(v)` raises ValueError and trips set -e.
+RESERVED_CLEAN_FP_SCALARS = {"per_min", "penalty"}
 per_ds_fp = {}
 for k in list(re.findall(r"\bclean_fp_([A-Za-z_]+)=", tsv)):
+    if k in RESERVED_CLEAN_FP_SCALARS: continue
     v = pull(f"clean_fp_{k}")
     if v is not None:
         per_ds_fp[k] = int(v)

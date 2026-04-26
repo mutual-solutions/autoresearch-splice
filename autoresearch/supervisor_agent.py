@@ -224,8 +224,15 @@ def check_clean_fp_bound(output: str) -> tuple[str, str]:
             return "FAIL", f"clean_fp={cfp} exceeds bound of 15"
         return "PASS", f"clean_fp={cfp} (bound: 15)"
 
+    # Exclude scalar metric fields that share the `clean_fp_` prefix but
+    # are not per-dataset counts (korean-iter1 metric pivot added these).
+    # The integer regex `(\d+)` would otherwise truncate `9.143323` to `9`
+    # and label it as a phantom dataset `per_min`.
+    _RESERVED_CLEAN_FP_SCALARS = {"per_min", "penalty"}
     per_ds = {}
     for m in re.finditer(r"\bclean_fp_([A-Za-z_]+)=(\d+)", tsv_line):
+        if m.group(1) in _RESERVED_CLEAN_FP_SCALARS:
+            continue
         per_ds[m.group(1)] = int(m.group(2))
     total_match = re.search(r"\bclean_fp=(\d+)", tsv_line)
     total = int(total_match.group(1)) if total_match else sum(per_ds.values())
