@@ -1,6 +1,6 @@
 {
   "version": "korean_iter1_v1",
-  "trained_at": "2026-04-26T18:38:17Z",
+  "trained_at": "2026-04-26T20:52:42Z",
   "n_train_files": 2052,
   "n_train_samples": 67947,
   "classes_": [
@@ -109,7 +109,7 @@
     "max_features": 1.0,
     "max_iter": 500,
     "max_leaf_nodes": 32,
-    "min_samples_leaf": 40,
+    "min_samples_leaf": 80,
     "monotonic_cst": null,
     "n_iter_no_change": 10,
     "random_state": 42,
@@ -120,12 +120,12 @@
     "warm_start": false
   },
   "oof_metrics": {
-    "f1_macro": 0.803006,
-    "f1_weighted": 0.932857,
+    "f1_macro": 0.804516,
+    "f1_weighted": 0.932846,
     "f1_per_class": {
-      "cross_voice": 0.95864,
-      "no_splice": 0.962081,
-      "same_voice_edit": 0.488296
+      "cross_voice": 0.957376,
+      "no_splice": 0.962062,
+      "same_voice_edit": 0.49411
     }
   },
   "class_counts": {
@@ -138,40 +138,40 @@
       "fold": 1,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.9336076190496629,
-      "f1_macro": 0.8034893619485383
+      "f1_weighted": 0.9339978208072925,
+      "f1_macro": 0.8063298328386298
     },
     {
       "fold": 2,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.9320719344800692,
-      "f1_macro": 0.8059787803787614
+      "f1_weighted": 0.93326416021656,
+      "f1_macro": 0.8082973261688471
     },
     {
       "fold": 3,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.932889556630515,
-      "f1_macro": 0.8026168399187895
+      "f1_weighted": 0.9320542376068844,
+      "f1_macro": 0.8012361783570711
     },
     {
       "fold": 4,
       "n_train": 54345,
       "n_test": 13602,
-      "f1_weighted": 0.9344347253549786,
-      "f1_macro": 0.8058379999623594
+      "f1_weighted": 0.9326326703247956,
+      "f1_macro": 0.8046650145489961
     },
     {
       "fold": 5,
       "n_train": 54345,
       "n_test": 13602,
-      "f1_weighted": 0.9312840814370016,
-      "f1_macro": 0.7970342932503743
+      "f1_weighted": 0.9322810935213715,
+      "f1_macro": 0.8019703858790059
     }
   ],
   "features_py_sha": "ccbf32f0edbf4c226a37d68d6f8bcbec9c5a5b75",
-  "train_classifier_py_sha": "b6a90163836957a58d53746d1fbe50e777ef9459",
+  "train_classifier_py_sha": "c6182b15684996e6bde2da8ad3f241f2cbd60c0f",
   "voice_holdout": {
     "test": [],
     "eval": [],
