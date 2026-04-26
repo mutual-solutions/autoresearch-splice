@@ -3550,3 +3550,176 @@ per-domain: (no per-domain data)
     discriminate (tight runtime → noise more likely; comfortable runtime
     → real feature more likely).
 
+## 2026-04-26T14:16:38+09:00 — 36657c6 (keep, combined=0.721951)
+subject: add HistGBM class_weight={0:1, 1:1, 2:2} (RETRAIN PIVOT after STRIDE saturation; first iter1 retrain experiment; boost same_voice_edit 2x to attack documented OOF recall=0.39 weak class)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: RETRAIN PIVOT — class_weight={0:1, 1:1, 2:2} (boost same_voice_edit 2x to attack documented OOF recall=0.39, the explicit headroom from iter-0 baseline)
+
+(a) HYPOTHESIS. RETRAIN axis pivot — first iter1 classifier hyperparameter
+    experiment. Add `class_weight={0: 1.0, 1: 1.0, 2: 2.0}` to
+    `HistGradientBoostingClassifier(...)` in
+    `splice/classifier/train_classifier.py:make_pipeline()`. Pure 1-line
+    addition; no detector edit, no feature edit. Wrapper auto-retrains
+    via US-505b train_classifier.py sha gate (~3 min). Other classifier
+    hyperparams stable (max_iter=300, max_depth=5, max_leaf_nodes=32,
+    learning_rate=0.07, l2_regularization=2.0, min_samples_leaf=40, loss=
+    log_loss, random_state=42). Other primary tunables stable
+    (GBM_THRESHOLD=0.972, GBM_MIN_SEP_S=1.05, ANALYSIS_STRIDE_S=0.0635 —
+    keeping current best). FEATURE_NAMES stable at 80.
+
+(b) WHY OVER RECENT FAILURES — STRIDE SATURATION CONFIRMED, RETRAIN PIVOT
+    TRIGGERED. Just-discarded 1aed387 (STRIDE 0.0635 → 0.064) landed
+    combined=0.700754 — squarely inside the cited (c)(1) trigger band from
+    current best 322fa29: "Combined regresses below 0.720 to ~0.692-0.700
+    — sharp peak at exactly 0.0635, surface is alignment-lottery; STRIDE
+    axis effectively saturated; pivot immediately to RETRAIN axis next
+    iter." Updated STRIDE response surface around the 0.0635 peak:
+      0.065  → 0.692  (-0.029 vs peak)
+      0.0635 → 0.721  (current best, sharp local peak)
+      0.064  → 0.701  (-0.020 vs peak, just-discarded)
+      0.0625 → 0.691  (-0.030 vs peak)
+    Both upward (0.064) and downward (0.0625) bisections from the 0.0635
+    peak regressed substantially. The peak is sharp/alignment-lottery
+    driven, not a productive plateau. Bisection-completion-within-
+    bracket-before-pivoting rule from 14 prior keeps says continue
+    productive axis until saturation/regression — STRIDE has now had
+    BOTH (regression at 0.0625, regression at 0.064). Saturation
+    confirmed bilaterally.
+
+    CRITICAL CORRECTION TO PRIOR REFLECTIONS: my own notes from the
+    last 14 iters cited "HistGBM min_samples_leaf 20→40, fcb8f4e proved
+    productive on legacy and untouched on iter1" as the highest-priority
+    retrain pivot. THIS IS WRONG. Inspection of
+    splice/classifier/train_classifier.py:make_pipeline() shows
+    min_samples_leaf=40 is ALREADY set in the iter1 classifier (inherited
+    from legacy fcb8f4e + the subsequent l2_regularization=2.0 from
+    4b1575e). All 14 reflections in a row inherited and propagated this
+    error from each other. The genuinely-untouched-on-iter1 retrain axis
+    is class_weight (default None on iter1).
+
+    WHY class_weight={0: 1.0, 1: 1.0, 2: 2.0} (boost same_voice_edit 2x):
+    iter-0 baseline OOF metrics from 8530ba8 commit message explicitly
+    document same_voice_edit recall=0.39 as the deliberate weak spot
+    ("the headroom the autoresearch loop will work on"). With CLASS_NAMES
+    in alphabetical order, integer label 2 = same_voice_edit. The
+    Korean voice-switch boundary that constitutes the dominant eval
+    bottleneck (P=0.855 R=0.293) is exactly the same_voice_edit class.
+    Mechanism: at inference p_splice = P(cross_voice) + P(same_voice_edit)
+    > GBM_THRESHOLD=0.972. Same_voice_edit class is heavily underweighted
+    in training: 4,056 samples vs 45,298 no_splice (~11x imbalance).
+    Standard log-loss training spends ~11x less gradient energy on
+    same_voice_edit per epoch, so GBM systematically underconfident on
+    that class. Boosting weight 2x increases same_voice_edit gradient
+    contribution → GBM learns higher P(same_voice_edit) for marginal
+    same_voice_edit samples → marginal Korean voice-switch TPs whose
+    p_splice was just below 0.972 now cross threshold → recall lifts
+    from 0.293.
+
+    WHY 2x not 'balanced' (which would be ~11x): 'balanced' is high-risk
+    of FP inflation. Heavy boost to same_voice_edit could cause GBM to
+    predict P(same_voice_edit) > 0 on no_splice training samples that
+    have any same_voice_edit-ish features → at inference, marginal
+    no_splice candidates get p_splice > 0.972 → clean_fp inflates →
+    clean_score drops → combined regresses (clean_fp budget cap is 15
+    per dataset, 45 total). 2x is moderate first probe; if productive,
+    can step to 3x or 4x next iter. Standard sklearn class_weight
+    progression {1, 2, 4, 8, balanced} mirrors the geometric step sizes
+    used throughout this branch.
+
+    WHY class_weight over other retrain levers:
+    - max_iter 300→500: orthogonal capacity bump, no targeted attack on
+      same_voice_edit recall; lower expected payoff for same compute.
+    - learning_rate 0.07→0.05 + max_iter compensation: slower careful
+      learning, but doesn't address class imbalance at all.
+    - max_depth 5→6 / max_leaf_nodes 32→64: more capacity, potentially
+      overfits at 67k samples × 80 features; doesn't address
+      same_voice_edit recall directly.
+    - min_samples_leaf 40→20: legacy reasoning was for ~2k corpus where
+      40 = 2% of training; on 67k corpus, 40 is 0.06% — already very
+      permissive; lowering further doesn't help.
+    - l2_regularization 2.0→1.0: shrinks output less, but again doesn't
+      target class imbalance.
+    Class_weight is the ONLY lever that directly attacks the documented
+    same_voice_edit recall=0.39 weakness, which directly maps onto the
+    Korean recall=0.293 eval bottleneck. Highest expected payoff per
+    retrain compute cost.
+
+    Compute cost: ~3 min retrain (per CLAUDE.md), then full eval (~290s
+    at 0.0635). Within the 300s eval budget cleanly. STRIDE 0.0635 keeps
+    grid alignment that produced the 0.721 keep, so any class_weight gain
+    stacks on top of the alignment sweet spot rather than competing with
+    it.
+
+    Smoke-verifiable: HistGradientBoostingClassifier supports class_weight
+    in sklearn 1.7.2 (confirmed via inspect.signature); accepts dict with
+    integer label keys (confirmed via instantiation).
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.721 — class_weight 2x
+    inflates same_voice_edit predictions on no_splice samples, lifts
+    p_splice above 0.972 on marginal clean candidates, FPs inflate,
+    clean_score drops, combined regresses; next iter try class_weight={0:
+    1.0, 1: 1.0, 2: 1.5} (smaller boost, lower FP inflation risk), OR
+    pivot to a different retrain lever (max_iter 300→500 first, then
+    learning_rate 0.07→0.05). (2) Combined matches 0.721 (within ~0.002
+    noise) — class_weight 2x had no effect on Korean voice-switch TP
+    recovery (perhaps marginal TPs are not feature-distinguishable from
+    marginal FPs, so no class re-weighting can separate them); next iter
+    try a different retrain lever (max_iter 300→500 to add capacity, or
+    learning_rate 0.07→0.05 + max_iter→500 for slower careful learning),
+    OR feature-engineering pivot (add new features in splice/features.py
+    targeting same_voice_edit signatures). (3) Combined exceeds 0.730 —
+    class_weight productive on iter1, validates same_voice_edit recall
+    as the bottleneck; next iter step weight up to 3x same_voice_edit
+    to continue, OR step to {0: 1.5, 1: 1.0, 2: 2.5} adding moderate
+    cross_voice boost too (cross_voice OOF recall=0.97 already high so
+    less expected gain there but cross_voice TPs also contribute to
+    p_splice).
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has not
+    captured it yet)". 15 keeps + 2 STRIDE regressions in, still cannot
+    verify which domain delivered the +0.166 aggregate gain across the
+    iter1 STRIDE descent (0.5546 → 0.721). At a RETRAIN pivot — the
+    most expensive single-iter compute cost — direct observation of
+    per-domain attribution would be the highest-value information gain.
+    Without it I cannot tell post-retrain whether class_weight helped
+    Korean specifically or rebalanced cross-domain. The OOF metrics
+    snapshot from 8530ba8 (cross_voice F1=0.96 / no_splice F1=0.96 /
+    same_voice_edit F1=0.53 recall=0.39) is also not surfaced in
+    CURRENT STATE — I had to git-show it to recover the per-class
+    weak-spot diagnosis. A line like "iter1 OOF: same_voice_edit F1=0.53
+    (recall=0.39)" in CURRENT STATE would have made this retrain pivot
+    self-evident much earlier and prevented 14 iters of inherited
+    misinformation about which retrain lever is fresh. Eval runtime per
+    iteration also still not surfaced — at +85% over 0.12 baseline the
+    runtime margin to 300s cliff matters when retrain extends total
+    iter time by 3 min.
+
+(e) Wrapper enhancements. Three updated highest-priority asks (now 16
+    consecutive iterations with these gaps unfilled):
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 15 keeps + this iter, still missing. NOW EXTREMELY
+    consequential at the RETRAIN pivot: knowing which domain gained
+    (or regressed) post-retrain directly determines next retrain step
+    (continue boosting same_voice_edit if Korean specifically gained;
+    abandon class_weight axis if singing/english regressed). Estimated
+    <10min schema hookup; non-iter1 baseline already captures this.
+    (2) ACTUAL CURRENT HYPERPARAMETER SNAPSHOT in CURRENT STATE:
+    prompt currently lists "PRIMARY (instant)" tunables but not the
+    actual current values of RETRAIN tunables (max_iter, max_depth,
+    max_leaf_nodes, learning_rate, l2_regularization, min_samples_leaf,
+    class_weight). My last 14 reflections all cited "min_samples_leaf
+    20→40 untouched on iter1" which was WRONG (it's already 40); a
+    one-block dump of the current make_pipeline() HistGBM
+    hyperparameters (1 line each) would have prevented 14 iterations
+    of inherited misinformation about which retrain levers are
+    genuinely fresh.
+    (3) CLASSIFIER OOF METRICS SNAPSHOT in CURRENT STATE: a line like
+    "iter1_classifier: same_voice_edit F1=0.53 recall=0.39 (weak class)"
+    would make the retrain headroom immediately visible. Available in
+    fp_classifier.meta.json's oof_metrics — just needs to be surfaced
+    in the prompt.
+[auto] (no SHAP data for either 322fa29 or 36657c6)
+
