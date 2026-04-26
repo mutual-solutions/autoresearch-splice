@@ -4525,3 +4525,142 @@ per-domain: (no per-domain data)
     determines whether the cliff is TP-loss vs FP-survival.
 [auto] (no SHAP data for either 5657d2f or 335ca87)
 
+## 2026-04-26T18:01:01+09:00 — cbe8cf2 (discard, combined=0.109862)
+subject: GBM_THRESHOLD 0.985 -> 0.99 (cited dedupe-saturation pivot to orthogonal lever after 335ca87 landed +0.0033 at noise-band edge under F0.5 x clean_fp_penalty metric where penalty=0.140 post-dedupe; dedupe descent decelerated to per-unit 0.0033 at 5.5 vs 0.0084 at 4.5 and 5.5 sits at edge of Korean turn-taking distribution; cluster-max FPs and isolated single-emit FPs are by-construction high-confidence so threshold push attacks orthogonal mechanism; cited 335ca87(c)(2); 0.99 fresh on frontier above [0.5, 0.985] explored band; +0.005 step mirrors prior productive 0.972->0.985 magnitude under new metric; pessimistic R 0.55 + clean_fp 5.8 still nets combined ~0.114 +3.5%)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_THRESHOLD 0.985 → 0.99 (cited dedupe-saturation pivot to orthogonal lever after 335ca87 landed +0.0033 at the noise-band edge)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    GBM_THRESHOLD from 0.985 to 0.99. No retrain, no feature edit.
+    Other primary tunables stable: GBM_MIN_SEP_S=5.5 (current best),
+    ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    Classifier hyperparams stable. FEATURE_NAMES stable at 80. 0.99
+    fresh on frontier (set: kept 0.97/0.972/0.974/0.975/0.978/0.985,
+    failed 0.5/0.971/0.975 = 9 tried; 0.99 never tried; sits cleanly
+    above explored band [0.5, 0.985]).
+
+(b) WHY OVER RECENT FAILURES — CITED DEDUPE-SATURATION PIVOT TO ORTHOGONAL
+    LEVER. Just-kept 335ca87 (GBM_MIN_SEP_S 4.5→5.5) gained only +0.00328
+    combined (0.10688 → 0.11016) — the smallest dedupe gain yet, sitting
+    AT the (c)(2) noise-band edge from itself ("matches 0.107 ±0.003
+    noise"). Updated dedupe descent on iter1 under F0.5 × clean_fp_penalty:
+      1.05 → 2.5 : +0.0153  (per unit: 0.0105)
+      2.5  → 3.5 : +0.0054  (per unit: 0.0054)
+      3.5  → 4.5 : +0.0084  (per unit: 0.0084)
+      4.5  → 5.5 : +0.0033  (per unit: 0.0033, smallest)
+    Per-unit productivity halved 4.5→5.5 vs 3.5→4.5. 5.5 is also at the
+    edge of Korean conversational turn-taking distribution (median 3-5s),
+    so further dedupe steps risk killing real cross_voice TPs at 5-6s
+    spacing — asymmetric downside. Cited 335ca87(c)(2) explicitly says:
+    "dedupe saturated... pivot to GBM_THRESHOLD 0.985→0.99 next iter
+    (smaller diminishing-return push) OR feature-engineering pivot."
+    I take the threshold pivot (single-knob, instant, clean attribution)
+    over feature engineering (open-ended, retrain ~3min, higher risk).
+
+    Decomposition of current state (335ca87 best): combined=0.110163,
+    F0.5≈0.79, P=0.853, R=0.603, clean_fp_per_min=9.14 (baseline-pre-
+    dedupe). Inferring post-5.5-dedupe: penalty went 0.099→0.140 (since
+    combined=0.110 and F0.5≈0.788), so clean_fp_per_min dropped from
+    9.14 to ~6.1 (-33%) across the descent. P likely lifted modestly
+    (no recall loss should mean P↑ as FP count drops).
+
+    Mechanism: surviving clean FPs at 5.5s dedupe are the cluster MAXES
+    (greedy dedupe keeps the highest-p_splice emit per 5.5s window) plus
+    isolated single-emit FPs. Both categories are high-confidence by
+    construction. Threshold 0.985→0.99 attacks the SAME population
+    dedupe just curated — if some cluster maxes have p_splice ∈ [0.985,
+    0.99], they get filtered. If all cluster maxes are p > 0.99 (very
+    likely), threshold push has marginal effect and recall loss
+    dominates → cleanly signals feature-engineering pivot with rock-
+    solid evidence.
+
+    Why over GBM_MIN_SEP_S 5.5→6.5/7.0: cited (c)(3) ">0.120 → step
+    to 7.0" trigger NOT met (we're at 0.110, below). At edge of Korean
+    turn distribution, further dedupe is asymmetric-downside (TP loss
+    accelerates). Cited (c)(2) recommends pivot to threshold first.
+
+    Why over feature engineering pivot (clean-audio guard): cited as
+    co-equal next step. Threshold is cheaper (instant vs 3min retrain),
+    cleaner attribution (one knob vs feature design + retrain), and
+    informative either way: if threshold lifts combined further,
+    confirms post-dedupe FPs aren't all maxed-out confidence; if
+    saturates/regresses, validates feature-engineering as the only
+    remaining lever with rock-solid evidence. Strict cheap→expensive
+    ordering.
+
+    Why over class_weight tweaks: c681ee7 (revert class_weight 2x→None)
+    verify-failed at flat ~0.078 — class_weight is NOT the FP source.
+
+    Why +0.005 step (0.99 not 0.987 or 0.995): mirrors prior +0.013
+    threshold step (0.972→0.985) that gained +0.005 combined under the
+    NEW metric (4a98c85 was a keep). +0.005 here is roughly the same
+    relative magnitude on the [0.985, 1.0] band edge. 0.987 is too
+    small a step — won't cleanly discriminate "maxed-out vs not" given
+    eval noise (~0.003). 0.995 is too aggressive — recall loss likely
+    >50% as the upper tail of TP p_splice distribution thins rapidly.
+    0.99 is the canonical 0.005 step matching cited recommendation.
+
+    Pessimistic math (R drops 0.603→0.55, P rises 0.853→0.87,
+    clean_fp_per_min drops 6.1→5.8, F0.5(0.87, 0.55)=0.776, penalty=
+    0.147): combined=0.114 (+3.5% vs 0.110, marginal but positive).
+    Optimistic (R 0.58, P 0.88, clean_fp 4.5, F0.5=0.794, penalty=
+    0.182): combined=0.144 (+31%). Pessimistic (R 0.50, P 0.87,
+    clean_fp 5.8, F0.5=0.741, penalty=0.147): combined=0.109 (-1%, near
+    flat). Asymmetric upside, downside mild.
+
+    Compute cost: zero. Threshold is post-classifier filter. Eval
+    runtime unchanged at ~290s.
+
+    Smoke-verifiable: GBM_THRESHOLD=0.99 trivially imports; one-line
+    change to splice/detector.py:46.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.110 — threshold push
+    killed real Korean cross_voice TPs whose p_splice ∈ [0.985, 0.99]
+    without proportionate clean_fp gain (post-dedupe FPs are already
+    at p>0.99); cleanly signals BOTH threshold and dedupe levers
+    saturated; pivot to feature-engineering axis next iter (add
+    clean-audio guard feature in splice/features.py — rolling spectral
+    stationarity over ±1s window, train_classifier auto-retrain). (2)
+    Combined matches 0.110 (within ±0.003 noise) — threshold push had
+    minimal recall loss but minimal clean_fp gain too; FPs concentrated
+    at p>0.99; pivot to feature engineering with confidence (cluster
+    max FPs survive any plausible threshold). (3) Combined exceeds
+    0.115 — threshold push productive on iter1 under new metric;
+    next iter step further GBM_THRESHOLD 0.99→0.993 (still fresh,
+    smaller +0.003 step matching diminishing-return cadence), OR layer
+    GBM_MIN_SEP_S 5.5→6.0 on top for compound gain (still inside
+    Korean turn distribution).
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — cannot confirm clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice-labeled. Would directly
+    determine post-saturation feature-engineering target. (2)
+    Per-tunable frontier `current` column still blank ("current ?")
+    — had to grep detector.py manually. (3) Frontier doesn't tag
+    metric_version, so OLD-metric kept GBM_THRESHOLD values
+    [0.97, 0.972, 0.974, 0.975, 0.978] appear blocking even though
+    they were tuned under different objective (precision-favoring
+    metric pivot now favors HIGHER thresholds). (4) Eval runtime per
+    iteration not surfaced. (5) Survivor p_splice distribution
+    histogram (post-dedupe, post-classifier) NOT surfaced — would
+    directly tell me whether 0.985→0.99 has any TP/FP population to
+    filter. With dedupe saturated, this becomes the highest-leverage
+    diagnostic for the threshold/feature decision.
+
+(e) Wrapper enhancements (now 21 consecutive iters with persistent gaps):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at new metric
+    where clean_fp dominates 10×, knowing whether clean FPs are
+    same_voice_edit-labeled vs cross_voice-labeled directly determines
+    next classifier-side hypothesis. ~5 lines added in
+    splice/evaluate.py's compute_clean_fps_per_file would surface this.
+    (2) SURVIVOR p_splice DISTRIBUTION HISTOGRAM in CURRENT STATE — a
+    one-line summary like "post-dedupe FP p_splice: P50=0.991, P90=
+    0.997, n_below_0.99=12, n_above_0.99=N" would directly inform
+    threshold push expected gain. With dedupe saturated, this is the
+    single most consequential diagnostic for the threshold-vs-feature-
+    engineering decision and replaces speculation with measurement.
+    (3) FRONTIER METRIC-VERSION TAG: each frontier entry should carry
+    `metric_version=v1|v2` so OLD-metric kept values that are now
+    stale optima can be retested without operator-owned sentinel.
+
