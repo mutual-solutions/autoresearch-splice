@@ -1714,3 +1714,57 @@ of the two is measuring a different quantity; reconciliation is
 load-bearing on every penalty-leverage estimate.
 [auto] (no SHAP data for either 0f752ee or 04c1117)
 
+## 2026-04-27T06:04:35+09:00 — 055255f (discard, combined=0.128215)
+subject: chunk-local support-density gate stacked on file-level isolation filter (clean_fp_per_min=9.14 -> penalty=0.099 dominates F0.5=0.788; isolation filter handles solitary marginal post-dedupe emits but leaves chunk-local narrow probability spikes intact; real splice produces wide plateaus from +/-2s feature window, fluke FP often single stride above 0.985 with neighbors << 0.5; new gate fires only for marginal band p in [0.985, 0.995) requiring >=3 neighbors within +/-1s with p>0.5; high-confidence narrow splices (p>=0.995) bypass; pure splice/detector.py change, no retrain, no feature add)
+per-domain: (no per-domain data)
+
+# last_reflection — chunk-local support-density gate
+
+(a) HYPOTHESIS: add a CHUNK-LOCAL "support-density" gate stacked on the
+existing FILE-LEVEL isolation filter. Inside each chunk's dense scan, a
+candidate that passes GBM_THRESHOLD (0.985) but whose probability is below
+SUPPORT_HIGH_CONF_CEIL=0.995 must have ≥3 neighbors within ±1.0s where
+p_splice > 0.5. Real splices produce wide high-probability plateaus
+because the ±2s pre/post feature windows see the discontinuity at every
+adjacent stride; clean FPs often manifest as narrow probability spikes
+(one stride above 0.985 with neighbors << 0.5). New constants:
+SUPPORT_HIGH_CONF_CEIL=0.995, SUPPORT_NEIGHBOR_PROB_MIN=0.5,
+SUPPORT_RADIUS_S=1.0, SUPPORT_MIN_NEIGHBORS=3.
+
+(b) WHY THIS DIRECTION: combined=0.128 is dominated by clean_fp_penalty
+=0.099 (10x drag vs F0.5=0.788). Optimization gradient block in the
+prompt explicitly says dropping predictions inside clean turn audio
+improves both P and clean_fp_per_min simultaneously. The existing
+ISOLATION filter (file-level, +/-30s, prob<0.992) already harvests the
+solitary marginal emits; what's left untouched is solitary-WITHIN-chunk
+narrow spikes that DO have a far-away neighbor in the same file (escape
+isolation) but no chunk-local plateau (the actual splice-vs-fluke
+discriminator). High-confidence emits (p>=0.995) bypass the gate so we
+don't lose narrow real splices that fire a strong DSP signal.
+
+(c) IF THIS FAILS: tighten DSP_SUM_MIN 5.9 -> 6.1 (cliff was at 6.0 per
+prior docstring evidence -- revisit with current detector geometry); OR
+extend ISOLATION_DIST_S 30 -> 45s (untried); OR pivot to retrain axis
+with class_weight={0:1, 1:1.5, 2:2} to nudge same_voice_edit recall.
+
+(d) GAPS / CONFLICTS in this prompt: (1) "TOP PREDICTIVE FEATURES" and
+"PER-TUNABLE EXPLORATION FRONTIER" are both empty (rollup empty / no
+tunable history yet) but the prompt says ~30 prior iterations exist --
+context-clear wiped results.tsv but git log retains hypotheses, so the
+"frontier" computation must be reading from results.tsv not git log.
+(2) The unknown_label_count=497 is an unexplained signal -- detector.py
+hard-codes label="unknown" for every emit (line 401), so this number is
+just total predictions. Calling it out as "label-blind detector" is
+misleading -- it's by design. Per-class F1 being 0.0/0.0 likewise.
+
+(e) ENHANCEMENTS: (1) export per-emit probability + chunk-local support
+count + isolation-neighbor distance into a sidecar CSV alongside SHAP
+rollup so future agents can see WHICH emits each gate dropped without
+reading structured logs. (2) wrapper subcommand
+`./run_autoresearch.sh diag-fp` that runs evaluate.py once and prints
+top-10 unmatched predictions sorted by (probability desc, file) with
+support-count for each -- direct view of what kind of FP dominates.
+(3) the "OPTIMIZATION GRADIENT" paragraph in the prompt is the single
+most useful piece of guidance -- preserving it across context-clears
+is critical; consider making it a permanent header in form_hypothesis.
+
