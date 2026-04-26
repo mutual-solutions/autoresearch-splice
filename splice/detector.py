@@ -69,6 +69,17 @@ DSP_CONFIRMATION_MIN = 3.0
 # splices (sum 6-12). Stays 0.1 below the 6.0 real-splice cliff so the weakest
 # same_voice_edit splices (firing 3+3+0=6) still survive.
 DSP_SUM_MIN = 5.9
+# Probability-graded SUM floor for very-marginal-GBM emits (p_splice <
+# ISOLATION_PROB_LOW_CEIL=0.990): emits whose GBM confidence is just barely
+# above GBM_THRESHOLD carry less prior — fluke FPs concentrate in this
+# borderline-GBM slice (chord transitions / phoneme boundaries / codec
+# artifacts that scrape 0.985). Demanding stronger cumulative DSP support
+# (sum >= 6.5) for these emits raises the bar by 0.6 over the gentle 5.9,
+# catching the [5.9, 6.5) borderline-DSP band only when the GBM probability
+# is also borderline. Confident emits (p >= 0.990) keep the gentle 5.9, so
+# upper-marginal real same_voice_edits firing the docstring cliff config
+# (3+3+0=6) still survive.
+DSP_SUM_MIN_LOW = 6.5
 
 # Post-emit isolation filter: drop a selected emit when its probability is
 # barely above GBM_THRESHOLD AND no other selected emit in the same file
@@ -341,7 +352,10 @@ def _gbm_detect_splices(
             if dsp_confirm_idx:
                 row = X[i]
                 dsp_vals = [row[j] for j in dsp_confirm_idx]
-                if max(dsp_vals) < DSP_CONFIRMATION_MIN or sum(dsp_vals) < DSP_SUM_MIN:
+                sum_thresh = (DSP_SUM_MIN_LOW
+                              if p_splice[i] < ISOLATION_PROB_LOW_CEIL
+                              else DSP_SUM_MIN)
+                if max(dsp_vals) < DSP_CONFIRMATION_MIN or sum(dsp_vals) < sum_thresh:
                     chunk_dsp_dropped += 1
                     continue
             t_local = float(t_grid[i])
