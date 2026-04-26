@@ -4973,3 +4973,180 @@ per-domain: (no per-domain data)
     requiring me to grep detector.py manually for fresh-axis discovery.
 [auto] (no SHAP data for either 9699545 or d5d0f37)
 
+## 2026-04-26T19:30:32+09:00 — 890b5ba (keep, combined=0.118585)
+subject: DSP_SUM_MIN 5.0 -> 5.5 (cited fresh-axis pivot after DSP_CONFIRMATION_MIN landed +0.0008 noise; second DSP-gate axis still genuinely untouched in 31-iter korean-iter1 history; OR-gate at detector.py:310 drops emits where max(dsp_vals)<2.5 OR sum(dsp_vals)<5.0 - raising SUM 5.0->5.5 widens cut band [4.5,5.0]->[4.5,5.5] targeting borderline multi-channel-soft FPs (chord transitions with one strong T2 + partial phase/CPE summing ~5.0) while preserving real splices firing 3-channel at 3-4z summing 9-12; +0.5 step mirrors d5d0f37 DSP_CONFIRMATION_MIN +0.5 cadence; per docstring real splices sum 6-12 so 5.5 sits safely below distribution edge unlike cited 6.0 which would hit weak same_voice_edit splices firing 3+3+0=6; saturation evidence: 4 dedupe keeps decel + 1 threshold flat + 1 stationarity feature noise + 1 DSP MAX noise = 6 iters at plateau; penalty drag dominates: combined=0.111/F0.5=0.788=penalty 0.141 so clean_fp/min ~6.07; penalty leverage ~6x F0.5 sensitivity; pessimistic R 0.55+clean_fp 5.5 yields combined 0.121 +9%; optimistic clean_fp 4.5 yields 0.143 +29%; bad-case R 0.45+clean_fp flat yields 0.103 -7%; asymmetric upside; smoke-verified DSP_SUM_MIN=5.5 imports cleanly, all other tunables stable, FEATURE_NAMES stable at 81)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: DSP_SUM_MIN 5.0 → 5.5 (cited fresh-axis pivot after DSP_CONFIRMATION_MIN delivered noise-band gain — second DSP-gate axis still genuinely untouched in iter1)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    `DSP_SUM_MIN` from 5.0 to 5.5. No retrain, no feature edit. Other
+    tunables stable: GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=5.5,
+    ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=2.5. Classifier
+    hyperparams stable. FEATURE_NAMES stable at 81. DSP_SUM_MIN axis is
+    GENUINELY FRESH — zero prior trials in 31-iter korean-iter1 history;
+    not on any frontier text. Second untouched DSP-gate axis after
+    DSP_CONFIRMATION_MIN was activated in d5d0f37.
+
+(b) WHY OVER RECENT FAILURES — CITED FRESH-AXIS PIVOT AFTER NOISE-BAND
+    DSP MAX RESULT. Just-kept d5d0f37 (DSP_CONFIRMATION_MIN 2.0→2.5)
+    landed combined=0.111446, only +0.000786 above prior 0.110660 —
+    SQUARELY in noise band per d5d0f37's own (c)(2) trigger: "Combined
+    matches 0.110 within ±0.003 noise — DSP MAX gate at 2.5 is redundant
+    with current 2.0 (most clean FPs already pass 2.5 because their MAX
+    is high but SUM is what filtered them); pivot to DSP_SUM_MIN 5.0→6.0
+    next iter (target multi-channel-borderline cases) OR pivot to
+    feature-engineering with different signal (MFCC variance over ±1s)."
+    Both options cited; I take SUM_MIN over MFCC variance because
+    (i) zero-cost (no retrain vs ~3min), (ii) single-knob (vs feature
+    design + retrain risk after 9699545 stationarity feature already
+    delivered noise-band +0.0005 gain), (iii) mechanism orthogonal to
+    every prior axis attempted.
+
+    Saturation evidence on detector-side levers under F0.5 × penalty:
+      4 dedupe keeps 1.05→5.5: gains 0.0153/0.0054/0.0084/0.0033 (decel)
+      1 threshold push 0.985→0.99: discarded (flat)
+      1 stationarity feature (centroid CV ±1s): kept +0.0005 (noise)
+      1 DSP MAX 2.0→2.5: kept +0.0008 (noise — now d5d0f37)
+    Six consecutive iters at saturation plateau across 4 distinct
+    levers. Prompt step 0 says "5+ recent entries failed on the same
+    axis → consider structural change"; we're past that. DSP_SUM_MIN is
+    the structural lever still untouched on iter1.
+
+    Decomposition of current state: combined=0.1114, F0.5≈0.788
+    (near-saturated). Inferring: penalty = combined/F0.5 ≈ 0.141, so
+    clean_fp_per_min ≈ 6.07 (down from 9.14 baseline across the
+    descent). Penalty leverage ∂penalty/∂x at x=6.07: -1/(1+x)² =
+    -0.0202 per Δclean_fp/min. F0.5 ∂/∂R ≈ 0.34. Penalty leverage ~6×
+    F0.5 sensitivity. Penalty drag still dominates.
+
+    Mechanism — the OR-gate at detector.py:310 reads
+    `if max(dsp_vals) < DSP_CONFIRMATION_MIN or sum(dsp_vals) < DSP_SUM_MIN`:
+    drop. Raising DSP_SUM_MIN to 5.5 widens the SUM-band that gets
+    dropped from [4.5, 5.0] to [4.5, 5.5]. Per the docstring at lines
+    61-69: "Real cross-source splices disrupt multiple physical signals
+    simultaneously (mic/room mismatch fires phase AND T² AND CPE), so
+    the cumulative DSP magnitude is high (sum 6-12). Single-channel
+    firings — chord transitions firing only T² with smooth phase / low
+    CPE — sum to ~3-5. Threshold 5.0 demands 3.0 of cumulative support
+    beyond the MAX floor of 2.0, biting the borderline-FP band [4.5, 5.5]
+    (chord transitions with one strong channel + partial support,
+    speech phoneme shifts with T²≈2.5 + CPE≈1.0)." With MAX floor now
+    2.5 (not 2.0), the borderline-FP profile shifts: emits passing
+    MAX=2.5 with one strong channel + ~1.5 + ~1.0 sum to ~5.0; raising
+    SUM to 5.5 drops these. Real splices firing all three channels at
+    3-4 z-score sum to 9-12 — well above 5.5.
+
+    Why SUM 5.5 not SUM 6.0 (cited): docstring explicitly says real
+    splices "sum 6-12". 6.0 sits AT the edge of the real-splice
+    distribution; some weak same_voice_edit splices firing two channels
+    at 3 + one at 0 would sum to 6, get killed at SUM=6.0. 5.5 is
+    safely below the real-splice-distribution edge while still cutting
+    deeper into the borderline-FP band. +0.5 step also mirrors the
+    +0.5 step on DSP_CONFIRMATION_MIN (2.0→2.5) just kept — same
+    absolute cadence, conservative first probe of fresh axis. Bisection
+    optionality preserved both directions: down to 5.25 if
+    over-aggressive, up to 6.0 if productive.
+
+    Why SUM_MIN over MFCC variance feature (cited co-equal): retrain-
+    requiring features just delivered +0.0005 noise on a similar
+    stationarity dimension (9699545 centroid CV ±1s, OOF
+    same_voice_edit F1 0.487→0.490 = essentially unchanged — the GBM
+    didn't find the new dimension informative). MFCC variance is a
+    13-coeff design with summarization choices; high design-variance
+    risk for similar noise outcome. SUM_MIN is one-line, instant,
+    mechanistically targeted at the SAME borderline-FP band MAX failed
+    to cut.
+
+    Why SUM_MIN over GBM_MIN_SEP_S 5.5→6.0 / 5.5→7.0: 335ca87 (the
+    last MIN_SEP step) only matched (c)(2) not (c)(3) so dedupe
+    extension was already retired by cbe8cf2's threshold pivot. Plus
+    5.5 sits at edge of Korean turn-taking distribution (median 3-5s);
+    further dedupe steps would aggressively cut real cross_voice TPs.
+
+    Why SUM_MIN over classifier hyperparam tweaks: classifier-axis
+    levers don't directly target penalty drag; they shuffle calibration.
+    c681ee7 (revert class_weight) and 00bafe5 (max_iter capacity) both
+    confirmed retrain-axis levers don't move combined under new metric.
+
+    Risk-reward: penalty leverage ~6× F0.5 sensitivity. If SUM=5.5 cuts
+    clean_fp/min from 6.07 → 4.5 (-1.57, plausible for a 0.5-z band
+    of multi-channel-borderline FPs), penalty = 1/5.5 = 0.182,
+    combined = 0.788 × 0.182 = 0.143 (+29% vs 0.111). Pessimistic
+    (clean_fp 6.07 → 5.5, R holds 0.60): penalty = 0.154,
+    combined = 0.788 × 0.154 = 0.121 (+9%). Bad case (R drops 0.60→0.50,
+    clean_fp 6.07 → 5.0): F0.5(0.85, 0.50) = 0.745, penalty = 0.167,
+    combined = 0.124 (+12%). Very bad (R drops 0.60→0.45, clean_fp
+    flat at 6.0): F0.5(0.85, 0.45) = 0.717, penalty = 0.143,
+    combined = 0.103 (-7%). Asymmetric upside; downside floor mild.
+
+    Compute cost: zero. DSP_SUM_MIN is post-emission gate. Eval
+    runtime unchanged at ~290s.
+
+    Smoke-verifiable: DSP_SUM_MIN=5.5 trivially imports; one-line
+    change to splice/detector.py:70.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.111 — SUM=5.5 killed
+    real Korean cross_voice/same_voice_edit TPs whose total DSP sum
+    sits in [5.0, 5.5] band (weak multi-channel splices with two
+    moderate channels) without proportionate clean_fp drop; bracket
+    [5.0, 5.5] now known, next iter bisect downward to DSP_SUM_MIN=5.25
+    (still fresh) for finer evidence on the cliff, OR pivot to
+    classifier feature engineering with a fundamentally different
+    signal — e.g., short-time MFCC delta-delta variance over ±200ms
+    (boundary-localized, NOT another wide-window stationarity twin of
+    the centroid CV that just failed). (2) Combined matches 0.111
+    within ±0.003 noise — SUM=5.5 redundant with current 5.0
+    (borderline-FP sum-distribution sparser in [5.0, 5.5] than expected
+    given MAX≥2.5 already restricts the population); pivot to
+    DSP_SUM_MIN=6.0 next iter (cited 5.0→6.0 magnitude, deeper cut)
+    OR pivot to feature engineering with a NEW dimension (MFCC
+    variance over ±1s — orthogonal to centroid CV) OR pivot to
+    classifier hyperparam (max_depth 5→6 for capacity to use existing
+    81-dim feature set more aggressively). (3) Combined exceeds 0.120
+    — SUM_MIN axis productive on iter1 under new metric; next iter
+    step further DSP_SUM_MIN 5.5→6.0 to continue (still inside cited
+    bracket, now bracketed [5.5, 6.0] from below), OR layer
+    DSP_CONFIRMATION_MIN 2.5→3.0 on top for compound gain.
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — knowing whether clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice-labeled vs unknown-labeled
+    would inform whether SUM_MIN or MAX is the better lever for the
+    dominant FP source (same_voice_edit FPs are likely single-channel
+    T² spikes → MAX-attack; cross_voice FPs are likely multi-channel
+    soft → SUM-attack). (2) DSP z-score distribution at clean FPs
+    (P50, P90 of MAX and SUM dsp values on emitted clean FPs) NOT
+    surfaced — would tell me directly whether 5.5 cuts a real
+    population vs sliding past them. (3) Per-step P/R/clean_fp_per_min
+    not in CURRENT STATE — the displayed clean_fp_per_min=9.14 is
+    stale (pre-dedupe baseline); had to back-derive 6.07 post-d5d0f37
+    from combined/F0.5 algebra. (4) Per-tunable frontier `current`
+    column blank. (5) Frontier text doesn't list DSP_SUM_MIN at all —
+    confirms axis genuinely fresh but means no prior data points for
+    bisection if regression occurs. (6) Eval runtime per iteration
+    not surfaced.
+
+(e) Wrapper enhancements (now 24 consecutive iters with persistent gaps;
+    second fresh DSP axis being activated):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at second
+    fresh DSP axis pivot, knowing whether clean FPs are
+    same_voice_edit-labeled vs cross_voice-labeled vs unknown-labeled
+    directly determines whether next DSP-axis step (after this SUM
+    probe) targets MAX or SUM and at what step magnitude. ~5 lines in
+    splice/evaluate.py compute_clean_fps_per_file. Highest-priority
+    operator fix.
+    (2) DSP CHANNEL-LEVEL DISTRIBUTION HISTOGRAM in CURRENT STATE —
+    "post-emit DSP at clean FPs: phase_z P50=X.XX P90=Y.YY,
+    t2_z P50=A.AA P90=B.BB, cpe_z P50=C.CC P90=D.DD,
+    SUM P50=S.SS P90=T.TT" emitted once per iter would directly
+    inform DSP_SUM_MIN and DSP_CONFIRMATION_MIN saturation cliff
+    prediction. Single most consequential prompt fix for next 5+
+    iters with two DSP axes now active.
+    (3) LIVE clean_fp_per_min IN CURRENT STATE — currently shows
+    9.14 (pre-dedupe baseline, stale). Should reflect the
+    LATEST-keep state. Without it I had to back-derive from
+    combined/F0.5 algebra — error-prone and leaves margin-to-saturation
+    estimate fuzzy.
+[auto] (no SHAP data for either d5d0f37 or 890b5ba)
+
