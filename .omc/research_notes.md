@@ -4664,3 +4664,158 @@ per-domain: (no per-domain data)
     `metric_version=v1|v2` so OLD-metric kept values that are now
     stale optima can be retested without operator-owned sentinel.
 
+## 2026-04-26T19:10:50+09:00 — 9699545 (keep, combined=0.110660)
+subject: add stationarity_centroid_cv_1s feature (FEATURE-ENGINEERING PIVOT after both PRIMARY tunables saturated under F0.5 x clean_fp_penalty metric; cited cbe8cf2(c)(2) feature-eng pivot following 4 dedupe keeps + 1 threshold flat = 5 detector-side iters at saturation plateau; one-feature discipline per 00bafe5 history; wide-window centroid CV over +/-1s targets the missing stationarity dimension - existing 80 features all compute pre/post deltas at t_sec or tight +/-200ms boundary stats; clean FPs in continuous speech HAVE low wide-window centroid CV; true splice boundaries HAVE elevated CV; gives GBM new signal to suppress confident emits inside uniform regions; penalty=0.140 post-dedupe drag dominates F0.5; 10x leverage means cutting clean_fp/min from 6.14 to 4.0 yields combined ~0.158 +44%; pessimistic clean_fp 6.14 to 5.5 yields 0.121 +10%; uses cached feat_centroid - per-t cost ~10us; FEATURE_NAMES grows 80 to 81; smoke-verified finite output
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: FEATURE-ENGINEERING PIVOT — add ONE clean-audio guard feature `stationarity_centroid_cv_1s` (wide-window spectral centroid CV over ±1s) to attack penalty drag after both PRIMARY tunables saturated under new F0.5 × clean_fp_penalty metric
+
+(a) HYPOTHESIS. Single feature addition to `splice/features.py` — append
+    `stationarity_centroid_cv_1s` to FEATURE_NAMES and add a tiny
+    `_block_clean_audio_guard` that computes std/mean of spectral
+    centroid (already cached as `feat_centroid`) over a ±1s window
+    centered at t_sec. FEATURE_NAMES grows 80 → 81. Wrapper auto-
+    retrains via US-505b `splice/features.py` sha gate (~3min).
+    No detector edit, no classifier hyperparam edit. Other primary
+    tunables stable: GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=5.5,
+    ANALYSIS_STRIDE_S=0.0635. Classifier hyperparams stable
+    (class_weight={0:1,1:1,2:2}, max_iter=300, max_depth=5,
+    max_leaf_nodes=32, learning_rate=0.07, l2_regularization=2.0,
+    min_samples_leaf=40).
+
+(b) WHY OVER RECENT FAILURES — BOTH PRIMARY TUNABLES SATURATED, CITED
+    FEATURE-ENG PIVOT. Just-discarded cbe8cf2 (THRESH 0.985→0.99) landed
+    combined=0.1099 — flat vs current best 0.110163, confirming
+    threshold push at 0.99 is at saturation (post-dedupe FPs are
+    already at p>0.99). Just before that, 335ca87 (dedupe 4.5→5.5)
+    gained only +0.003 — the smallest dedupe gain yet, sitting AT the
+    noise-band edge. Dedupe descent productivity sequence:
+      1.05 → 2.5 : +0.0153  (per unit: 0.0105)
+      2.5  → 3.5 : +0.0054  (per unit: 0.0054)
+      3.5  → 4.5 : +0.0084  (per unit: 0.0084)
+      4.5  → 5.5 : +0.0033  (per unit: 0.0033, smallest)
+    Plus 5.5 sits at edge of Korean turn-taking distribution (median
+    3-5s). EXPLICIT cited next-step from cbe8cf2(c)(2): "Combined
+    matches 0.110 within ±0.003 noise — threshold push had minimal
+    recall loss but minimal clean_fp gain too; FPs concentrated at
+    p>0.99; pivot to feature engineering with confidence." Prompt
+    step 0 also explicitly says "If 5+ recent entries all failed on
+    the same tunable axis, seriously consider a structural change" —
+    4 dedupe keeps + 1 threshold flat = 5 detector-side iters at the
+    saturation plateau.
+
+    Decomposition: combined=0.110, F0.5≈0.79, P=0.853, R=0.603,
+    inferring penalty=0.140 post-dedupe so clean_fp_per_min ≈ 6.14
+    (-33% from baseline 9.14). Penalty STILL dominates as 10× drag.
+    Sensitivity at x=6.14: ∂penalty/∂x = -1/(1+x)² = -0.0196 per
+    Δclean_fp/min. F0.5 ∂/∂R ≈ 0.34. Penalty leverage ~5x F0.5
+    sensitivity per unit change.
+
+    WHY clean-audio-guard FEATURE specifically: every existing feature
+    in FEATURE_NAMES (80 features) is either a pre/post DELTA at t_sec
+    (mfcc_delta, spec_centroid_delta, rms_db_delta, etc.) or a tight
+    boundary-region feature (boundary_spec_flux_peak over ±200ms). NO
+    feature measures wide-window STATIONARITY — "is the broader ±1s
+    context uniform stationary speech (potential clean FP) or step-
+    change boundary (potential TP)?" This is a mechanistically clean
+    gap: clean FPs in continuous speech HAVE to have low wide-window
+    spectral variation (otherwise they'd already be caught by existing
+    boundary features). True splice boundaries HAVE to have elevated
+    wide-window spectral variation (otherwise they wouldn't be
+    detectable). The GBM gets a new feature it can use to suppress
+    high-confidence emits inside uniform regions.
+
+    WHY centroid CV over ±1s SPECIFICALLY:
+    - Centroid is already cached (feat_centroid) — zero new heavy
+      compute. Per-t cost is one slice + std + mean = ~10μs.
+    - CV (std/mean) is dimensionless, scale-invariant, naturally
+      bounded — robust to per-utterance gain differences.
+    - ±1s window is asymmetrically WIDER than every existing pre/post
+      window: existing windows compute DELTAS at ±2s but the
+      "stationarity" dimension (variance over a single wide window)
+      is missing.
+    - Centroid (vs MFCC, chroma, contrast) is the simplest 1-d
+      spectral summary; std/mean is the smallest-state statistic.
+      ONE scalar = minimum surface for the GBM to learn from.
+
+    WHY ONE feature (not 2 or 3): cited from 00bafe5 history — "10+
+    feature additions historically caused regression and forced
+    rollback. Pick ONE single feature first to keep attribution clean."
+    GBM at max_iter=300 + max_depth=5 + max_leaf_nodes=32 has capacity
+    room for ~80 features; adding ONE keeps dimensional ratio stable.
+    If productive, next iter adds orthogonal stationarity signal
+    (e.g., MFCC variance over ±1s) with rock-solid attribution.
+
+    WHY centroid CV over MFCC variance / RMS std / flatness CV:
+    - MFCC has 13 coeffs — would need to summarize across them
+      (Frobenius? per-coeff?), introducing design variance.
+    - RMS-dB std over ±1s captures amplitude variation but is more
+      noise-prone (silence pauses inflate std artificially).
+    - Flatness CV correlates with voice/noise but poorly behaved
+      near silence frames (denominator → 0).
+    - Centroid in continuous speech moves smoothly with phonemes;
+      a true splice introduces a jump that elevates std relative to
+      mean — clean signal/noise ratio.
+
+    Risk-reward: penalty leverage dominates F0.5 sensitivity. If
+    feature lets GBM cut clean_fp/min from 6.14 → 4.0 (-2.14, plausible
+    if half of clean FPs land in stationary regions), penalty = 1/5.0
+    = 0.20, combined = 0.788 × 0.20 = 0.158 (+44%). Pessimistic
+    (clean_fp drops 6.14 → 5.5, R holds 0.60): combined = 0.121 (+10%).
+    Pessimistic (no clean_fp change, R drops 0.60 → 0.55): combined =
+    0.107 (-3%). Asymmetric upside.
+
+    Compute cost: ~3min retrain via wrapper US-505b sha gate. Per-t
+    inference cost negligible. Eval ~290s unchanged. Total iter ~8min.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.110 — feature is
+    noisy / overfits; next iter try different stationarity proxy
+    (RMS-dB std over ±1s, OR MFCC frame-to-frame Frobenius variance
+    over ±1s), OR revert features and pivot to classifier hyperparam
+    (max_depth 5→6 to give GBM more capacity). (2) Combined matches
+    0.110 within ±0.003 noise — feature is redundant with existing
+    pre/post deltas; next iter try MFCC variance (genuinely new
+    dimension) OR pivot to feature targeting confident clean FPs
+    specifically. (3) Combined exceeds 0.115 — feature productive,
+    stationarity dimension is right axis; next iter add SECOND
+    orthogonal stationarity feature (RMS-dB std OR MFCC variance) for
+    compound gain, OR relax GBM_MIN_SEP_S 5.5→3.0 (if GBM now
+    suppresses clean FPs at FEATURE level, dedupe can recover Korean
+    turn-taking TPs in [3, 5.5] spacing band).
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — knowing whether clean FPs are same_voice_edit-labeled
+    vs cross_voice-labeled would inform which mechanistic feature to
+    add next. (2) Survivor p_splice distribution still NOT surfaced
+    — direct evidence whether post-dedupe FPs cluster at p>>0.99
+    (confirming saturation) vs spread across [0.985, 0.999]. (3)
+    Per-tunable frontier `current` column blank. (4) OOF
+    same_voice_edit recall not surfaced — would distinguish "feature
+    helps" from "feature shuffles training calibration without
+    changing eval." (5) Eval runtime per iteration not surfaced.
+    (6) Per-step P/R/clean_fp_per_min not surfaced — can't directly
+    verify the inferred ~6.14 clean_fp/min post-dedupe.
+
+(e) Wrapper enhancements (now 22 consecutive iters with persistent gaps;
+    feature pivot raises priority of some asks):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at feature
+    pivot where the new feature's mechanism targets clean FPs, knowing
+    whether clean FPs are same_voice_edit-labeled vs cross_voice-
+    labeled directly determines whether the next feature should
+    target voice-stationarity or codec-stationarity or formant-
+    stationarity. ~5 lines in splice/evaluate.py
+    compute_clean_fps_per_file. Highest-priority operator fix for
+    feature axis.
+    (2) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — with
+    feature pivot adding/removing dims, a one-line "OOF:
+    same_voice_edit F1 0.487→Y, cross_voice F1 0.956→Y, no_splice F1
+    0.961→Y" would directly distinguish "feature is informative for
+    the weak class" from "feature is informative for other classes
+    only" (predicting less combined gain since Korean recall=0.293
+    dominates).
+    (3) SHAP TOP-3 PER KEEP IN CURRENT STATE — would directly tell
+    me whether the new feature ranks high in GBM importance
+    (productive) or low (ignored / redundant) without waiting for
+    full rollup.
+[auto] (no SHAP data for either 335ca87 or 9699545)
+
