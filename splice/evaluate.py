@@ -16,20 +16,34 @@ New contract (korean-iter1)
   where the second element is in {"cross_voice", "same_voice_edit",
   "unknown"}. Malformed/missing labels are coerced to "unknown" at the
   eval boundary (logged via `diag.eval.unknown_label_count`).
-- Metric: greedy 1-to-1 nearest-within-collar boundary F1 with
-  `COLLAR_S = 0.250 s`. Aggregate `combined = boundary_f1` is
-  label-blind (counts unknown predictions normally). Per-class F1
-  (`cross_voice_f1`, `same_voice_edit_f1`) FILTERS predictions to only
-  those whose label exactly equals the class — `unknown` predictions
-  contribute zero to either per-class F1. This preserves the
-  voice-overfit detection signal.
+- Metric: greedy 1-to-1 nearest-within-collar boundary matching with
+  `COLLAR_S = 0.250 s`, then:
+      combined = F0.5 × clean_fp_penalty
+  where:
+      F0.5 = (1+0.25)·P·R / (0.25·P + R)         # precision-weighted F-beta
+      clean_fp_penalty = 1 / (1 + clean_fp_rate / CLEAN_FP_TAU_PER_MIN)
+      clean_fp_rate    = (clean FPs across all files) / (audio_minutes)
+  A "clean FP" is an unmatched prediction whose timestamp is more than
+  2×collar from EVERY cross_voice ground-truth in the same file —
+  i.e., a genuinely turn-INTERNAL false alarm, not a near-miss on a
+  real turn boundary. CLEAN_FP_TAU_PER_MIN=1.0 → 1 clean FP/min halves
+  the penalty; 0/min keeps it at 1.0; never reaches 0.
+  This formulation pushes the loop toward HIGH-PRECISION detectors
+  (forensic audit-defense use case) while penalizing detectors that
+  spray false alarms inside clean audio.
+  Per-class F1 (`cross_voice_f1`, `same_voice_edit_f1`) remains
+  unchanged: filters predictions to label==class — `unknown`
+  predictions contribute zero to either, preserving the voice-overfit
+  detection signal.
 - Sample-size cap: deterministic random.sample(60) per invocation
   (RANDOM_SEED=0) to fit the 240 s budget on the ~1100-file eval pool.
 
 Wrapper grep contract (run_autoresearch.sh)
 -------------------------------------------
-- LAST line of stdout is `combined: <float>`.
-- A `RESULTS_TSV: combined=<f> precision=<f> recall=<f> n_files=<i>
+- LAST line of stdout is `combined: <float>` where combined is now
+  F0.5 × clean_fp_penalty (NOT raw F1).
+- A `RESULTS_TSV: combined=<f> f0_5=<f> f1=<f> precision=<f> recall=<f>
+  clean_fp_per_min=<f> clean_fp_penalty=<f> n_files=<i>
   cross_voice_f1=<f> same_voice_edit_f1=<f> unknown_label_count=<i>`
   line exists. The wrapper's `_tsv_field` helper extracts these via
   `<key>=<value>` regex (NOT positional columns), so the format is
@@ -65,6 +79,22 @@ COLLAR_S = 0.250
 RANDOM_SEED = 0
 N_EVAL_FILES = 60
 VALID_LABELS = {"cross_voice", "same_voice_edit", "unknown"}
+
+# F-beta with beta=0.5 weights precision twice as much as recall.
+# F_beta = (1+b^2) PR / (b^2 P + R)
+F_BETA = 0.5
+
+# Clean-FP penalty time constant: rate (clean FPs per minute) at which
+# the penalty halves. penalty = 1 / (1 + rate / TAU). Smooth, monotonic,
+# never hits zero (preserves gradient signal at any rate).
+CLEAN_FP_TAU_PER_MIN = 1.0
+
+# Clean-FP isolation distance: an unmatched prediction is a "clean FP"
+# only if it is at least CLEAN_FP_ISO_MULT × COLLAR_S from every
+# cross_voice GT in the same file. 2× collar = 500 ms — keeps near-miss
+# turn-boundary errors out of the penalty (those are scored by F0.5
+# already via the FP that hurts precision).
+CLEAN_FP_ISO_MULT = 2.0
 
 DEFAULT_DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -166,6 +196,64 @@ def boundary_f1(
     return precision, recall, f1, tp, fp, fn
 
 
+def f_beta(precision: float, recall: float, beta: float) -> float:
+    """F-beta = (1+b^2) PR / (b^2 P + R). Returns 0 when undefined."""
+    b2 = beta * beta
+    denom = b2 * precision + recall
+    if denom <= 0:
+        return 0.0
+    return (1.0 + b2) * precision * recall / denom
+
+
+def compute_clean_fps_per_file(
+    predictions: list[tuple[float, str]],
+    ground_truth: list[tuple[float, str]],
+    collar_s: float = COLLAR_S,
+    iso_mult: float = CLEAN_FP_ISO_MULT,
+) -> tuple[int, int]:
+    """Per-file matching pass — returns (clean_fp_count, total_fp_count).
+
+    Re-runs the same greedy 1-to-1 matching used by `boundary_f1`, but
+    SCOPED TO ONE FILE so we can identify which predictions are
+    unmatched and how far they sit from the file's cross_voice GT
+    landmarks.
+
+    A "clean FP" is an unmatched prediction whose timestamp is more
+    than `iso_mult × collar_s` from EVERY cross_voice GT in this file.
+    Intuition: a near-miss on a real turn boundary already hurts
+    precision via the FP — we don't want to double-penalize it. But a
+    detection inside a continuous single-speaker stretch (no nearby
+    cross_voice landmark) is a forensically expensive false alarm.
+    """
+    preds_sorted = sorted(predictions, key=lambda p: p[0])
+    matched_gt_idx: set[int] = set()
+    matched_pred_idx: set[int] = set()
+
+    for pi, (pt, _) in enumerate(preds_sorted):
+        cands = [
+            (i, gt_t)
+            for i, (gt_t, _) in enumerate(ground_truth)
+            if i not in matched_gt_idx and abs(gt_t - pt) <= collar_s
+        ]
+        if not cands:
+            continue
+        nearest_i, _ = min(cands, key=lambda c: abs(c[1] - pt))
+        matched_gt_idx.add(nearest_i)
+        matched_pred_idx.add(pi)
+
+    cv_times = [g[0] for g in ground_truth if g[1] == "cross_voice"]
+    iso_threshold = iso_mult * collar_s
+    clean_fps = 0
+    total_fps = 0
+    for pi, (pt, _) in enumerate(preds_sorted):
+        if pi in matched_pred_idx:
+            continue
+        total_fps += 1
+        if all(abs(cv_t - pt) > iso_threshold for cv_t in cv_times):
+            clean_fps += 1
+    return clean_fps, total_fps
+
+
 def compute_class_f1(
     predictions: list[tuple[float, str]],
     ground_truth_class_only: list[tuple[float, str]],
@@ -255,6 +343,8 @@ def evaluate(data_dir: str) -> dict:
     n_processed = 0
     n_skipped = 0
     n_errors = 0
+    total_clean_fps = 0       # accumulated across files (per-file matching)
+    total_audio_seconds = 0.0  # for clean_fp_per_min denominator
 
     for idx, conv_id in enumerate(selected):
         audio_path = os.path.join(data_dir, f"{conv_id}.opus")
@@ -298,6 +388,15 @@ def evaluate(data_dir: str) -> dict:
         # GT for this conv
         gt_for_conv = ground_truth[conv_id]
 
+        # Per-file clean-FP accounting (must be SCOPED TO THE FILE so
+        # the cross_voice GT isolation check uses only this file's
+        # landmarks). Aggregated to compute the global rate.
+        cfps, _tfps = compute_clean_fps_per_file(
+            normalized, gt_for_conv, COLLAR_S, CLEAN_FP_ISO_MULT
+        )
+        total_clean_fps += cfps
+        total_audio_seconds += float(len(audio)) / float(sr) if sr else 0.0
+
         all_preds.extend(normalized)
         all_gt.extend(gt_for_conv)
         n_processed += 1
@@ -317,6 +416,28 @@ def evaluate(data_dir: str) -> dict:
              precision=precision, recall=recall, f1=f1,
              tp=tp, fp=fp, fn=fn,
              n_files=n_processed)
+
+    # ---- F0.5 (precision-weighted F-beta) ----
+    f0_5 = f_beta(precision, recall, F_BETA)
+    log.emit("INFO", "eval.f_beta",
+             beta=F_BETA, f_beta=f0_5,
+             precision=precision, recall=recall)
+
+    # ---- clean-FP penalty (turn-internal false alarms / minute) ----
+    audio_minutes = total_audio_seconds / 60.0
+    clean_fp_per_min = (total_clean_fps / audio_minutes) if audio_minutes > 0 else 0.0
+    clean_fp_penalty = 1.0 / (1.0 + clean_fp_per_min / CLEAN_FP_TAU_PER_MIN)
+    log.emit("INFO", "eval.clean_fp_penalty",
+             total_clean_fps=total_clean_fps,
+             total_audio_seconds=total_audio_seconds,
+             clean_fp_per_min=clean_fp_per_min,
+             tau_per_min=CLEAN_FP_TAU_PER_MIN,
+             penalty=clean_fp_penalty)
+
+    # ---- combined: F0.5 × clean_fp_penalty ----
+    combined = f0_5 * clean_fp_penalty
+    log.emit("INFO", "eval.combined",
+             combined=combined, f0_5=f0_5, clean_fp_penalty=clean_fp_penalty)
 
     # ---- per-class F1 (filtered preds; unknown excluded) ----
     gt_cv = [g for g in all_gt if g[1] == "cross_voice"]
@@ -339,17 +460,25 @@ def evaluate(data_dir: str) -> dict:
 
     elapsed = time.time() - t_start
     log.emit("INFO", "eval.complete",
-             combined=f1,
+             combined=combined,
+             f0_5=f0_5,
+             f1=f1,
+             clean_fp_penalty=clean_fp_penalty,
              n_files=n_processed,
              n_skipped=n_skipped,
              n_errors=n_errors,
              elapsed_s=elapsed)
     # Legacy event-name alias for autoresearch.supervisor_agent's metric
     # re-run check (which greps for eval.aggregate / eval.single.combined /
-    # eval.metrics.splice). Keeps the supervisor 4-check audit happy across
-    # the korean-iter1 pivot without modifying the supervisor itself.
+    # eval.metrics.splice). The supervisor reads `combined` — and combined
+    # is now F0.5 × clean_fp_penalty. Keep f1 + f0_5 alongside for
+    # diagnostic continuity.
     log.emit("INFO", "eval.aggregate",
-             combined=f1,
+             combined=combined,
+             f0_5=f0_5,
+             f1=f1,
+             clean_fp_per_min=clean_fp_per_min,
+             clean_fp_penalty=clean_fp_penalty,
              precision=precision,
              recall=recall,
              n_files=n_processed,
@@ -363,9 +492,13 @@ def evaluate(data_dir: str) -> dict:
     # `_tsv_field` regex parsing on `<key>=<value>` (not positional
     # columns). The wrapper requires `combined=<float>` at minimum.
     results_tsv_parts = [
-        f"combined={f1:.6f}",
+        f"combined={combined:.6f}",
+        f"f0_5={f0_5:.6f}",
+        f"f1={f1:.6f}",
         f"precision={precision:.6f}",
         f"recall={recall:.6f}",
+        f"clean_fp_per_min={clean_fp_per_min:.6f}",
+        f"clean_fp_penalty={clean_fp_penalty:.6f}",
         f"n_files={n_processed}",
         f"cross_voice_f1={cross_voice_f1:.6f}",
         f"same_voice_edit_f1={same_voice_edit_f1:.6f}",
@@ -375,10 +508,14 @@ def evaluate(data_dir: str) -> dict:
 
     # LAST line: `combined: <float>` (per-spec; preserved as final stdout
     # line so callers using `tail -1 | grep combined:` work).
-    print(f"combined: {f1:.6f}")
+    print(f"combined: {combined:.6f}")
 
     return {
-        "combined": f1,
+        "combined": combined,
+        "f0_5": f0_5,
+        "f1": f1,
+        "clean_fp_per_min": clean_fp_per_min,
+        "clean_fp_penalty": clean_fp_penalty,
         "precision": precision,
         "recall": recall,
         "tp": tp,
@@ -437,9 +574,10 @@ def main(argv=None) -> int:
         # Still emit the wrapper contract lines so the wrapper sees a
         # well-formed but zero result instead of crashing on missing
         # RESULTS_TSV.
-        print("RESULTS_TSV: combined=0.000000 precision=0.000000 recall=0.000000 "
-              "n_files=0 cross_voice_f1=0.000000 same_voice_edit_f1=0.000000 "
-              "unknown_label_count=0")
+        print("RESULTS_TSV: combined=0.000000 f0_5=0.000000 f1=0.000000 "
+              "precision=0.000000 recall=0.000000 clean_fp_per_min=0.000000 "
+              "clean_fp_penalty=1.000000 n_files=0 cross_voice_f1=0.000000 "
+              "same_voice_edit_f1=0.000000 unknown_label_count=0")
         print("combined: 0.000000")
         return 1
 
