@@ -4393,3 +4393,135 @@ per-domain: (no per-domain data)
     for the current axis.
 [auto] (no SHAP data for either f4c8ad8 or 5657d2f)
 
+## 2026-04-26T17:55:52+09:00 — 335ca87 (keep, combined=0.110163)
+subject: GBM_MIN_SEP_S 4.5 -> 5.5 (continue cited dedupe descent on productive lever after 5657d2f landed +0.0084 going 3.5 -> 4.5 under F0.5 x clean_fp_penalty metric where penalty=0.099 baseline is 10x drag; F0.5=0.788 near-saturated so every clean_fp/min cut translates ~directly to combined gain; dense scan at STRIDE=0.0635 + 4.5s dedupe still leaves longest sustained-vowel/harmonic-drift FP clusters spanning 4.5-5.5s; +1.0 step mirrors prior cadence; 5.5 fresh on frontier above explored band [1.0, 4.5]; deliberately calibrated probe at edge of Korean turn-taking distribution; cited 5657d2f(c)(3); pessimistic R 0.55 + clean_fp 5.0 still nets combined ~0.127 +19%)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: GBM_MIN_SEP_S 4.5 → 5.5 (continue cited dedupe descent on productive lever)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` one-line change — raise
+    GBM_MIN_SEP_S from 4.5 to 5.5. No retrain, no feature edit.
+    Other primary tunables stable: GBM_THRESHOLD=0.985,
+    ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    Classifier hyperparams stable. FEATURE_NAMES stable at 80. 5.5
+    fresh on frontier (set: kept 1.05/1.1/1.25/1.5/2.0/2.5/3.5/4.5,
+    failed 1.0/1.025 = 10 tried; 5.5 never tried).
+
+(b) WHY OVER RECENT FAILURES — CITED CONTINUATION ON PRODUCTIVE LEVER.
+    Just-kept 5657d2f (GBM_MIN_SEP_S 3.5→4.5) gained +0.00841 combined
+    (0.0985→0.1069). Updated dedupe descent on iter1 contract-fixed
+    classifier under new F0.5 × clean_fp_penalty metric:
+      1.05 → 2.5 : +0.0153 (per unit: 0.0105)
+      2.5  → 3.5 : +0.0054 (per unit: 0.0054)
+      3.5  → 4.5 : +0.0084 (per unit: 0.0084)
+    Per-unit productivity bouncy but staying positive — descent NOT
+    saturated, no regression yet. Result lands between 5657d2f(c)(2)
+    "matches 0.0985 ±0.003 noise = saturation" (it's +0.0084 above,
+    well outside noise) and (c)(3) ">0.115 strong success → step to
+    6.0". I take the conservative continuation 4.5→5.5 (smaller step
+    than cited 6.0) since we landed below the strong-success trigger.
+
+    Decomposition: combined=0.107, F0.5≈0.79 (near-saturated). Inferring
+    post-4.5-dedupe state: penalty went 0.099→~0.135, so
+    clean_fp_per_min dropped from baseline ~9.1 to ~6.4 (-30%) across
+    the descent. Still meaningful room — every clean_fp/min cut
+    translates ~directly to combined gain (TAU=1.0).
+
+    Why +1.0 step (5.5 not 5.0 or 6.0): mirrors the +1.0 cadence of
+    prior two productive steps (2.5→3.5, 3.5→4.5). 6.0 is +1.5,
+    slightly larger than recent cadence and risks aggressive TP loss
+    in Korean turn-taking distribution (median 3-5s for conversational
+    turns). 5.5 is at the edge of typical Korean turn spacing — TPs
+    spaced 4-5s apart begin to lose to dedupe at this point. This is
+    a deliberately calibrated probe for the saturation cliff: if 5.5
+    saturates/regresses, it confirms we've entered the Korean turn
+    distribution and the cliff sits at ~5s. 5.0 would be too small a
+    step given consistent +1.0 productivity at this magnitude.
+
+    Why over GBM_THRESHOLD 0.985→0.99: cited as alternative. THRESH
+    0.972→0.985 cut clean_fp only 4%; survivor distribution at 0.985
+    peaked at p>>0.985 so another tightening yields the same diminishing
+    return AND costs recall (R already dropped 0.632→0.603 in the 0.985
+    step; another step would push R toward 0.55 hitting F0.5 hard).
+    Dedupe attacks orthogonal mechanism (cluster collapse) with proven
+    productivity on this metric. Single-knob change preserves clean
+    attribution.
+
+    Why over feature engineering pivot (clean-audio guard): cited
+    fallback if dedupe saturates. Requires retrain (~3min) + open-ended
+    feature design + 67k×80 retrain risk. Premature when cheap parameter
+    tweaks still deliver real gains.
+
+    Mechanism: surviving clean FPs at 4.5s dedupe are EITHER
+    (i) isolated single-emit FPs (dedupe-orthogonal, only threshold/
+    features can address) OR (ii) FP clusters spanning 4.5-5.5s
+    (longest sustained-vowel/harmonic-drift artifacts in clean speech).
+    Raising to 5.5s collapses (ii). If (i) dominates the survivor
+    distribution, 5.5 saturates near 0.107 (clean signal to pivot to
+    GBM_THRESHOLD 0.985→0.99 or feature engineering). If (ii) still
+    has population, combined lifts further.
+
+    Pessimistic math (R drops 0.55, clean_fp_per_min drops 6.4→5.0):
+    F0.5(0.85, 0.55) = 0.762, penalty = 0.167, combined = 0.127
+    (+19% vs 0.107). Optimistic (R 0.50, clean_fp 4.0):
+    F0.5(0.85, 0.50) = 0.745, penalty = 0.20, combined = 0.149 (+39%).
+    Even pessimistic outcomes net positive — penalty leverage dominates
+    F0.5 sensitivity.
+
+    Compute cost: zero. GBM_MIN_SEP_S is post-emission greedy dedupe.
+    Eval runtime unchanged at ~290s.
+
+    Smoke-verifiable: GBM_MIN_SEP_S=5.5 trivially imports; one-line
+    change to splice/detector.py:50.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.107 — dedupe at 5.5s
+    killed real Korean cross_voice TPs spaced 5-5.5s apart without
+    proportionate clean_fp reduction; saturation cliff confirmed at ~5s
+    (just inside Korean turn-taking median); next iter bisect downward
+    to GBM_MIN_SEP_S=5.0 (still fresh, midpoint of [4.5, 5.5]) for
+    finer evidence on the cliff, OR pivot directly to GBM_THRESHOLD
+    0.985→0.99 (cited alternative, attacks isolated single-emit FPs
+    dedupe-orthogonally). (2) Combined matches 0.107 (within ±0.003
+    noise) — dedupe saturated in [4.5, 5.5]; surviving clean FPs are
+    isolated single-emit (dedupe-orthogonal); pivot to GBM_THRESHOLD
+    0.985→0.99 next iter (smaller diminishing-return push) OR
+    feature-engineering pivot (clean-audio guard feature targeting
+    rolling spectral stationarity over ±1s — high stationarity =
+    continuous speech = should not emit). (3) Combined exceeds 0.120 —
+    dedupe descent productive further on iter1; next iter step
+    GBM_MIN_SEP_S 5.5→7.0 to map the upper end (still fresh, larger
+    step matching expanded productive band), OR layer GBM_THRESHOLD
+    0.985→0.99 on top for compound gain.
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still NOT
+    surfaced — cannot confirm clean FPs are predominantly
+    same_voice_edit-labeled vs cross_voice-labeled. (2) Per-tunable
+    frontier `current` column blank ("current ?") — had to grep
+    detector.py manually. (3) Frontier doesn't tag metric_version, so
+    OLD-metric kept GBM_MIN_SEP_S values [1.05, 1.1, 1.25, 1.5, 2.0]
+    appear blocking even though they were tuned under different
+    objective. (4) Eval runtime per iteration not surfaced. (5) Korean
+    turn-taking spacing distribution (cross_voice GT median, P75, P90)
+    would directly inform the saturation cliff prediction at 5.5s, but
+    corpus is encrypted-not-on-disk so can't probe. (6) Per-step
+    P/R/clean_fp_per_min not surfaced in CURRENT STATE — cannot
+    directly verify that clean_fp_per_min dropped 9.1→6.4 across the
+    descent (inferred from penalty math).
+
+(e) Wrapper enhancements (now 20 consecutive iters with persistent gaps):
+    (1) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at new metric
+    where clean_fp dominates 10×, knowing whether clean FPs are
+    same_voice_edit-labeled vs cross_voice-labeled directly determines
+    next classifier-side hypothesis. ~5 lines added in
+    splice/evaluate.py's compute_clean_fps_per_file would surface this.
+    (2) FRONTIER METRIC-VERSION TAG: each frontier entry should carry
+    `metric_version=v1|v2` so OLD-metric kept values that are now stale
+    optima can be retested without operator-owned sentinel.
+    (3) PER-STEP P/R/CLEAN_FP_PER_MIN DELTA in CURRENT STATE: a single
+    block like "Δ from prior keep: P +0.001, R -0.005, clean_fp/min
+    -0.42" would directly verify mechanism attribution per iter. With
+    dedupe at the edge of Korean turn-taking distribution, knowing
+    whether the next regression is recall-driven or clean_fp-driven
+    determines whether the cliff is TP-loss vs FP-survival.
+[auto] (no SHAP data for either 5657d2f or 335ca87)
+
