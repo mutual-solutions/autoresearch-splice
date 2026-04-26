@@ -1,10 +1,15 @@
 {
-  "timestamp": "2026-04-26T05:16:38Z",
-  "git_sha": "36657c6",
-  "phase": "korean_iter1_pivot_initial_post_bug_fix",
-  "combined": 0.721951,
-  "precision": 0.854772,
-  "recall": 0.29303,
+  "timestamp": "2026-04-26T07:06:53.709939Z",
+  "git_sha": "5822b42",
+  "phase": "korean_iter1_metric_v2_f05_x_clean_fp_penalty",
+  "metric_formula": "combined = F0.5(P,R) * clean_fp_penalty; clean_fp_penalty = 1 / (1 + clean_fp_per_min / 1.0)",
+  "combined": 0.07493,
+  "f0_5": 0.789755,
+  "f1": 0.721951,
+  "precision": 0.842505,
+  "recall": 0.631579,
+  "clean_fp_per_min": 9.539951,
+  "clean_fp_penalty": 0.094877,
   "n_files": 60,
   "collar_ms": 250,
   "splice_class_breakdown": {
@@ -31,6 +36,6 @@
     ]
   },
   "regen_determinism_receipt_sha": "b770313bd527",
-  "unknown_label_count": 241,
-  "note": "Iter-0 baseline AFTER word_alignment absolute-vs-relative bug fix. Cuts now land at proper silence-bounded word boundaries. classifier OOF macro F1 dropped 0.819 -> 0.788 (honest difficulty floor); combined in-corpus baseline rose 0.385 -> 0.436 (in-distribution match)."
+  "unknown_label_count": 527,
+  "note": "Metric pivot from raw boundary-F1 to F0.5 x clean_fp_penalty. F0.5 weights precision 2x recall (forensic audit-defense). clean_fp_penalty = 1/(1+rate/TAU), TAU=1.0 clean-FPs/min. A clean FP = unmatched prediction >2x collar (500ms) from every cross_voice GT in same file. Iter-0 numbers above are from the SAME detector state as the previous baseline (commit 36657c6); combined dropped 0.722 -> 0.075 because the detector currently emits 9.54 clean FPs/min. Optimization gradient now favors high-precision detectors that stay quiet inside clean turn audio."
 }
