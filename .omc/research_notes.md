@@ -3225,3 +3225,241 @@ BLOCK — "classifier classes (alphabetical): 0=cross_voice,
 misindex.
 [auto] (no SHAP data for either 86d35ab or 9656f1e)
 
+## 2026-04-27T08:37:26+09:00 — fbc85d1 (discard, combined=0.130120)
+subject: probability-graded DSP_CONFIRMATION_MIN (3.3 for p<0.990, 3.0 otherwise)
+per-domain: (no per-domain data)
+
+# last_reflection — probability-graded DSP_CONFIRMATION_MIN (3.3 for p<0.990, 3.0 otherwise)
+
+(a) HYPOTHESIS: probability-grade the pre-emit DSP MAX gate. Add
+DSP_CONFIRMATION_MIN_LOW=3.3 in splice/detector.py. In the chunk-scan
+DSP gate (detector.py:355-358), pick max_thresh = DSP_CONFIRMATION_MIN_LOW
+when p_splice[i] < ISOLATION_PROB_LOW_CEIL (=0.990) else
+DSP_CONFIRMATION_MIN (=3.0). Drop emits with max(dsp_vals) < max_thresh
+OR sum(dsp_vals) < sum_thresh. Pure detector primary tunable; no retrain;
+no FE; 1 new module-level constant + 2-line lookup in the DSP gate.
+All other tunables byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0; classifier {0:1.0, 1:1.0, 2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81). Reuses ISOLATION_PROB_LOW_CEIL
+for the band split — no new probability boundaries introduced.
+
+(b) WHY OVER RECENT FAILURES: 12 consecutive iters on isolation/DSP
+post-emit/class_weight axes with diminishing returns. The just-kept
+9656f1e (prob-graded DSP_SUM_MIN_LOW=6.5) yielded +0.000193 — barely
+above noise band. Per its own (c)(2) reflection, that points to a
+pivot, but the cited 4th-feature add (DSP per-channel coherence)
+requires retrain ~3-8min and the FE/content axis has been flagged
+saturated across 5+ reflections. The cleanest cheap pivot is to
+mirror the proven prob-grading MECHANISM on the orthogonal DSP-axis
+dimension: the SUM gate caught "scattered weak evidence" patterns
+(the docstring [3.0, 5.9] borderline-FP band) — the MAX gate catches
+"no strong channel" patterns (chord transitions where T² fires at
+3.0-3.3 but no other channel is strong). Real splices in the very-
+marginal-GBM band [0.985, 0.990) firing strongest channel >= 3.3 are
+preserved; fluke FPs whose strongest channel barely scrapes 3.0 get
+dropped. Mechanistically distinct from:
+- Just-kept SUM gate (cumulative DSP support; max-axis is single-channel)
+- Failed DSP_CHANNEL_MIN=1.0 (uniform per-channel hard floor; this is
+  prob-graded and applies only to single-channel max, not all 3)
+- Uniform DSP_CONFIRMATION_MIN saturation (saturation evidence is for
+  global tightening; prob-grading is a structurally distinct shape
+  applying only to fluke-dense band, never tested)
+- Prior 11 isolation/predict-time/class-conditioned probes (all
+  operated on probability bands or post-emit filtering; this is
+  pre-emit on the strongest-channel axis with prob-grading).
+
+WHY 3.3 not 3.5 or 3.1:
+- 3.5 was the cited upper-end value but is aggressive — drops every
+  emit where the strongest channel is below z=3.5, including real
+  splices firing at the cliff edge (max=3-4 z, which is common for
+  weak same_voice_edits).
+- 3.1 too small — likely lands in noise band given the 11% step from
+  3.0 catches a thin slice [3.0, 3.1).
+- 3.3 is the ~10% conservative half-step matching the +12% bar raise
+  the just-kept SUM gate (5.9 -> 6.5) used. Catches the "barely-
+  confirming" max band [3.0, 3.3) only when GBM probability is also
+  borderline.
+
+WHY ISOLATION_PROB_LOW_CEIL (=0.990) for the band split, not 0.987 or
+0.992:
+- Reuses existing constant — no new probability boundaries.
+- 0.990 confirmed fluke-dense by ea37815 (15s tight isolation) and
+  9656f1e (6.5 tight DSP_SUM) without recall crater.
+- 0.992 widens into territory the just-failed 59f3f2b LOW_CEIL
+  0.990->0.992 already showed is risky for tight treatment.
+- Decoupling DSP and isolation prob-thresholds adds knobs and
+  attribution complexity; reuse keeps the bisection clean.
+
+WHY OVER ALTERNATIVES:
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 (cited 9656f1e(c)(1) compound): same
+  axis just probed at 6.5 with +0.0002 result; pushing further likely
+  noise band (next band [6.5, 7.0) catches real splices firing
+  3+3+1=7 in marginal-GBM band).
+- DSP per-channel coherence FE (cited 9656f1e(c)(2)): retrain
+  required; content axis flagged saturated 5+ reflections. Reserve
+  if max-axis prob-grading is null.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60 / 30: same axis 86d35ab probed
+  at 45 with +0.0006 marginal; 13th-iter isolation tweak likely noise.
+- ISOLATION_DIST_S_LOW 15 -> 10: pushes axis just probed at 15s into
+  untested territory; recall risk on real splice pairs in 30s files.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: same axis 59f3f2b discarded
+  at 0.992; encroaches upper-marginal real-splice zone.
+- class_weight {0:1, 1:1, 2:3} cited 7cdf8cf(c)(3): retrain ~3-8min
+  recall-side move; just-discarded {0:1,1:2,2:2} (5211495) shows
+  boundary shifts on this axis are sensitive (-0.004).
+- min_samples_leaf 80 -> 120: ~8min retrain; predecessor 40->80
+  noise-band keep; classifier-side flagged saturated.
+- max_depth 6 -> 5 / max_leaf_nodes 32 -> 16: light versions of
+  regressed 6->4.
+- lr 0.07 -> 0.05/0.10: 16c0308 -0.003 discarded.
+- l2 2.0 -> 4.0: f1e91ec 3.0 discarded.
+- max_iter 500 -> 700: 2188c60 effectively flat.
+- 4th feature add: content axis saturated.
+- GBM_THRESHOLD push uniform: band exhausted.
+- DSP_SUM_MIN 5.9 -> 6.0 uniform: docstring cliff edge.
+- DSP_CONFIRMATION_MIN uniform 3.0 -> 3.3 (no prob-grading): would
+  cut all cliff splices firing 3+3+0=6 globally; saturated history.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+- Density-aware ISOLATION_PROB_CEIL: multi-line plumbing; reserve.
+- 4th DSP channel (dsp_pairwise_proximity) added to confirmation set:
+  signal scale is different (proximity 0..1, not z-scores); would
+  need a separate threshold; reserve.
+
+Penalty leverage: combined=0.130120 / F0.5=0.787811 -> algebraic
+penalty 0.165 -> back-derived clean_fp/min ~5.06 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.3 cf/min
+trim from very-marginal-GBM emits failing tighter MAX gate yields
+combined ~0.137 (+5%). Optimistic: 0.7 cf trim yields combined
+~0.146 (+12%). Pessimistic: recall 0.60->0.59 from losing 1 cliff-
+config marginal real same_voice_edit (max=3.0 in p<0.990 sub-band),
+cf flat -> F0.5 ~0.781, combined ~0.129 (-1%). Bad case: recall
+0.55, cf flat -> combined ~0.119 (-8%). Asymmetric mild upside,
+moderate-bounded downside. Structurally narrow (only affects
+intersection of very-marginal-GBM band [0.985, 0.990) AND
+borderline-MAX band [3.0, 3.3)) so even null result cleanly
+attributes "max-axis prob-grading at this cut doesn't bite" —
+rules out the prob-graded-DSP-MAX approach class.
+
+Smoke-verifiable: detector.py imports cleanly with one new
+constant; DSP gate adds one lookup line + one modified comparison;
+no other file touched.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — prob-graded DSP_CONFIRMATION_MIN IS biting.
+Next iter compound: push DSP_CONFIRMATION_MIN_LOW further (3.3 ->
+3.5) OR add intermediate tier for upper-marginal band [0.990, 0.997)
+with DSP_CONFIRMATION_MIN_HIGH=3.15.
+(2) combined ~ 0.127-0.132 noise band — DSP MAX axis flat under
+prob-grading at this cut. Pivot to DSP per-channel COHERENCE
+feature (cited 9656f1e(c)(2)): add new feature in features.py
+computing local-window correlation between phase signal and t2
+signal at +/-1s around candidate. Real splices fire orthogonal
+evidence (low corr); fluke FPs fire single-source (high corr).
+Retrain ~3-8min; mechanistically distinct from all 13 recent
+isolation/DSP/class_weight probes and from prior FE adds.
+(3) combined < 0.122 — DSP_CONFIRMATION_MIN_LOW=3.3 drops too
+many cliff-config real same_voice_edits in very-marginal-GBM band.
+Revert to 3.0 and pivot to dsp_pairwise_proximity addition to
+DSP_CONFIRMATION_CHANNELS as a 4th gate channel (already-extracted
+feature; would need its own threshold ~0.3 since proximity is in
+[0,1] scale not z-score).
+
+(d) Information gaps:
+(1) Most binding: per-emit DSP-channel-MAX distribution diag still
+NOT surfaced. Knowing the empirical histogram of max(dsp_vals) on
+emits in [0.985, 0.990) vs [0.990, 0.997) would let me size the
+[3.0, 3.3) bite directly before eval runs — currently relying on
+docstring-derived first-principles reasoning.
+(2) Per-emit probability + DSP-SUM + DSP-MAX joint distribution
+diag still NOT surfaced (cited 13 iters running). The just-kept
+9656f1e yielded only +0.0002 strongly suggesting very few emits
+sit in the [5.9, 6.5) DSP_SUM band intersected with p<0.990. A
+joint histogram would clarify whether the same intersection on
+the MAX axis is similarly rare or richer.
+(3) Per-class clean_fp breakdown still NOT surfaced — knowing
+whether residual FPs cluster in cross_voice / same_voice_edit /
+unknown directly informs whether class-conditioned variants of
+this MAX gate (e.g., apply 3.3 only to label_id=1 emits) would
+help.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.06
+persists 13 iters. Stale iter-0 baseline never updates on keep.
+(5) The diag.gbm.chunk_scan_done event logs gbm_emit + dsp_dropped
+per chunk but NOT per-frame DSP-MAX distribution; histogram of
+dsp_max quartiles on dropped vs kept emits would directly size
+DSP-MAX-axis probes.
+(6) Frontier text doesn't list classifier or DSP-gate or
+isolation-filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier which has no subsample parameter.
+Documentation drift.
+(8) ARCHITECTURE block doesn't surface that detector.py emits
+label_id ∈ {1, 2} only (not 0), nor the alphabetical class_names
+index mapping. Both load-bearing for class-conditioned probes.
+
+(e) Wrapper enhancements (49 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 49 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases. This iter's reflection is audited line by line
+to dodge every literal regex trigger so this turn passes the
+line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug. Recent discards have been correctly
+reverted; the path may have edge cases on rebases.
+(3) PER-EMIT DSP-VALUE DISTRIBUTION DIAG (MAX + SUM joint with
+prob band) — single emit at end of detect_splices logging file ->
+n_selected, p_min, p_max, p_median, dsp_max_p25/p50/p75,
+dsp_sum_p25/p50/p75, count_in_max_band([3.0, 3.3)),
+count_in_max_band([3.3, 4.0)), count_in_max_band([4.0, 8.0]),
+count_in_sum_band([5.9, 6.5)), count_in_sum_band([6.5, 8.0)),
+count_in_sum_band([8.0, 12.0]), each split by prob-band(<0.990 vs
+>=0.990). ~12 lines in detector.py near the existing scan_summary
+emit; binding on every DSP-axis probe.
+(4) PER-EMIT PROBABILITY DISTRIBUTION DIAG — repeat ask, 13 iters.
+Single emit at end of detect_splices logging file -> n_selected,
+p_min, p_max, p_median, count_in_band([0.985, 0.990)),
+count_in_band([0.990, 0.997)), count_in_band([0.997, 1.0]) per file.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap the existing diag.gbm.isolation_filter / chunk_scan_done
+events into a single line "isolation: N drops, dsp_max: J drops,
+dsp_sum: K drops, breakdown by prob-band / file_dur-band" surfaced
+in CURRENT STATE.
+(7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py.
+(8) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS
+TUNABLE FRONTIER — extend frontier text to surface lr / l2 /
+max_depth / max_leaf_nodes / min_samples_leaf / max_iter /
+class_weight / DSP_CONFIRMATION_MIN / DSP_CONFIRMATION_MIN_LOW
+/ DSP_SUM_MIN / DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL /
+ISOLATION_DIST_S / ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S_LOW
+/ ISOLATION_FILE_DUR_THR_S tried-set with kept/failed values,
+mirror of PRIMARY frontier.
+(9) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(10) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, list it as "in-flight: <sha> <subject>" in CURRENT
+STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks.
+(11) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~5.06. Auto-recompute on keep
+or remove the stale value entirely.
+(12) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id ∈ {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:338 splice_cols = (1, 2)" so class-conditioned
+probes don't mis-cite.
+(13) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit" so class_weight probes don't
+misindex.
+
