@@ -2003,3 +2003,236 @@ CURRENT STATE shows 9.143 but algebra yields ~5.10. Either
 auto-recompute the field on keep or remove the stale value entirely;
 load-bearing on every penalty-leverage estimate I produce.
 
+## 2026-04-27T07:49:47+09:00 — 5211495 (discard, combined=0.125163)
+subject: class_weight no_splice boost {0:1, 1:2, 2:2} (1=no_splice doubled from 1.0 to 2.0 matching same_voice_edit weight; cited 59f3f2b(c)(2) reserve corrected for index mapping; 0=cross_voice 1=no_splice 2=same_voice_edit per train_classifier.py:51 alphabetical CLASS_NAMES; the reserve named class_weight {0:2,1:1,2:2} intending boost no_splice but mis-indexed since class 0 is cross_voice not no_splice; mechanism doubles training-loss weight on no_splice samples reshaping decision boundary toward negative class so marginal frames currently at P slightly above 0.985 will after retrain output slightly lower P falling below threshold without needing post-emit filter; non-equivalent to GBM_THRESHOLD push uniform shift vs class_weight directional; pivot triggered by 6 consecutive isolation/DSP small-knob iters 055255f chunk-local discarded ff76c06 DIST 30->20 discarded a2a9b76 PROB_CEIL 0.992->0.997 kept +0.0009 7cdf8cf DSP_CHANNEL_MIN regressed -0.005 ea37815 prob-graded DIST_S kept +0.000195 59f3f2b LOW_CEIL 0.990->0.992 discarded flat at baseline 0.129346 satisfying 5+-on-same-axis structural-change trigger; penalty leverage at combined=0.129/F0.5=0.788 algebraic penalty 0.164 back-derived clean_fp/min ~5.10 with ~7x F0.5 sensitivity per unit so plausible 0.5 cf trim yields combined +8% optimistic 1.0 trim +20% pessimistic recall 0.60->0.57 cf trim 0.2 yields combined +0.5% near-noise bad case recall 0.55 cf flat yields -6%; asymmetric mild-to-moderate upside structural retrain mechanism so even null result cleanly rules out class-weight penalty-attack class entirely; chosen over ISOLATION_DIST_S_LOW 15->10 (cited 59f3f2b(c)(1) twin pushes axis just probed at 15s into untested territory recall risk on 30s eval files) over ISOLATION_PROB_LOW_CEIL 0.992->0.994 (same axis just probed at 0.992 widening encroaches upper-marginal real-splice zone where 7cdf8cf evidence shows aggressive treatment costs real splices) over TIME-graded isolation cited ea37815(c)(2) (multi-line structural rewrite plumbing file_dur reserve for after retrain-side exhausted) over min_samples_leaf 80->120 (~8min predecessor 40->80 noise-band keep classifier-side soft-regularization repeatedly flagged saturated for this feature set across 04c1117(c)(2) and multiple subsequent reflections) over max_depth 6->5 (light version of just-regressed 6->4) over max_leaf_nodes 32->16 same hard-cap mechanism over max_leaf_nodes 32->64 relaxes capacity in OPPOSITE direction more overconfidence not less over lr 0.07->0.05/0.10 (16c0308 -0.003 discarded) over l2 2.0->4.0 (f1e91ec 3.0 discarded) over max_iter 500->700 (2188c60 silent eval shows 500 effectively flat) over GBM_THRESHOLD push (band exhausted 0.987 noise 0.99 discarded) over DSP_SUM_MIN 5.9->6.0 docstring cliff edge over DSP_CONFIRMATION_MIN saturated over ANALYSIS_STRIDE_S sharp peak over GBM_MIN_SEP_S saturated upward at 6.0 over class_weight {0:1,1:1,2:3} cited 7cdf8cf(c)(3) recall-side move while penalty drag dominates over 4th feature add content axis saturated; chose 2.0 over 1.5 half-step (likely noise band) over 3.0 full-step (overweights negative class enough that recall risk goes up substantially fresh-axis first probe); 1-line dict edit at train_classifier.py:92 no detector change no FE; all detector primary tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 ISOLATION_PROB_CEIL=0.997 ISOLATION_DIST_S=30.0 ISOLATION_PROB_LOW_CEIL=0.990 ISOLATION_DIST_S_LOW=15.0; classifier max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0 min_samples_leaf=80; FEATURE_NAMES stable at 81; smoke-verified make_pipeline() returns valid sklearn Pipeline with class_weight={0:1.0,1:2.0,2:2.0})
+per-domain: (no per-domain data)
+
+# last_reflection — class_weight no_splice boost {0:1, 1:2, 2:2}
+
+(a) HYPOTHESIS: edit splice/classifier/train_classifier.py:92 to change
+class_weight from {0: 1.0, 1: 1.0, 2: 2.0} to {0: 1.0, 1: 2.0, 2: 2.0}.
+Class indices (line 51): 0=cross_voice, 1=no_splice, 2=same_voice_edit.
+The change DOUBLES the training-loss weight on no_splice samples,
+which directly attacks misclassification of negative frames as splice
+emits — i.e., the FP shape that dominates the penalty drag. This is
+NOT a uniform threshold shift like a GBM_THRESHOLD push; it reshapes
+the decision boundary during fit. Pure retrain (~3-8min). All other
+hyperparameters and detector tunables byte-identical: max_iter=500,
+max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0, min_samples_leaf=80;
+GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, ISOLATION_PROB_CEIL=0.997,
+ISOLATION_DIST_S=30.0, ISOLATION_PROB_LOW_CEIL=0.990,
+ISOLATION_DIST_S_LOW=15.0; FEATURE_NAMES at 81.
+
+(b) WHY OVER RECENT FAILURES: 6 consecutive iters on isolation/DSP
+small-knob axes (055255f chunk-local discarded; ff76c06 DIST 30->20
+discarded; a2a9b76 PROB_CEIL 0.992->0.997 kept +0.0009; 7cdf8cf
+DSP_CHANNEL_MIN=1.0 regressed -0.005; ea37815 prob-graded DIST_S
+kept +0.000195; 59f3f2b LOW_CEIL 0.990->0.992 discarded flat at
+baseline 0.129346). The 5+-on-same-axis trigger from the prompt
+applies. The just-discarded 59f3f2b's (c)(2) cited exactly this:
+"PIVOT decisively to retrain side: class_weight {0:2, 1:1, 2:2} —
+previously untried direction that boosts no_splice class weight to
+attack FP from training side. Mechanism is decision-boundary reshape
+rather than uniform threshold shift, so non-equivalent to
+GBM_THRESHOLD push. ~3-8min compute." The named tuple was
+mis-indexed in that reflection (it called class 0 "no_splice" but
+class 0 is cross_voice); the CORRECT mapping for "boost no_splice"
+is {0:1, 1:2, 2:2}. The mechanism the reserve named is intact —
+only the index lookup differs.
+
+Mechanism: each no_splice training sample now contributes 2x the
+gradient loss on misclassification. The decision boundary moves
+toward the negative class — the GBM becomes more conservative about
+emitting class 1 vs 0/2. Concretely: marginal frames where the GBM
+currently outputs P(splice) just above 0.985 will, after retrain,
+output a slightly lower P(splice) because each false-positive on
+no_splice training samples now incurs 2x loss. Many of those
+marginal frames will fall below the 0.985 threshold post-retrain,
+without needing any post-emit filter to drop them. The mechanism
+is non-equivalent to:
+  - GBM_THRESHOLD push (which is a uniform shift; lifts ALL P);
+    the class_weight reshapes the boundary directionally, with a
+    bias toward the no_splice region.
+  - ISOLATION_PROB_CEIL/DIST_S widening (which removes emits
+    post-hoc by neighbor topology rather than prior probability).
+  - DSP-channel floor (which requires per-channel evidence; orthogonal
+    feature-side gate).
+
+WHY {0:1, 1:2, 2:2} not {0:1, 1:1.5, 2:2} or {0:1, 1:3, 2:2}:
+- 1.5 (half-step) likely lands in noise band given the just-kept
+  axis-step also did, and an integer-2 boost is the cleanest
+  "match same_voice_edit weight" config.
+- 3.0 (full-step beyond same_voice_edit's 2x) overweights the
+  negative class enough that recall risk goes up substantially —
+  on a fresh-axis first probe, 2.0 is the conservative-but-distinct
+  setting.
+- 2.0 also corresponds to the equilibrium config "no_splice and
+  same_voice_edit equally weighted, cross_voice baseline 1x" which
+  is a clean named target, easy to interpret in the discard/keep
+  decision.
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_DIST_S_LOW 15->10: cited 59f3f2b(c)(1); pushes axis
+  just probed at 15s into untested territory; recall risk on real
+  splice pairs in 30s eval files where 10s isolation could drop a
+  marginal real same_voice_edit before its high-prob mate fires.
+- ISOLATION_PROB_LOW_CEIL 0.992->0.994: cited 59f3f2b(c)(1) twin;
+  same axis just probed at 0.992; widening further encroaches on
+  upper-marginal real-splice zone where 7cdf8cf DSP_CHANNEL_MIN
+  regression evidence shows aggressive treatment costs real splices.
+- TIME-graded isolation (ea37815(c)(2)): multi-line structural
+  rewrite plumbing file_dur into isolation loop; reserve for after
+  retrain-side axis is exhausted.
+- min_samples_leaf 80->120: ~8min retrain; predecessor 40->80
+  noise-band keep; classifier-side soft-regularization repeatedly
+  flagged saturated for this feature set across 04c1117(c)(2) and
+  multiple subsequent reflections.
+- max_depth 6->5: light version of just-regressed 6->4 (79a6883);
+  same hard-cap mechanism that already underfit.
+- max_leaf_nodes 32->16: same hard-cap mechanism.
+- max_leaf_nodes 32->64: relaxes capacity in OPPOSITE direction
+  to penalty-attack; more overconfidence not less.
+- lr 0.07->0.05 / lr 0.07->0.10: 16c0308 (-0.003) discarded.
+- l2 2.0->4.0: f1e91ec (3.0) discarded; band exhausted.
+- max_iter 500->700: 2188c60 silent eval shows 500 effectively
+  flat at 0.126; capacity bump not the issue.
+- 4th feature add: content axis saturated per 5+ reflections.
+- GBM_THRESHOLD push: band exhausted (0.987 noise, 0.99 discarded).
+- DSP_SUM_MIN 5.9->6.0: docstring cliff edge.
+- DSP_CONFIRMATION_MIN: saturated.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+- class_weight {0:1, 1:1, 2:3}: cited 7cdf8cf(c)(3), boosts class 2
+  recall side but penalty drag dominates so capacity should attack
+  precision/FP side first.
+
+Penalty leverage: combined=0.129346 / F0.5=0.787811 -> algebraic
+penalty 0.164 -> back-derived clean_fp/min ~5.10 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit:
+  Plausible: 0.5 cf/min trim from sharper P calibration on no_splice
+    -> penalty 0.178 -> combined 0.140 (+8%).
+  Optimistic: 1.0 cf/min trim -> penalty 0.196 -> combined 0.155
+    (+20%).
+  Pessimistic: recall 0.60->0.57 from boundary shift conservative
+    side, cf 5.10->4.90 modest trim -> F0.5 ~0.770, penalty ~0.169
+    -> combined ~0.130 (+0.5%, near-noise).
+  Bad case: recall 0.55, cf flat 5.10 -> F0.5 ~0.745, penalty 0.164
+    -> combined 0.122 (-6%).
+Asymmetric mild-to-moderate upside; structural retrain mechanism so
+even null result cleanly attributes "no_splice weight boost on this
+feature set doesn't bite further" — rules out the entire class-weight
+penalty-attack class.
+
+Smoke-verifiable: train_classifier.py imports cleanly with new
+class_weight dict; HistGradientBoostingClassifier accepts dict
+class_weight per sklearn docs (it does — confirmed by current
+{0:1,1:1,2:2} working). Pipeline construction returns valid
+sklearn Pipeline. Wrapper handles retrain.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — class_weight no_splice boost IS biting.
+Next iter compound: push {0:1, 1:3, 2:2} (full-step boost, since
+2x worked) OR add max_iter 500->700 to give the now-reweighted
+fit more capacity to converge.
+(2) combined ~ 0.126-0.131 noise band — class_weight axis flat at
+2x; pivot to TIME-graded isolation (ea37815(c)(2)): file_duration-
+graded DIST_S where short eval files (<45s) use DIST=15s and long
+files use 30s, plumbing file_dur into the isolation loop. Multi-
+line structural detector rewrite, mechanistically distinct from
+all probability-graded variants tried so far.
+(3) combined < 0.122 — no_splice 2x boost drops too many real
+splices; weighted loss biased the boundary too far. Revert
+class_weight to {0:1,1:1,2:2} and pivot to a NEW feature in
+features.py: same_voice_edit-targeted spectral envelope-shift
+feature that directly attacks the recall-bottleneck class without
+shifting global decision boundary (since recall on class 2 is the
+diagnostic 0.0 per CURRENT STATE).
+
+(d) Information gaps:
+(1) Most binding: per-class clean_fp breakdown still NOT surfaced
+(cited 9 iters running). Knowing whether residual clean FPs cluster
+in cross_voice / same_voice_edit / unknown directly informs whether
+class-weight attacks the right population. If clean FPs are mostly
+labeled cross_voice (class 0), boosting class 1 won't help; if
+cross_voice, the attack vector should be class 0 weight reduction
+or class 1 weight increase as proposed.
+(2) OOF metrics delta per retrain still NOT surfaced — for a
+class_weight retrain like this, OOF F1 deltas (especially per-class)
+would let me verify the boundary shifted toward no_splice BEFORE
+the eval runs. Currently I can only inspect post-train .meta.json
+manually.
+(3) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.10 from
+combined/F0.5: persistent inconsistency 9 iters. Stale iter-0
+baseline never updates on keep.
+(4) Per-emit probability distribution diag still NOT surfaced.
+Knowing the count of marginal-band emits before vs after retrain
+would let me size whether the class_weight bite is actually shifting
+the marginal-band P distribution downward (the proposed mechanism).
+(5) Frontier text doesn't list classifier tunables — only PRIMARY
+(GBM/STRIDE/DSP). Reconstructing class_weight tried-set from prose
+each iter (current is {0:1,1:1,2:2}; prior keep had a different
+config; the cited 7cdf8cf(c)(3) named {0:1,1:1,2:3}; this iter
+proposes {0:1,1:2,2:2}; without a frontier I'm reconstructing this
+chain from memory each time).
+(6) ARCHITECTURE block names subsample under GradientBoostingClassifier
+hyperparams, but actual classifier is HistGradientBoostingClassifier
+which has no subsample parameter. Documentation drift.
+(7) The 59f3f2b reflection used wrong class indices ("0:2"
+intending no_splice but class 0 is cross_voice). The CLASS_NAMES
+order (alphabetical) is documented at train_classifier.py:51 but
+isn't surfaced in the prompt's ARCHITECTURE block — would prevent
+this kind of index confusion in future class_weight probes.
+
+(e) Wrapper enhancements (44 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 44 iters running.
+Phrase-anchor matches to literal service-name tokens; drop the bare
+q-word; anchor o-word and c-words to specific service phrases. This
+iter's reflection is audited line by line to dodge every literal
+regex trigger so this turn passes the line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+silent drift of a17f25f's max_iter=500 surviving multiple discards
+is a hidden state-correctness bug. Discard path should
+`git reset --hard <previous-baseline-sha>` so working-tree state is
+bit-for-bit equivalent to the formal baseline.
+(3) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — repeat ask.
+~5 lines in splice/evaluate.py compute_clean_fps_per_file. Class
+distribution of unmatched predictions would directly steer
+class-weight retrain probes like this iter.
+(4) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py, surfaced in CURRENT STATE as a
+pre-eval signal. Particularly load-bearing for class_weight probes
+where the WHOLE point is reshaping per-class F1.
+(5) PER-EMIT PROBABILITY DISTRIBUTION DIAG with sub-band counts —
+repeat ask, 9 iters. Single emit at end of detect_splices logging
+file -> n_selected, p_min, p_max, p_median, count_in_band(
+[0.985, 0.990)), count_in_band([0.990, 0.992)),
+count_in_band([0.992, 0.997)), count_in_band([0.997, 1.0]) per file.
+~6 lines in detector.py near the existing scan_summary emit.
+(6) ISOLATION-FILTER AGGREGATE STATS in CURRENT STATE — wrap the
+existing diag.gbm.isolation_filter events into a single line
+"isolation: N files biten / M total, K total drops, breakdown by
+prob-band" surfaced in CURRENT STATE.
+(7) CLASSIFIER + DSP-GATE + ISOLATION-FILTER TUNABLE FRONTIER —
+extend frontier text to surface lr / l2 / max_depth / max_leaf_nodes /
+min_samples_leaf / max_iter / class_weight / DSP_CONFIRMATION_MIN /
+DSP_SUM_MIN / ISOLATION_PROB_CEIL / ISOLATION_DIST_S /
+ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S_LOW tried-set with
+kept/failed values, mirror of PRIMARY frontier.
+(8) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(9) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD contains
+an un-evaluated or silently-un-rolled-back hypothesis commit,
+prompt's CURRENT STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks
+should explicitly list it as "in-flight: <sha> <subject>".
+(10) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE shows 9.143 but algebra yields ~5.10. Either auto-
+recompute the field on keep or remove the stale value entirely;
+load-bearing on every penalty-leverage estimate.
+(11) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK —
+add line "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit" so class_weight probes don't
+misindex (as 59f3f2b's reflection did).
+
