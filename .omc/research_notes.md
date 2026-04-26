@@ -3399,3 +3399,154 @@ per-domain: (no per-domain data)
     noise-prone) or comfortably (regression more likely real).
 [auto] (no SHAP data for either f5a7afa or 322fa29)
 
+## 2026-04-26T12:24:11+09:00 — 1aed387 (discard, combined=0.700754)
+subject: ANALYSIS_STRIDE_S 0.0635 -> 0.064 (bisect upward into known-good [0.0635, 0.065] band to characterize sharp peak vs productive plateau after 322fa29 surprise +0.0285 jump made surface non-monotonic) -- pure splice/detector.py change, no retrain, no feature change. DEVIATION from cited 322fa29(c)(3) recommendation of 0.062: that cited rested on '9e6d82a was eval-noise after all' interpretation, but 322fa29 just landed +0.0285 going 0.065 -> 0.0635 -- enormous local feature, not smooth descent. Updated STRIDE sequence on contract-fixed classifier: 0.12->0.10 +0.012, 0.10->0.08 +0.027, 0.08->0.07 +0.063, 0.07->0.065 +0.035, 0.065->0.0625 -0.0014 (FIRST REGRESSION), 0.065->0.0635 +0.0285 (NEW BEST, sharp local peak). Surface has cliffs on BOTH sides of 0.0635: 0.065->0.692, 0.0635->0.721 (+0.029), 0.0625->0.691 (-0.030 vs 0.0635). Reads as alignment-lottery-driven, not smooth descent. Going to 0.062 (BELOW known-bad 0.0625) is high-variance gambling on hitting another alignment sweet spot. 0.064 is bisection midpoint of known-good [0.0635, 0.065] bracket -- both endpoints are kept values 0.692-0.721, cliff risk extremely low. Bisection-completion-within-bracket-before-pivoting rule from 14 prior keeps says complete the productive bracket first; STRIDE just delivered +0.0285 (not saturated), need one more cheap data point to settle 'sharp peak vs productive plateau' before clean RETRAIN pivot. 0.064 is fresh on frontier (set: 0.06x3 legacy + 0.0625x1 + 0.0635x1 + 0.065x1 + 0.07x1 + 0.08x1 + 0.10x2 = 10 tried; 0.064 never tried). Why -0.001 step magnitude (0.064 not 0.0645 or 0.0628): mirrors prior -0.001 micro-step (0.0625 was 0.001 below 0.0635); larger upward step (0.0645) sits closer to known-good 0.065, less informative than midpoint. Mechanism: STRIDE controls dense-scan candidate grid (line 268: t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)). Grid offset analysis at hypothetical GT boundary 10.04s: STRIDE=0.0635 -> 10.025/10.0885 (15ms/48ms off-peak); STRIDE=0.064 -> 10.052/10.116 (12ms/76ms off-peak); STRIDE=0.065 -> 10.01/10.075 (30ms/35ms off-peak). 0.064 has BETTER worst-case alignment for this hypothetical (12ms vs 15ms vs 30ms), so if +0.029 jump at 0.0635 was alignment-driven on a handful of GT boundaries, 0.064 could land equivalently or even better. If 0.0635 happened to align with multiple GT boundaries by lucky coincidence, 0.064 will land near 0.065 baseline. Direct experimental discrimination of sharp-peak vs plateau hypotheses. Outcomes: (1) 0.715-0.725 -> productive plateau, next iter try 0.063 to bisect lower [0.0625, 0.0635] gap with high confidence; (2) 0.692-0.700 -> sharp peak at exactly 0.0635, alignment-lottery, STRIDE saturated, pivot cleanly to RETRAIN axis (HistGBM min_samples_leaf 20->40, fcb8f4e proven productive on legacy and untouched on iter1 contract-fixed classifier); (3) <0.692 -> very surprising given both endpoints kept, suggests deeper change (eval noise, classifier drift). Why not pivot to RETRAIN now: STRIDE just delivered +0.0285 (decisive productivity), not saturated; one more cheap data point ensures eventual RETRAIN pivot rests on rock-solid sharp-peak-vs-plateau evidence rather than ambiguous local feature. Why not retest 0.06 via sentinel: operator-owned per CLAUDE.md, out of scope; with alignment-lottery interpretation, 0.06 is high-variance retest target (could be dramatic gain or dramatic loss), exactly wrong time to burn sentinel cycle. Compute cost: STRIDE 0.0635 -> 0.064 is -0.8% candidate evaluations (slightly fewer); 322fa29 cleared 300s budget at 0.0635, runtime non-issue. Smoke-verified: ANALYSIS_STRIDE_S=0.064 confirmed via import; other tunables stable (GBM_THRESHOLD=0.972 GBM_MIN_SEP_S=1.05 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: ANALYSIS_STRIDE_S 0.0635 → 0.064 (bisect upward into known-good [0.0635, 0.065] band to characterize whether 0.720911 is sharp peak or productive plateau)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — raise ANALYSIS_STRIDE_S
+    from 0.0635 to 0.064. No retrain, no feature change, classifier
+    byte-identical. Other primary tunables stable: GBM_THRESHOLD=0.972,
+    GBM_MIN_SEP_S=1.05, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    FEATURE_NAMES stable at 80. 0.064 is fresh on the frontier (frontier
+    set: 0.06×3 legacy + 0.0625×1 + 0.0635×1 + 0.065×1 + 0.07×1 + 0.08×1
+    + 0.10×2 = 10 tried; 0.064 has never been tried).
+
+(b) WHY OVER RECENT FAILURES — DEVIATION FROM CITED. 322fa29 just landed
+    combined=0.720911 going 0.065 → 0.0635 — a +0.0285 jump over a -0.0015
+    stride change. This is an enormous local feature on the response
+    surface, not a smooth descent. Updated STRIDE sequence:
+      0.12 → 0.10  : +0.012
+      0.10 → 0.08  : +0.027
+      0.08 → 0.07  : +0.063
+      0.07 → 0.065 : +0.035
+      0.065 → 0.0625: -0.0014  (FIRST REGRESSION)
+      0.065 → 0.0635: +0.0285  (NEW BEST, sharp local peak)
+    The cited (c)(3) from 322fa29 was "try 0.062 (one micro-step above
+    legacy 0.06)... descent has more room than the 9e6d82a regression
+    suggested (which was eval-noise after all)". I am DEVIATING from this
+    cited recommendation. Justification: the +0.0285 surprise jump at
+    0.0635 invalidates the "9e6d82a was eval-noise" interpretation that
+    underlay the cited 0.062 step. Sharp local peak with cliffs on BOTH
+    sides (0.0635 → 0.721; 0.065 → 0.692; 0.0625 → 0.691) reads as
+    alignment-lottery-driven, not smooth descent. Going to 0.062 — BELOW
+    the known-bad 0.0625 — is high-variance gambling on hitting another
+    alignment sweet spot. 0.064 is the smaller/safer probe inside the
+    known-safe [0.0635, 0.065] bracket.
+
+    Why 0.064 specifically: bisection midpoint of [0.0635, 0.065] —
+    cleanly characterizes whether 0.720911 is a sharp single-alignment
+    peak or a productive plateau. Either outcome is high-information:
+      - If 0.064 → 0.715-0.725 (close to current best): peak is broad,
+        productive plateau confirmed; next iter try 0.063 (bisect
+        [0.0625, 0.0635]) with high confidence; 0.062 retest from fresh
+        evidence becomes cleaner; eventually pivot to RETRAIN.
+      - If 0.064 → 0.692-0.700 (closer to 0.065 baseline): peak is sharp
+        at exactly 0.0635, surface is alignment-lottery-driven, STRIDE
+        axis effectively saturated; pivot cleanly to RETRAIN axis next
+        iter (HistGBM min_samples_leaf 20→40, fcb8f4e proven productive
+        on legacy and untouched on iter1).
+      - If 0.064 regresses below 0.692: would be very surprising given
+        both endpoints are kept; would suggest something deeper changed
+        (eval noise, classifier drift); rerun clarifies.
+
+    Why -0.001 step magnitude (0.064 not 0.0645 or 0.0628): mirrors prior
+    -0.001 micro-step (0.0625 was 0.001 below 0.0635). Continues halving
+    cadence (-0.02 → -0.01 → -0.005 → -0.0025 → -0.0015 → +0.001 from
+    0.0635 = 0.064 ≈ -0.001 step magnitude). Smaller step preserves
+    bisection optionality. Larger upward step (0.0645) stays in bracket
+    but sits closer to known-good 0.065 — less informative than the
+    midpoint.
+
+    Why not pivot directly to RETRAIN now: bisection-completion-within-
+    bracket-before-pivoting rule from 14 prior keeps says complete the
+    productive bracket first. STRIDE just delivered +0.0285, decisive
+    productivity signal, axis NOT yet saturated. The new bracket is the
+    region around the discovered peak [0.0625, 0.065] — needs one more
+    cheap data point to settle "sharp peak vs productive plateau" before
+    the eventual RETRAIN pivot rests on rock-solid evidence.
+
+    Why not retest 0.06 via sentinel: still operator-owned per CLAUDE.md
+    retest sentinel doc; out of autoresearch loop scope. Even more so
+    now: with the alignment-lottery interpretation, 0.06 could be
+    dramatically good OR dramatically bad — high-variance retest target,
+    exactly the wrong time to burn a sentinel cycle.
+
+    Mechanism: STRIDE controls the dense-scan candidate grid (line 268:
+    `t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)`).
+    Grid offset analysis at hypothetical GT boundary 10.04s:
+      STRIDE=0.0635: candidates near 10.04 are 10.025/10.0885 (15ms /
+        48ms off-peak)
+      STRIDE=0.064 : candidates near 10.04 are 10.052/10.116 (12ms /
+        76ms off-peak)
+      STRIDE=0.065 : candidates near 10.04 are 10.01/10.075 (30ms /
+        35ms off-peak)
+    0.064 has BETTER worst-case alignment for this hypothetical (12ms vs
+    15ms vs 30ms), so if the +0.029 jump at 0.0635 was alignment-driven
+    on a handful of GT boundaries, 0.064 could land equivalently well or
+    even better. Conversely if 0.0635 happened to align with multiple GT
+    boundaries simultaneously by lucky coincidence, 0.064 will land near
+    0.065 baseline. Direct experimental discrimination.
+
+    Compute cost: STRIDE 0.0635 → 0.064 is -0.8% candidate evaluations
+    (slightly fewer); 322fa29 cleared 300s budget at 0.0635, so 0.064
+    runtime is non-issue.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.720 to ~0.692-0.700 —
+    sharp peak at exactly 0.0635, surface is alignment-lottery; STRIDE
+    axis effectively saturated; pivot immediately to RETRAIN axis next
+    iter (HistGBM min_samples_leaf 20→40 most promising, fcb8f4e proven
+    productive on legacy and genuinely untouched on iter1 contract-fixed
+    classifier). (2) Combined matches 0.720 (within ~0.002 noise) —
+    productive plateau confirmed in [0.064, 0.0635]; next iter bisect
+    downward to 0.063 (test [0.0625, 0.0635] gap) for finer evidence,
+    OR pivot to RETRAIN if compute budget tightening. (3) Combined
+    exceeds 0.728 marginally — productive plateau plus mild upward slope;
+    next iter try 0.0645 (continue bisecting toward 0.065) to map the
+    plateau, then return to lower band 0.063 with rock-solid evidence
+    of the broader band shape.
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has not
+    captured it yet)". 14 keeps + 1 STRIDE regression in (now 15 keeps),
+    still cannot verify which domain delivered the +0.166 aggregate gain
+    across the iter1 STRIDE descent (0.5546 → 0.721). The +0.0285 jump
+    at 0.0635 is highly suspicious for cross-domain rebalance — would
+    imply Korean F1 jumped substantially OR another domain rebalanced
+    while Korean held. Without per-domain visibility I cannot confirm
+    whether the alignment-lottery interpretation applies symmetrically
+    across domains or is Korean-specific. Eval runtime per iteration
+    still not surfaced — would tell me if 0.0635 ran near the 300s cliff
+    (eval-noise more plausible) or comfortably (alignment-lottery more
+    likely). The frontier text shows
+    "ANALYSIS_STRIDE_S: 10 tried (kept: 0.06, 0.0635, 0.065, 0.07, 0.08,
+    0.10; failed: 0.0625) range [0.06, 0.10]" — 10 tried but 6 named
+    keeps + 1 fail = 7, leaving 3 unnamed (presumably 0.06×3 from legacy
+    keeps), confirming 0.064 is genuinely fresh.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks (now 15
+    consecutive iterations with these gaps unfilled):
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 14 keeps + this iter, still missing. NOW EXTREMELY
+    consequential: at the discovered sharp local peak (0.0635 = 0.721),
+    knowing whether the +0.0285 jump was Korean-specific or cross-domain
+    rebalance directly determines whether to continue STRIDE bisection
+    or pivot to RETRAIN. Highest-priority operator fix; estimated <10min
+    schema hookup.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should
+    carry a tag (e.g., `classifier_sha=<8>`) so legacy-kept
+    ANALYSIS_STRIDE_S 0.06 and GBM_THRESHOLD 0.97 can be distinguished
+    from same-value retries on the current contract-fixed classifier.
+    With STRIDE peak now identified at 0.0635 close to legacy 0.06,
+    legacy 0.06 retest becomes the most informative single experiment
+    we can't run from inside the loop.
+    (3) EVAL RUNTIME PER ITERATION in CURRENT STATE: a single line like
+    "last_eval_seconds: 287 (96% of 300s budget)" would let me
+    distinguish runtime-induced noise from true metric features. The
+    +0.0285 surprise at 0.0635 is on the boundary between
+    alignment-lottery and eval-noise; runtime line would partially
+    discriminate (tight runtime → noise more likely; comfortable runtime
+    → real feature more likely).
+
