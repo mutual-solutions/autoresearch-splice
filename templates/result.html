@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>splice detector — result</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0e0e10;
+    color: #d4d4d4;
+    font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 32px 24px 64px; }
+  header { border-bottom: 1px solid #2a2a2e; padding-bottom: 14px; margin-bottom: 24px; }
+  h1 { margin: 0 0 4px; font-size: 22px; color: #FFD700; letter-spacing: 0.02em; }
+  .subhead { margin: 0; font-size: 12px; color: #8a8a8a; }
+  .filename { color: #d4d4d4; word-break: break-all; }
+  h2 {
+    margin: 28px 0 10px;
+    font-size: 13px;
+    color: #FFD700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px dashed #2a2a2e;
+    padding-bottom: 4px;
+  }
+  .err {
+    background: #3a0d0d;
+    border: 1px solid #8a1f1f;
+    color: #ffb3b3;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  audio { display: block; margin: 0 0 4px; }
+  .caption { font-size: 12px; color: #8a8a8a; margin: 6px 0 0; }
+  .meta-box {
+    border: 1px solid #333;
+    background: #15151a;
+    padding: 12px 16px;
+    font-size: 12.5px;
+  }
+  .meta-box .row { display: flex; gap: 12px; margin-bottom: 4px; }
+  .meta-box .k { color: #9a9a9a; min-width: 110px; }
+  .meta-box .v { color: #d4d4d4; word-break: break-all; }
+  .meta-box table { margin-top: 6px; border-collapse: collapse; }
+  .meta-box table td {
+    padding: 2px 12px 2px 0;
+    font-size: 12px;
+  }
+  .meta-box table td.k { color: #9a9a9a; }
+  .meta-err { color: #ffb3b3; }
+  table.boundaries {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.boundaries th, table.boundaries td {
+    text-align: left;
+    padding: 4px 10px;
+    border-bottom: 1px solid #2a2a2e;
+  }
+  table.boundaries th {
+    color: #9a9a9a;
+    font-weight: normal;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
+  }
+  table.boundaries tr:nth-child(even) td { background: #1a1a1c; }
+  table.boundaries td.idx { color: #6a6a6a; width: 40px; }
+  table.boundaries td.t a {
+    color: #FFD700;
+    text-decoration: none;
+    border-bottom: 1px dotted #FFD700;
+  }
+  table.boundaries td.t a:hover { color: #fff; }
+  .swatch {
+    display: inline-block;
+    width: 12px; height: 12px;
+    margin-right: 8px;
+    vertical-align: middle;
+    border: 1px solid #2a2a2e;
+  }
+  pre.json {
+    background: #16161a;
+    border-left: 3px solid #FFD700;
+    padding: 12px;
+    white-space: pre;
+    overflow-x: auto;
+    font-size: 12px;
+    color: #d4d4d4;
+    margin: 6px 0 0;
+  }
+  .pre-label { font-size: 11px; color: #9a9a9a; text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px; }
+  footer { margin-top: 40px; padding-top: 12px; border-top: 1px solid #2a2a2e; font-size: 12px; color: #8a8a8a; }
+  footer a { color: #FFD700; text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+  img.spec { width: 100%; image-rendering: pixelated; display: block; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>splice detector — result</h1>
+      <p class="subhead"><span class="filename">{{ original_filename }}</span> · {{ '%.2f'|format(duration_s) }} s · {{ sample_rate }} Hz</p>
+    </header>
+
+    {% if error %}
+    <div class="err">{{ error }}</div>
+    {% endif %}
+
+    <h2>Audio</h2>
+    <audio controls preload="auto" style="width:100%">
+      <source src="{{ audio_url }}" type="{{ audio_mime_type }}">
+      Your browser does not support the audio element.
+    </audio>
+
+    <h2>Spectrogram</h2>
+    <img class="spec" src="{{ spectrogram_data_uri }}" alt="waveform + spectrogram with boundary overlays">
+    <p class="caption">{{ n_boundaries }} boundaries · cross_voice={{ class_counts.cross_voice }} same_voice_edit={{ class_counts.same_voice_edit }} unknown={{ class_counts.unknown }}</p>
+
+    <h2>Detector metadata</h2>
+    <div class="meta-box">
+      {% if meta_dict.error is defined %}
+        <span class="meta-err">Metadata unavailable: {{ meta_dict.error }}</span>
+      {% else %}
+        <div class="row"><span class="k">version</span><span class="v">{{ meta_dict.version }}</span></div>
+        <div class="row"><span class="k">classes_</span><span class="v">{{ meta_dict.classes_|join(', ') }}</span></div>
+        <div class="row"><span class="k">n_features</span><span class="v">{{ meta_dict.feature_names|length }}</span></div>
+        {% if meta_dict.oof_metrics %}
+        <div class="row"><span class="k">oof_metrics</span></div>
+        <table>
+          {% for k, v in meta_dict.oof_metrics.items() %}
+          <tr>
+            <td class="k">{{ k }}</td>
+            <td class="v">
+              {% if v is mapping %}
+                {% for sk, sv in v.items() %}{{ sk }}={{ '%.4f'|format(sv) if sv is number else sv }}{% if not loop.last %}, {% endif %}{% endfor %}
+              {% elif v is number %}
+                {{ '%.4f'|format(v) }}
+              {% else %}
+                {{ v }}
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </table>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <h2>Boundaries</h2>
+    {% if boundaries %}
+    <table class="boundaries">
+      <thead>
+        <tr><th>#</th><th>time_s</th><th>label</th></tr>
+      </thead>
+      <tbody>
+        {% for b in boundaries %}
+        <tr>
+          <td class="idx">{{ loop.index }}</td>
+          <td class="t">
+            <span class="swatch" style="background:{{ b.color }};"></span>
+            <a href="#" onclick="document.querySelector('audio').currentTime={{ b.time_s }}; document.querySelector('audio').play(); return false;">{{ '%.3f'|format(b.time_s) }}</a>
+          </td>
+          <td style="color:{{ b.color }};">{{ b.label }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="caption">No boundaries detected.</p>
+    {% endif %}
+
+    <h2>Raw output</h2>
+    <p class="pre-label">raw detector output (copy/paste)</p>
+    <pre class="json">{{ boundaries_json }}</pre>
+
+    <footer>
+      <a href="/">← upload another file</a>
+    </footer>
+  </div>
+</body>
+</html>
