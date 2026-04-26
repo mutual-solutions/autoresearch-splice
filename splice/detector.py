@@ -93,6 +93,15 @@ ISOLATION_DIST_S = 30.0
 # softer real same_voice_edits live.
 ISOLATION_PROB_LOW_CEIL = 0.990
 ISOLATION_DIST_S_LOW = 15.0
+# File-duration-graded variant: in short eval files (file_dur_s <
+# ISOLATION_FILE_DUR_THR_S), the fixed 30s gentle threshold collapses
+# to "anywhere in the file" — marginal upper-band emits effectively
+# bypass the isolation gate regardless of actual support. For short
+# files, apply ISOLATION_DIST_S_LOW (=15s) to the entire marginal
+# band [GBM_THRESHOLD, ISOLATION_PROB_CEIL) so a marginal emit needs
+# another marginal emit within ~half the file's duration to survive.
+# Long files keep the existing probability-graded behavior.
+ISOLATION_FILE_DUR_THR_S = 45.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -378,6 +387,8 @@ def _gbm_detect_splices(
 
     # Post-emit isolation filter — see ISOLATION_PROB_CEIL / ISOLATION_DIST_S.
     if len(selected) >= 1:
+        file_dur_s = len(audio) / sr
+        is_short_file = file_dur_s < ISOLATION_FILE_DUR_THR_S
         times = [e[0] for e in selected]
         kept: list[tuple[float, int, float, list[float]]] = []
         for i, emit in enumerate(selected):
@@ -389,9 +400,12 @@ def _gbm_detect_splices(
             else:
                 nearest = min(abs(times[i] - times[j])
                               for j in range(len(times)) if j != i)
-            dist_thresh = (ISOLATION_DIST_S_LOW
-                           if emit[2] < ISOLATION_PROB_LOW_CEIL
-                           else ISOLATION_DIST_S)
+            if is_short_file:
+                dist_thresh = ISOLATION_DIST_S_LOW
+            else:
+                dist_thresh = (ISOLATION_DIST_S_LOW
+                               if emit[2] < ISOLATION_PROB_LOW_CEIL
+                               else ISOLATION_DIST_S)
             if nearest < dist_thresh:
                 kept.append(emit)
         iso_dropped = len(selected) - len(kept)
