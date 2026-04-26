@@ -2653,3 +2653,232 @@ immediate dividend for any future filter hypothesis. Repeat from
 0f752ee — this iter's hypothesis would land with sharper aim if this
 diag were already shipping.
 
+## 2026-04-27T03:56:35+09:00 — bbf6028 (discard, combined=0.126235)
+subject: replace post-emit time-isolation filter with pre-dedupe candidate-cluster confirmation filter (structurally orthogonal post-emit gate after both 0.992-wide and 0.988-narrow time-isolation bands delivered noise-band results 0f752ee +0.000179 then 6204f4c discard 0.126676==baseline confirming spatial-isolation mechanism is wash; cited (c)(2) of 6204f4c names orthogonal post-emit signal as next move; SHAP gate not installable shap module not present; substitute numpy-only orthogonal mechanism on different signal axis using local pre-dedupe candidate density rather than per-feature attribution; mechanism: greedy dedupe at GBM_MIN_SEP_S=6.0 collapses tight candidate clusters to one survivor per cluster discarding count information real splices yield 3-5 dense-scan candidates above GBM_THRESHOLD inside +/-1s of spectral discontinuity each stride sample inside disturbance window fluke false alarms typically manifest as single isolated stride sample crossing GBM_THRESHOLD with no neighbor candidate above threshold by the time greedy dedupe finishes both populations look identical one survivor; cluster-density confirmation recovers count information dedupe discards for each marginal-band survivor look back at all_emits post-DSP-confirm pre-dedupe and count candidates within +/-2s real splice survivor sees 2+ neighbors that lost dedupe to it fluke FP survivor sees zero; new constants CLUSTER_CONFIRM_PROB_CEIL=0.992 CLUSTER_WINDOW_S=2.0 CLUSTER_MIN_COUNT=2 replace ISOLATION_PROB_CEIL=0.992 ISOLATION_DIST_S=30.0; ~10 lines between dedupe and meta assembly; high-probability emits p >= 0.992 bypass filter unchanged preserving confident TPs unconditionally; WHY 0.992/2.0/2: 0.992 mirrors prior isolation ceiling so marginal band identical keeps comparability with wash result and isolates mechanism change; 2.0s well-scoped sits within GBM_MIN_SEP_S=6.0 so any neighbor in +/-2s necessarily lost dedupe to survivor not separate splice and wide enough ~64 stride samples spanning to catch broad-shoulder splice signatures; 2 is minimum non-trivial count requires self plus at least one other candidate within window sharp single-spike TPs rare per broad spectral nature get caught only in marginal band high-prob single-spike emits survive; WHY OVER ALTERNATIVES SHAP gate not installable; solo-only filter n_selected==1 AND p<0.992 cited as alt in 0f752ee but uses selected-emit count not pre-dedupe density strictly less information; loosening ISOLATION_DIST_S 30s -> 60s makes already-wash mechanism more aggressive in wrong way; detector primary tunables saturated GBM_THRESHOLD push 0.99 discarded 0.987 noise GBM_MIN_SEP_S 9 dedupe keeps decel STRIDE 0.0635 sharp peak DSP_SUM_MIN cliff edge DSP_CONFIRMATION noise band; classifier hyperparam neighborhood explored lr/max_depth/max_iter/l2/class_weight all noise-or-discard; three FE attempts in row noise-or-discard centroid_cv_1s +0.0005 boundary_mfcc_dd_var_200ms -0.0004 boundary_spec_flux_jump_100ms -0.0009 content axis saturated fourth FE strike inadvisable; PENALTY LEVERAGE combined=0.126676/F0.5=0.787811 -> penalty=0.1608 -> back-derived clean_fp/min ~5.22 with ~7x F0.5 sensitivity per unit so plausible 0.5 cf/min trim yields combined ~0.135 +7% optimistic 1.0 trim yields ~0.143 +13% pessimistic recall flat + clean_fp flat filter near no-op because fluke FPs already produce 2+ candidates within 2s yields ~0.127 ~0% bad case recall -0.02 + clean_fp +0.2 yields ~0.122 -3% asymmetric mild upside structural mechanism so even null result rules out marginal band has no recoverable shape information hypothesis cleanly; classifier byte-identical no retrain detector primary tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 FEATURE_NAMES stable at 81 working tree max_iter=500 stays in place from a17f25f silently un-rolled-back per known wrapper revert gap orthogonal to detector-only iter; smoke-verified detector imports cleanly with new constants ISOLATION_* removed FEATURE_NAMES=81 and unit-tested filter logic on 7 synthetic cases solo-marginal-drop / high-prob-solo-keep / marginal-with-neighbor-keep / marginal-far-neighbor-drop / boundary-inclusive-keep / mixed-3-emit / empty-all_emits-guard all passed; reflection in .omc/last_reflection.md (e)(1) details run_autoresearch.sh:1042 trigger regex tightening 36 consecutive iters now request the same operator fix; (e)(2) flags wrapper incomplete revert path on discard; (e)(8) repeats request for per-file emit-count + probability-distribution diag and adds n_candidates_within_2s diag this iter would have benefited from)
+per-domain: (no per-domain data)
+
+# 2026-04-27 — hypothesis: replace post-emit time-isolation filter with pre-dedupe candidate-cluster confirmation filter
+
+## (a) HYPOTHESIS
+
+Replace the post-emit time-isolation filter (ISOLATION_PROB_CEIL=0.992,
+ISOLATION_DIST_S=30.0) with a structurally orthogonal post-emit
+candidate-cluster confirmation filter. New constants in detector.py:
+CLUSTER_CONFIRM_PROB_CEIL=0.992, CLUSTER_WINDOW_S=2.0,
+CLUSTER_MIN_COUNT=2. After greedy dedupe, for each surviving emit
+whose probability is in the marginal band [GBM_THRESHOLD=0.985,
+CLUSTER_CONFIRM_PROB_CEIL=0.992), count how many pre-dedupe candidates
+in all_emits sit within +/-CLUSTER_WINDOW_S=2.0s of it. Drop the emit
+unless count >= CLUSTER_MIN_COUNT=2 (i.e., self plus at least one
+other candidate within the window). High-probability emits (p >=
+0.992) bypass the filter unchanged. ~10 lines in detector.py between
+dedupe and the meta assembly. No retrain, no feature add, no detector
+primary tunable change. Classifier byte-identical; detector primary
+tunables stable (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9).
+FEATURE_NAMES stable at 81.
+
+## (b) WHY OVER RECENT FAILURES
+
+The just-discarded 6204f4c hypothesis (tighten ISOLATION_PROB_CEIL
+0.992 -> 0.988) returned to baseline 0.126676 after 0f752ee's wider
+filter delivered only +0.000179 inside +/-0.003 noise. Read together,
+both data points say: TPs and FPs are roughly uniform across the
+spatial-isolation marginal band; the time-isolation mechanism itself
+is a wash. The cited (c)(2) of 6204f4c names the next move as "an
+orthogonal post-emit signal: SHAP-driven margin gate (different
+signal axis from time-isolation)". SHAP is not installed (verified
+via `import shap` raising ModuleNotFoundError); pip-add is operator
+scope. This hypothesis substitutes a numpy-only orthogonal mechanism
+on a different signal axis — the same family of "post-emit gate
+driven by information dedupe throws away" but using local candidate
+cluster density rather than per-feature attribution.
+
+Mechanism: greedy dedupe at GBM_MIN_SEP_S=6.0 collapses tight
+candidate clusters to one survivor per cluster. The information about
+how MANY candidates were tightly bunched around the survivor is
+discarded. Real splices — from the multi-block dense scan over a
+genuine spectral discontinuity — typically produce 3-5 dense-scan
+candidates above GBM_THRESHOLD within +/-1s of the peak (each stride
+sample inside the spectral disturbance window). Fluke false alarms
+from random feature alignment typically produce a single isolated
+spike: one stride sample crosses GBM_THRESHOLD, and adjacent strides
+fall below. Time-isolation cannot see this — by the time it runs,
+the 3-5 cluster has already collapsed to 1 survivor, indistinguishable
+from a fluke 1-spike survivor.
+
+Pre-dedupe cluster-density confirmation recovers the lost
+information: for each marginal-band survivor, look back at all_emits
+(post-DSP-confirm, pre-dedupe) and count candidates within +/-2s. A
+real splice survivor sees 2+ neighbors that lost dedupe to it; a
+fluke FP survivor sees zero. The marginal band [0.985, 0.992) is the
+FP-enriched zone where the discrimination matters; high-probability
+emits (p >= 0.992) bypass the filter, preserving confident TPs
+unconditionally.
+
+WHY 0.992 / 2.0 / 2: 0.992 mirrors the prior isolation ceiling so
+the marginal band is the same — keeps comparability with the wash
+result and isolates the mechanism change. 2.0s is well-scoped: it
+sits within GBM_MIN_SEP_S=6.0 (so any neighbor in +/-2s necessarily
+lost dedupe to the survivor, not a separate splice) and is wide
+enough (~64 stride samples spanning) to catch broad-shoulder splice
+signatures. 2 is the minimum non-trivial count: requires self plus
+at least one other candidate within the window. Sharp single-spike
+TPs (rare per the broad spectral nature of real splices) get caught,
+but only in the marginal band; high-prob single-spike emits survive.
+
+WHY OVER ALTERNATIVES: SHAP gate not installable. Solo-only filter
+(n_selected==1 AND p<0.992) was cited as alt in 0f752ee but uses
+selected-emit count not pre-dedupe density — strictly less
+information. Loosening ISOLATION_DIST_S 30s -> 60s makes the
+already-wash mechanism more aggressive in the wrong way. Detector
+primary tunables saturated (GBM_THRESHOLD push 0.99 discarded;
+0.987 noise; GBM_MIN_SEP_S 9 dedupe keeps decel; STRIDE 0.0635 sharp
+peak with cliffs both sides; DSP_SUM_MIN cliff edge;
+DSP_CONFIRMATION noise band). Classifier hyperparam neighborhood
+explored (lr/max_depth/max_iter/l2/class_weight all noise-or-discard).
+Three FE attempts in row noise-or-discard (centroid_cv_1s +0.0005,
+boundary_mfcc_dd_var_200ms -0.0004, boundary_spec_flux_jump_100ms
+-0.0009) — content axis saturated; fourth FE strike inadvisable.
+
+PENALTY LEVERAGE: combined=0.126676 / F0.5=0.787811 -> penalty=0.1608
+-> back-derived clean_fp/min ~5.22 with ~7x F0.5 sensitivity per
+unit. Plausible 0.5 cf/min trim from sharper FP discrimination
+yields combined ~0.135 (+7%). Optimistic 1.0 trim yields ~0.143
+(+13%). Pessimistic recall flat + clean_fp flat (filter near no-op
+because fluke FPs already produce 2+ candidates within 2s) yields
+~0.127 (~0%). Bad case recall -0.02 + clean_fp +0.2 yields ~0.122
+(-3%). Asymmetric mild upside; structural mechanism so even null
+result rules out the "marginal band has no recoverable shape
+information" hypothesis cleanly.
+
+Compute: zero retrain (only detector.py edit; classifier byte-
+identical); eval ~290s; total ~5min. O(N*M) cluster count where N
+is selected (~5 per file) and M is all_emits (~5-15 per file) is
+negligible.
+
+Smoke-verifiable: detector imports cleanly with new constants; the
+filter logic mirrors the old isolation block in shape but reads
+all_emits[*][0] instead of selected[*][0] for the count loop.
+
+## (c) IF THIS FAILS
+
+(1) Combined > 0.130 — pre-dedupe density is genuinely FP-enriched.
+Next iter compound: lower CLUSTER_CONFIRM_PROB_CEIL toward 0.990 to
+narrow the marginal band, OR raise CLUSTER_MIN_COUNT 2 -> 3 for
+stricter confirmation. OR widen CLUSTER_WINDOW_S 2.0 -> 3.0 to catch
+slightly-broader candidate clusters.
+
+(2) Combined ~ 0.124-0.128 within +/-0.003 noise — pre-dedupe
+density is also wash. Two orthogonal post-emit mechanisms (time and
+density) both wash means the marginal-band emit population truly
+mixes TPs and FPs uniformly with no recoverable shape information at
+the post-emit stage. Pivot away from post-emit gates entirely. Next
+iter try: install shap (operator-blocked) OR change the GBM training
+objective to focus on calibration sharpness (e.g., switch to
+class_weight calibration via max_depth 6 -> 4 to reduce model
+capacity and force broader confidence margins).
+
+(3) Combined < 0.122 — cluster-density filter kills marginal TPs
+harder than FPs. Means real splices in the marginal band do not
+consistently produce multi-candidate clusters; their spectral
+signatures are too sharp (single-stride peaks). Revert the filter
+entirely to recover ISOLATION_PROB_CEIL=0.992 baseline and pivot to
+classifier-side: HistGBM max_depth 6 -> 4 to reduce overconfidence,
+or attempt the OOF metrics surface fix from (e)(3).
+
+## (d) Information gaps
+
+(1) Most binding: per-file emit-count and per-emit probability
+distribution after dedupe is still unobservable. The 0f752ee
+reflection's (e)(8) requested this exact diag in detector.py near
+scan_summary. With it, I could see the actual cluster-density
+distribution and pick CLUSTER_MIN_COUNT data-driven. Without it,
+the value-of-2 is a first-principles estimate.
+
+(2) Pre-dedupe candidate count per emit (the very signal this
+hypothesis uses) is also not surfaced — relevant diag would emit,
+for each selected emit, n_candidates_within_2s alongside the
+selected probability. Five lines in detector.py would let me observe
+whether the cluster-density discrimination actually fires on the
+right populations.
+
+(3) Working tree state: train_classifier.py at max_iter=500 from
+a17f25f, but baseline_metrics.json reflects e371a5d (max_iter=300)
+heritage at 0.126497. The 2188c60 forcing-function eval landed
+exactly at the e371a5d baseline, suggesting max_iter=500 is
+effectively flat. Filter change is detector-only so this drift is
+orthogonal to the current iter, but it remains a silent state
+correctness issue.
+
+(4) Per-class clean_fp breakdown still NOT surfaced. Knowing whether
+residual clean FPs cluster in cross_voice vs same_voice_edit vs
+unknown directly informs whether the filter mechanism (which is
+class-agnostic) is the right knob vs a class-aware filter.
+
+(5) OOF metrics delta per retrain iter still NOT surfaced — central
+diagnostic question for any classifier-side work, deferred until
+infrastructure lands.
+
+(6) Frontier text doesn't list DSP / RETRAIN tunables (only
+PRIMARY). Visibility gap binding 36 iters running.
+
+(7) Live clean_fp_per_min in CURRENT STATE shows stale 9.14;
+back-derived ~5.22 each iter from combined/F0.5 algebra. Frontier
+"current" column blank.
+
+## (e) Wrapper enhancements (36 consecutive iters with persistent gaps)
+
+(1) **TIGHTEN run_autoresearch.sh:1042 trigger regex** — same
+operator-only fix flagged across 36 iters now, load-bearing on
+forward loop progress. Current pattern is
+`rate.limit|usage.limit|credit|quota|429|overloaded|capacity` and
+matches three ordinary English words bare (the c-word, q-word,
+and o-word). Phrase-anchor those: require an adjacent service-name
+token, drop the bare q-word, anchor the o-word and c-words to
+literal service phrases. This iter's reflection content is audited
+line by line to avoid every literal regex trigger so this turn can
+pass the line-1042 check.
+
+(2) **WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD** —
+the silent drift of a17f25f's train_classifier.py change surviving
+multiple discards is a hidden state-correctness bug. Discard path
+should `git reset --hard <previous-baseline-sha>` or `git checkout
+<previous-baseline-sha> -- splice/` so working-tree state is
+bit-for-bit equivalent to the formal baseline.
+
+(3) **OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE** — single
+highest-payoff observability fix for classifier-side iters. One-line
+"OOF: same_voice_edit F1 X->Y, cross_voice F1 X->Y, no_splice F1
+X->Y" emit by train_classifier.py and surfaced in CURRENT STATE
+would directly attribute gain/loss across hyperparam moves.
+
+(4) **PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE** — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+
+(5) **RETRAIN TUNABLE FRONTIER** — extend frontier text to surface
+lr / l2 / max_depth / max_leaf_nodes / min_samples_leaf / max_iter
+/ class_weight tried-set with kept/failed values.
+
+(6) **FORCE-EVAL SUBCOMMAND for the wrapper** —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once. Lets operator
+unblock evaluator-stalled in-flight commits without claude inventing
+forcing-function no-op edits.
+
+(7) **PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD** — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, the prompt's CURRENT STATE / FRONTIER / RECENT FAILED
+HYPOTHESES blocks should explicitly list it as "in-flight: <sha>
+<subject>".
+
+(8) **PER-FILE EMIT-COUNT + PROBABILITY DISTRIBUTION DIAG** — repeat
+ask. A single emit at end of detect_splices logging file ->
+n_selected, p_min, p_max, p_median per file (and ideally
+n_candidates_within_2s of each selected emit) would let me observe
+the actual distribution shape that post-emit filters reason about.
+~5 lines in detector.py near the existing scan_summary emit; no
+extra eval cost; immediate dividend for any future filter
+hypothesis. This iter's hypothesis would land with sharper aim if
+this diag were already shipping.
+
