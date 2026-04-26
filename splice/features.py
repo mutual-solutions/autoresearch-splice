@@ -146,9 +146,10 @@ FEATURE_NAMES: list[str] = (
     + ["voiced_spec_contrast_cosine_dist"]
     + ["voiced_unvoiced_mfcc_asymmetry"]
     + ["voiced_unvoiced_spec_contrast_asymmetry"]
+    + ["stationarity_centroid_cv_1s"]
 )
 
-assert len(FEATURE_NAMES) == 80, f"Expected 80, got {len(FEATURE_NAMES)}"
+assert len(FEATURE_NAMES) == 81, f"Expected 81, got {len(FEATURE_NAMES)}"
 
 # Shared hop/fft constants
 _HOP = 512
@@ -1056,6 +1057,33 @@ def _block_voiced_unvoiced_spec_contrast_asymmetry(ctx: dict, t_sec: float) -> d
 
 
 # ---------------------------------------------------------------------------
+# Block 16: Wide-window stationarity (clean-audio guard)
+# ---------------------------------------------------------------------------
+
+def _block_clean_audio_guard(ctx: dict, t_sec: float) -> dict[str, float]:
+    # CV (std/mean) of spectral centroid over a single ±1s window centered
+    # at t_sec. Existing features are pre/post deltas at t_sec or tight
+    # ±200ms boundary stats; none measure wide-window stationarity. Low CV
+    # = uniform stationary speech (clean-FP source); high CV = step-change
+    # boundary (TP source). Gives the GBM a wide-context signal it can
+    # use to suppress confident emits inside continuous clean speech.
+    centroid = ctx["feat_centroid"]
+    hop = ctx["feat_frame_hop"]
+    sr = ctx["feat_sr"]
+    win_s = 1.0
+    cent_win = _slice_frames(centroid, hop, sr, t_sec - win_s, t_sec + win_s).flatten()
+    if cent_win.size < 2:
+        cv = 0.0
+    else:
+        mean = float(np.mean(cent_win))
+        if mean > 1e-6:
+            cv = float(np.std(cent_win) / mean)
+        else:
+            cv = 0.0
+    return {"stationarity_centroid_cv_1s": cv}
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -1107,6 +1135,7 @@ def extract_features(
     feats.update(_block_voiced_spec_contrast(chunk_ctx, t_sec))
     feats.update(_block_voiced_unvoiced_mfcc_asymmetry(chunk_ctx, t_sec))
     feats.update(_block_voiced_unvoiced_spec_contrast_asymmetry(chunk_ctx, t_sec))
+    feats.update(_block_clean_audio_guard(chunk_ctx, t_sec))
 
     assert len(feats) == len(FEATURE_NAMES), (
         f"Feature count mismatch: {len(feats)} != {len(FEATURE_NAMES)}"
