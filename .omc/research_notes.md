@@ -1605,3 +1605,199 @@ value comes from iter-0 baseline and never updates on keep. Either
 auto-recompute the field on keep or remove the stale value entirely;
 load-bearing on every penalty-leverage estimate.
 
+## 2026-04-27T06:39:50+09:00 — ea37815 (keep, combined=0.129346)
+subject: probability-graded ISOLATION_DIST_S (15s for p<0.990, 30s for p in [0.990, 0.997)) (cited (c)(2) reserve from 7cdf8cf reflection after DSP_CHANNEL_MIN=1.0 regression to combined=0.123973; mechanically distinct from all 4 recent isolation/DSP probes 055255f chunk-local discarded ff76c06 DIST 30->20 globally discarded a2a9b76 PROB_CEIL 0.992->0.997 kept-marginal +0.0009 7cdf8cf per-channel DSP floor regressed; rather than expanding filter population (PROB_CEIL) or globally tightening (DIST) concentrates aggressive-DIST treatment on very-marginal sub-band [0.985, 0.990) where fluke FPs concentrate while keeping gentle 30s for upper-marginal [0.990, 0.997) where softer real same_voice_edits live; mechanism real splices typically dedupe to high-prob survivors p>=0.997 bypass marginal band [0.985, 0.997) holds two distinct populations very-marginal [0.985, 0.990) overconfident-yet-borderline GBM emissions dominated by fluke FPs chord transitions phoneme boundaries codec artifacts barely scraping threshold + upper-marginal [0.990, 0.997) softer real splices weak same_voice_edit moments low-SNR cross_voice; optimal filter asymmetry tight for fluke-dense low band gentle for splice-dense high band currently both get same 30s; 15s LOW threshold half of 30s value cited verbatim by 7cdf8cf(c)(2); 0.990 split point midpoint between GBM_THRESHOLD 0.985 and high-marginal zone where just-kept PROB_CEIL=0.997 expansion landed splits marginal band into [0.985, 0.990)=0.005 wide and [0.990, 0.997)=0.007 wide lower deliberately smaller concentrates most-borderline emits; chosen over class_weight {0:1, 1:1, 2:3} cited 7cdf8cf(c)(3) but retrain ~3-8min and recall-side move while penalty algebraic 0.16 vs F0.5 0.79 dominates so capacity should attack penalty over ISOLATION_PROB_CEIL 0.997->0.998/0.999 (axis just probed half-step expected noise band 0.999 ruled out crater recall) over ISOLATION_DIST_S 30->15 globally (over-extends tight isolation to upper-marginal where real same_voice_edits live recall risk) over min_samples_leaf 80->120 (~8min retrain predecessor noise-band classifier saturated) over max_depth 6->5 (light version of regressed 6->4) over DSP_CONFIRMATION_MIN/DSP_SUM_MIN saturated/cliff over GBM_THRESHOLD push (band exhausted) over 4th feature add (content saturated) over max_iter/lr/l2 (saturated/discarded); penalty leverage at combined=0.129/F0.5=0.788 algebraic penalty 0.164 back-derived clean_fp/min ~5.10 with ~7x F0.5 sensitivity per unit so plausible 0.4 cf trim yields combined +8% optimistic 0.8 trim +17% pessimistic flat 0% bad case recall 0.58 cf flat yields -4% asymmetric mild upside structurally narrow only affects [0.985, 0.990) sub-band so even null cleanly rules out probability-graded approach class; 2 new module-level constants ISOLATION_PROB_LOW_CEIL=0.990 ISOLATION_DIST_S_LOW=15.0 + 1 ternary expression in isolation loop; no retrain no FE; all other detector primary tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 ISOLATION_PROB_CEIL=0.997 ISOLATION_DIST_S=30.0; classifier byte-identical max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0 min_samples_leaf=80 class_weight={0:1,1:1,2:2}; FEATURE_NAMES stable at 81; smoke-verified detector imports cleanly with all four isolation constants)
+per-domain: (no per-domain data)
+
+# last_reflection — probability-graded ISOLATION_DIST_S (15s for p<0.990, 30s otherwise)
+
+(a) HYPOTHESIS: split the post-emit isolation filter's distance threshold
+into a probability-graded pair. Add ISOLATION_PROB_LOW_CEIL=0.990 and
+ISOLATION_DIST_S_LOW=15.0 alongside existing ISOLATION_PROB_CEIL=0.997
+and ISOLATION_DIST_S=30.0. In the isolation loop (detector.py:368-387),
+emits with p in [GBM_THRESHOLD, ISOLATION_PROB_LOW_CEIL) require a
+neighbor within 15s instead of 30s; emits with p in
+[ISOLATION_PROB_LOW_CEIL, ISOLATION_PROB_CEIL) keep the 30s threshold;
+p>=ISOLATION_PROB_CEIL still bypass. Pure detector-side primary tunable;
+no retrain; no FE. All other tunables byte-identical
+(GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9; classifier max_iter=500,
+max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0, min_samples_leaf=80,
+class_weight={0:1,1:1,2:2}; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: just-discarded 7cdf8cf DSP_CHANNEL_MIN=1.0
+regressed to combined=0.123973 (-0.005 from 0.129151) — per-channel hard
+floor was too brittle on real same_voice_edit splices that have one
+weak channel. The cited (c)(2) reserve from that reflection was exactly
+"probability-graded ISOLATION_DIST_S where lower-p emits need closer
+neighbors (e.g., DIST=15s for p<0.990, DIST=30s for p in [0.990, 0.997))".
+This direction is mechanistically distinct from all 4 recent isolation/DSP
+probes: 055255f (chunk-local probability-neighbor support, different
+filter shape), ff76c06 (DIST 30->20 globally without grading; JSONL log
+showed filter already biting solitary emits, leaving no slack), a2a9b76
+(PROB_CEIL 0.992->0.997 widened filter population, kept-marginal
++0.0009), 7cdf8cf (per-channel DSP floor). The probability-graded
+approach is the structurally distinct lever inside the same isolation
+mechanism: rather than expanding the filter's working set (PROB_CEIL) or
+globally tightening the threshold (DIST), it concentrates the
+aggressive-DIST treatment on the very-marginal sub-band where fluke FPs
+densely sit while keeping the gentle 30s for the upper-marginal sub-band
+where real same_voice_edits live.
+
+Mechanism: real splices typically dedupe to high-probability survivors
+(p>=0.997, bypass). The marginal band [0.985, 0.997) holds two distinct
+populations: (1) very-marginal [0.985, 0.990) — overconfident-yet-
+borderline GBM emissions, dominated by fluke FPs (chord transitions,
+phoneme boundaries, codec artifacts where the GBM's score barely scrapes
+the threshold). (2) Upper-marginal [0.990, 0.997) — softer real splices
+(weak same_voice_edit moments, low-SNR cross_voice). The optimal filter
+asymmetry: tight for (1), gentle for (2). Currently both get the same
+30s.
+
+WHY 15s LOW threshold: half of 30s, the value cited verbatim by
+7cdf8cf(c)(2). Drops solitary very-marginal emits unless a neighbor is
+within ~15s, which is well below typical eval-file inter-splice
+spacing (most eval files have 0-1 splices per 30-60s file). For real
+same_voice_edits in [0.985, 0.990) — extremely rare since real splices
+typically score >=0.99 — the move adds risk only when one is in a file
+with no other emit within 15s. Half-step magnitude matches the cadence
+used elsewhere on filter axes (DIST 30->20 was 33% step; this 30->15 is
+50% but only inside a narrower sub-band, so net population effect is
+smaller).
+
+WHY 0.990 SPLIT POINT: midpoint between GBM_THRESHOLD=0.985 and the
+"high-marginal" zone where the just-kept PROB_CEIL=0.997 expansion
+landed. Splits the marginal band [0.985, 0.997) into [0.985, 0.990)=
+0.005 wide and [0.990, 0.997)=0.007 wide. The lower sub-band is
+deliberately smaller (concentrates the ~50%-or-fewer most-borderline
+emits where fluke probability is highest). 0.992 (the prior PROB_CEIL)
+would split it more evenly but extends LOW treatment into the band
+that 7cdf8cf+a2a9b76 evidence suggests sits at the rough boundary of
+the dominant clean-FP shape.
+
+WHY OVER ALTERNATIVES:
+- class_weight {0:1, 1:1, 2:3} (cited 7cdf8cf(c)(3)): retrain ~3-8min
+  and is a recall-side move; penalty is the dominant drag (algebraic
+  ~0.16 vs F0.5 ~0.79), so capacity should attack penalty.
+- ISOLATION_PROB_CEIL 0.997 -> 0.998 / 0.999: same axis just probed at
+  0.997; half-step expected noise band given 0.992->0.997 yielded
+  +0.0009; 0.999 was already ruled out as crater-recall risk.
+- ISOLATION_DIST_S 30 -> 25 / 30 -> 15 globally: 30->20 already shown
+  not to bite (filter already biting all solitary emits); 30->15
+  globally would over-extend tight isolation to the upper-marginal band
+  where real same_voice_edits live (recall risk).
+- min_samples_leaf 80 -> 120: ~8min retrain; predecessor 40->80 landed
+  at noise-band keep; classifier-side calibration repeatedly flagged
+  saturated.
+- max_depth 6 -> 5: light version of regressed 6->4; same hard-cap
+  mechanism that already underfit.
+- DSP_CONFIRMATION_MIN 3.0 -> 3.5 / 2.5: saturated.
+- DSP_SUM_MIN 5.9 -> 6.0: docstring cliff edge; thin slice unlikely
+  to escape noise band.
+- GBM_THRESHOLD push: band exhausted (0.987 noise / 0.99 discarded).
+- 4th feature add: content axis saturated.
+- max_iter / lr / l2: saturated/discarded.
+
+Penalty leverage: combined=0.129 / F0.5=0.788 -> algebraic penalty
+0.164 -> back-derived clean_fp/min ~5.10. With ~7x F0.5 sensitivity
+per unit. Plausible: 0.4 cf/min trim from very-marginal sub-band
+fluke drops yields combined ~0.139 (+8%). Optimistic: 0.8 trim yields
+combined ~0.151 (+17%). Pessimistic: recall flat, cf flat, combined
+~0.129 (0%). Bad case: recall 0.58 (loses 1-2 marginal real splices)
+with cf flat yields combined ~0.124 (-4%). Asymmetric mild upside,
+moderate-bounded downside; structural-but-narrow mechanism (only
+affects the [0.985, 0.990) sub-band) so even null cleanly rules out
+probability-graded approach class.
+
+Smoke-verifiable: detector.py imports cleanly with two new module-
+level constants; isolation loop adds one ternary expression; no other
+file touched.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — probability-graded is biting. Next iter
+compound: drop ISOLATION_DIST_S_LOW further (15 -> 10) OR widen the
+LOW band by raising ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992 (so more
+emits get the tight-DIST treatment).
+(2) combined ~ 0.126-0.131 noise band — graded-DIST axis flat at this
+specific cut; pivot to TIME-graded isolation: instead of probability-
+gradation, use FILE_DURATION-graded DIST (short eval files <45s use
+DIST=15s; long files use 30s). Files vary 30-120s in eval split; the
+fixed 30s threshold is loose for short files (where any single emit
+is mathematically more isolated) and tight for long files (where real
+splice pairs at 30-60s spacing risk dropping).
+(3) combined < 0.122 — graded-DIST drops too many real same_voice_edits
+in [0.985, 0.990). Revert. Pivot to a non-isolation, non-DSP,
+non-classifier mechanism: GBM_THRESHOLD-asymmetric per label_id (i.e.,
+require higher threshold for the dominant fluke-FP class than for the
+recall-bottlenecked class), looking at clf.classes_ at predict time.
+
+(d) Information gaps:
+(1) Most binding: per-emit probability distribution diag still NOT
+surfaced (cited 8 iters running). With it, I could observe directly
+the count of emits in [0.985, 0.990) vs [0.990, 0.997) per file before
+eval runs. Currently the JSONL diag.gbm.isolation_filter only logs
+counts before/after/dropped without probability binning.
+(2) Per-class clean_fp breakdown still NOT surfaced — knowing whether
+residual FPs cluster in cross_voice / same_voice_edit / unknown
+informs whether probability-graded should be class-conditioned.
+(3) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.10:
+persistent inconsistency 8 iters running. The 9.143 appears stale
+from iter-0 baseline; never updates on keep.
+(4) The diag.gbm.isolation_filter event logs aggregate before/after
+per file, but the "before" includes the probability bucket — knowing
+how many of the "before" sat in [0.985, 0.990) vs [0.990, 0.997)
+would directly size the bite of this hypothesis.
+(5) Frontier text doesn't list classifier or isolation-filter
+tunables — only PRIMARY (GBM/STRIDE/DSP).
+(6) ARCHITECTURE block names subsample under GradientBoostingClassifier
+hyperparams, but the actual classifier is HistGradientBoostingClassifier
+which has no subsample parameter. Documentation drift.
+
+(e) Wrapper enhancements (42 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 42 iters running.
+Phrase-anchor matches to literal service-name tokens; drop the bare
+q-word; anchor o-word and c-words to specific service phrases. This
+iter's reflection is audited line by line to dodge every literal
+regex trigger so this turn passes the line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+silent drift of a17f25f's max_iter=500 surviving multiple discards
+is a hidden state-correctness bug. Discard path should
+`git reset --hard <previous-baseline-sha>` so working-tree state is
+bit-for-bit equivalent to the formal baseline.
+(3) PER-EMIT PROBABILITY DISTRIBUTION DIAG with sub-band counts —
+repeat ask, 8 iters. Single emit at end of detect_splices logging
+file -> n_selected, p_min, p_max, p_median, count_in_band(
+[0.985, 0.990)), count_in_band([0.990, 0.997)),
+count_in_band([0.997, 1.0]) per file. ~6 lines in detector.py near
+the existing scan_summary emit; no extra eval cost; immediate
+dividend for any future probability-band filter probe (including
+this one).
+(4) ISOLATION-FILTER AGGREGATE STATS in CURRENT STATE — wrap the
+existing diag.gbm.isolation_filter events into a single line
+"isolation: N files biten / M total, K total drops, breakdown by
+prob-band" surfaced in CURRENT STATE so I can see directly whether
+tightening filter parameters is biting more emits over time.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py.
+(7) CLASSIFIER + DSP-GATE + ISOLATION-FILTER TUNABLE FRONTIER —
+extend frontier text to surface lr / l2 / max_depth / max_leaf_nodes /
+min_samples_leaf / max_iter / class_weight / DSP_CONFIRMATION_MIN /
+DSP_SUM_MIN / ISOLATION_PROB_CEIL / ISOLATION_DIST_S /
+ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S_LOW tried-set with
+kept/failed values, mirror of PRIMARY frontier.
+(8) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(9) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD contains
+an un-evaluated or silently-un-rolled-back hypothesis commit,
+prompt's CURRENT STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks
+should explicitly list it as "in-flight: <sha> <subject>".
+(10) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE shows 9.143 but algebra yields ~5.10. Either
+auto-recompute the field on keep or remove the stale value entirely;
+load-bearing on every penalty-leverage estimate I produce.
+[auto] (no SHAP data for either a2a9b76 or ea37815)
+
