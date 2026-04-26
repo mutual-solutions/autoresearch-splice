@@ -57,7 +57,7 @@ GBM_MIN_SEP_S = 5.5
 # DSP spike. Applied BEFORE dedupe so a strong-DSP neighbor can still
 # win a cluster.
 DSP_CONFIRMATION_CHANNELS = ("dsp_phase_z", "dsp_t2_z", "dsp_cpe_z")
-DSP_CONFIRMATION_MIN = 2.5
+DSP_CONFIRMATION_MIN = 3.0
 # SUM-based companion floor stacked on top of the MAX gate. Real cross-source
 # splices disrupt multiple physical signals simultaneously (mic/room mismatch
 # fires phase AND T² AND CPE), so the cumulative DSP magnitude is high (sum
