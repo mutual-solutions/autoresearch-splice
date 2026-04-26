@@ -4766,3 +4766,108 @@ per-domain: (no per-domain data)
     the saturation-vs-still-productive question without burning an
     iteration to find out.
 
+## 2026-04-26T10:55:40+09:00 — 40e565e (keep, combined=0.567079)
+subject: ANALYSIS_STRIDE_S 0.12 -> 0.10 (pivot to cited fresh axis after GBM_THRESHOLD saturated at 0.5546 across [0.971, 0.972]) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from just-discarded d6cf830(c)(2): 'Combined matches 0.5546 exactly -- descent saturated at 0.5546 across [0.971, 0.972]; pivot immediately to a fresh axis next iter (ANALYSIS_STRIDE_S 0.12 -> 0.10, smallest fresh step toward denser scan that's not wrapper-blocked at legacy 0.06)'. GBM_THRESHOLD axis on contract-fixed classifier exhausted in productive band: 0.982->0.537, 0.978->0.544, 0.974->0.552, 0.972->0.5546, 0.971->0.5546 (TIE = rock-solid saturation). GBM_MIN_SEP_S independently saturated earlier at 0.537 across [1.0, 1.05]. STRIDE is the third (and only fresh) primary axis. 0.10 is fresh on frontier (only 0.06 legacy-kept on pre-contract-fix classifier; frontier guard would block 0.06 retry). Mechanism: STRIDE controls the dense-scan grid (line 268: t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)). At STRIDE=0.12, candidate emit times near a GT boundary at 10.04s are 9.96/10.08/10.20; closest sample (10.08) is 40ms off-peak. With STRIDE=0.10, candidates become 9.90/10.00/10.10; closest is 10.00, 40ms off-peak in the OTHER direction but accessing fundamentally different probability values (different feature windows centered at different times). If any TPs have sharp-peaked p_splice that rolls off below 0.972 within +-60ms of the true peak, the 0.12 grid misses them while 0.10 catches them. The counter-argument from prior reflection ('0.25s collar already wider than 0.12 grid so denser won't add emits') confuses two different things: COLLAR is matching tolerance evaluate.py applies AFTER emission; STRIDE determines whether an emission happens AT ALL by gating which times get a probability evaluation. Different candidate times produce different probabilities; only candidates above 0.972 emit. Why 0.10 not 0.08 or 0.06: 0.06 wrapper-blocked (legacy keep); 0.10 is smallest meaningful fresh step (-0.02 matches magnitude of threshold steps that proved productive on corrected classifier), preserves bisection optionality (downward to 0.08 if productive, upward to 0.11 if regresses). Why not retrain pivot now: STRIDE is the last unexplored primary; exhausting it with one cheap data point (no retrain) gives rock-solid evidence to pivot to RETRAIN axis next iter. Compute cost: STRIDE 0.12->0.10 is +20% candidate evaluations, well within 300s eval budget. Smoke-verified: STRIDE=0.1 confirmed via import; other tunables stable (GBM_THRESHOLD=0.972 GBM_MIN_SEP_S=1.05 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: ANALYSIS_STRIDE_S 0.12 → 0.10 (pivot to cited fresh axis after GBM_THRESHOLD saturated at 0.5546 across [0.971, 0.972])
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop ANALYSIS_STRIDE_S
+    from 0.12 to 0.10. No retrain, no feature change, classifier
+    byte-identical. Other primary tunables stable: GBM_THRESHOLD=0.972,
+    GBM_MIN_SEP_S=1.05, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    FEATURE_NAMES stable at 80. 0.10 is fresh on frontier (only 0.06
+    legacy-kept).
+
+(b) WHY over recent failures. EXPLICIT CITED PIVOT from just-discarded
+    d6cf830(c)(2): "Combined matches 0.5546 exactly — descent saturated
+    at 0.5546 across [0.971, 0.972]; pivot immediately to a fresh axis
+    next iter (ANALYSIS_STRIDE_S 0.12 → 0.10, the smallest fresh step
+    toward denser scan that's not wrapper-blocked at legacy 0.06)".
+    GBM_THRESHOLD axis on contract-fixed classifier now exhausted in
+    productive band: 0.982→0.537, 0.978→0.544, 0.974→0.552, 0.972→0.5546,
+    0.971→0.5546 (TIE = saturation). The exact tie at 0.971 is rock-solid
+    saturation evidence — descent has hit a posterior cluster gap or
+    FP-inflation cliff; one more micro-step won't recover. GBM_MIN_SEP_S
+    independently saturated earlier at 0.537 across [1.0, 1.05]. Both
+    threshold-style primaries are exhausted; STRIDE is the third (and
+    only fresh) primary axis. Mechanism: STRIDE controls the dense-scan
+    grid (line 268: `t_grid = np.arange(0.5, chunk_dur_s - 0.5,
+    ANALYSIS_STRIDE_S, ...)`). At STRIDE=0.12, candidate emit times near
+    a GT boundary at 10.04s are 9.96/10.08/10.20 — the closest sample
+    (10.08) is 40ms off-peak. With STRIDE=0.10, candidates become
+    9.90/10.00/10.10 — closest is 10.00, 40ms off-peak in the OTHER
+    direction but accessing fundamentally different probability values
+    (different feature windows centered at different times). If any TPs
+    have sharp-peaked p_splice that rolls off below 0.972 within ±60ms
+    of the true peak, the 0.12 grid misses them while 0.10 catches them.
+    The counter-argument from prior reflection ("0.25s collar already
+    wider than 0.12 grid so denser won't add emits") confuses two
+    different things: the COLLAR is the matching tolerance evaluate.py
+    applies AFTER emission; STRIDE is what determines whether an
+    emission happens AT ALL by gating which times get a probability
+    evaluation. Different candidate times produce different
+    probabilities; only candidates above 0.972 emit. Why 0.10 not 0.08
+    or 0.06: 0.06 is wrapper-blocked (legacy keep on pre-contract-fix
+    classifier; frontier guard would block as repeat); 0.10 is smallest
+    meaningful fresh step (-0.02 matches the magnitude of the threshold
+    steps that proved productive on the corrected classifier),
+    preserves bisection optionality downward to 0.08 if 0.10 lands
+    productively, or upward to 0.11 if it regresses. Why not retrain
+    pivot now: STRIDE is the last unexplored primary; exhausting it
+    with one data point (cheap, no retrain) gives rock-solid evidence
+    to pivot to RETRAIN axis next iter. Why not GBM_MIN_SEP_S retry
+    from a different angle: that axis already has 7 data points
+    showing saturation in [1.0, 1.05]; no fresh micro-step sits between
+    known-bad (1.05 saturated) and known-bad (the only way out is
+    operator-owned 1.0 retest sentinel). Compute cost: STRIDE 0.12→0.10
+    is +20% candidate evaluations, well within the 300s eval budget.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.5546 — denser scan
+    surfaces marginal off-grid candidates that fail dedupe collisions
+    (more candidates → more chance two emits within 1.05s collide →
+    worse dedupe outcome) OR opens FP candidates the 0.12 grid never
+    saw; bisect upward to STRIDE=0.11 next iter for finer evidence, OR
+    pivot directly to RETRAIN axis (HistGBM hyperparameter — first
+    untouched on iter1 contract-fixed classifier is min_samples_leaf
+    20→40 which fcb8f4e proved productive on legacy and is genuinely
+    untouched on iter1). (2) Combined matches 0.5546 exactly — STRIDE
+    descent had no effect (probability surface flat at 0.10/0.12 grid
+    granularity); ALL three primary tunables exhausted on iter1; pivot
+    immediately to RETRAIN axis next iter (min_samples_leaf 20→40 most
+    promising, cited proven productive on legacy). (3) Combined
+    exceeds 0.557 — STRIDE descent productive; next iter bisect
+    downward to STRIDE=0.08 to continue.
+
+(d) Information gaps. Per-domain combined breakdown STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable)". 10 keeps in a row tuning
+    toward Korean recall by mechanism, still cannot verify singing /
+    english are not silently regressing under aggregate gain. The
+    ANALYSIS_STRIDE_S frontier text says "3 tried (kept: 0.06; failed:
+    -)" but only 0.06 listed — what were the other two? Conflicting
+    info. The probability histogram of GBM outputs on the corrected
+    classifier still not surfaced — would tell whether STRIDE descent
+    is even gating different posterior tails or hitting same discrete
+    buckets. Per-grid emission count (how many candidates above 0.972
+    at STRIDE 0.12 vs 0.10) would directly resolve the saturation-
+    vs-productive question without burning an iteration.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks:
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    even three keys would unlock per-axis targeting and let me catch
+    silent regressions during Korean-recall tuning. The non-iter1
+    baseline_metrics.json captures this; iter1 writer evidently doesn't.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should
+    carry a tag (e.g., `classifier_sha=<8>`) so legacy-kept values
+    (ANALYSIS_STRIDE_S 0.06, GBM_THRESHOLD 0.97) can be distinguished
+    from same-value retries on current contract-fixed classifier —
+    would unlock legitimate retries when the underlying model has
+    changed without operator-owned retest sentinel workaround.
+    (3) FRONTIER FULL-VALUE LIST: prompt currently shows
+    "ANALYSIS_STRIDE_S: 3 tried (kept: 0.06; failed: -)" — 3 tried but
+    only 0.06 named, no failure list. Means I can't tell which fresh
+    values are actually fresh vs hidden in the "tried but unnamed" set.
+    Either show all 3 values or fix the count.
+[auto] (no SHAP data for either 83c31eb or 40e565e)
+
