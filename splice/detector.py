@@ -80,7 +80,7 @@ DSP_SUM_MIN = 5.9
 # captures "alone in file" for short eval files (30-60s) and "spread
 # apart" for longer ones, while preserving mid-file dense-multi-splice
 # emits. Applied AFTER greedy dedupe.
-ISOLATION_PROB_CEIL = 0.992
+ISOLATION_PROB_CEIL = 0.997
 ISOLATION_DIST_S = 30.0
 
 _GBM_MODEL_PATH = os.path.join(
