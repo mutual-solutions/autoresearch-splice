@@ -4020,3 +4020,217 @@ in-flight commits without needing claude to invent forcing-
 function no-op edits like f563b32.
 [auto] (no SHAP data for either f563b32 or e371a5d)
 
+## 2026-04-27T00:18:59+09:00 — 16c0308 (discard, combined=0.123751)
+subject: HistGBM learning_rate 0.07 -> 0.05 (fresh classifier-side axis after 8+ iters at detector-side saturation plateau and dedupe-axis terminus 6.0; lr untouched since acba4aa HistGBM swap; cleanest never-tried hyperparam; mechanism softens overconfident-outlier predictions at GBM_THRESHOLD=0.985 which is the dominant residual clean-FP shape under F0.5 x clean_fp_penalty metric where penalty 0.16 dominates F0.5 0.79; lr scales per-tree contribution uniformly across ensemble distinct from l2_regularization=2.0 which shrinks per-leaf via small-hessian protection so they compose; current state combined=0.126497 / F0.5=0.788 = penalty 0.161 -> back-derived clean_fp/min ~5.23 with ~7x F0.5 sensitivity per unit so 0.5 cf/min trim yields combined 0.135 +7%, 1.0 trim yields 0.147 +16%, pessimistic R 0.58 flat clean_fp yields 0.122 -3%, bad case R 0.55 clean_fp slightly up yields 0.118 -7% asymmetric mild upside; chosen over GBM_MIN_SEP_S 6.0->6.5 (just-landed 6.0 was +0.002 noise-band keep and 6.5 enters Korean cross_voice TP-pair density) over DSP_SUM_MIN 5.9->6.0 (detector docstring explicit cliff edge weakest same_voice_edit splices firing 3+3+0=6 get killed asymmetric DOWNSIDE) over l2_regularization further (saturated; 3.0 already discarded f1e91ec) over max_iter 300->500 alone (bare capacity bump risks more aggressive overfit without lr cut first) over max_depth 6->7 (bare doubling-down on lever just landed at noise band high-variance without OOF telemetry) over class_weight further (saturated unstable axis toggled) over feature engineering (third FE in row would be third strike content axis showed saturation); WHY 0.05 not 0.06: 0.06 too small step lands in noise band signal lost; WHY not 0.04: aggressive 43%% reduction underfits at fixed max_iter=300 likely regressing recall; 0.05 is standard sklearn lr probe magnitude factor 1.4 reduction max_iter*lr drops 21->15 ample for fitting calibration shift large enough above eval noise; single-knob change preserves clean attribution; train_classifier.py:89 one-line literal change; all detector tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9; other classifier params stable max_iter=300 max_depth=6 max_leaf_nodes=32 l2_regularization=2.0 min_samples_leaf=40 class_weight={0:1,1:1,2:2}; FEATURE_NAMES stable at 81; smoke-verified make_pipeline constructs lr=0.05; US-505b sha gate auto-retrains)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: HistGBM learning_rate 0.07 → 0.05 (fresh classifier-side axis after 8+ iters at detector-side saturation plateau and dedupe-axis terminus 6.0)
+
+## (a) HYPOTHESIS
+
+Single-line `splice/classifier/train_classifier.py:89` change — drop
+HistGBM `learning_rate` from 0.07 to 0.05. All other hyperparams stable
+(max_iter=300, max_depth=6, max_leaf_nodes=32, l2_regularization=2.0,
+min_samples_leaf=40, class_weight={0:1, 1:1, 2:2}). Detector tunables
+stable (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9). FEATURE_NAMES stable at 81.
+Wrapper auto-retrains via train_classifier.py sha gate (~3min).
+
+learning_rate is GENUINELY untouched on the iter1 classifier — git log
+shows 4 mentions of "learning_rate" all just listing it as stable
+adjacent to other tuned params; value has been 0.07 since the HistGBM
+swap (acba4aa). I had previously claimed l2_regularization was "default
+0; never tried" in (c)(2) menus but reading the code shows it has been
+at 2.0 for many iters (set at 4b1575e). learning_rate is the cleanest
+remaining never-tried classifier hyperparam.
+
+## (b) WHY OVER RECENT FAILURES — DETECTOR-SIDE SATURATION + INVALID CITED FALLBACKS
+
+Eight consecutive detector-side iters now at saturation plateau under
+F0.5 × clean_fp_penalty: 4 dedupe keeps decelerating from +0.05/step at
+1.05 to +0.002 at 6.0, 1 GBM_THRESHOLD push 0.985→0.99 discarded, 2 FE
+attempts (centroid_cv_1s and boundary_mfcc_dd_var_200ms) noise-or-
+discard, 1 DSP MAX 2.0→2.5 noise +0.0008, 1 DSP SUM 5.0→5.5 productive
++0.0071, 1 DSP SUM 5.5→5.75 noise +0.0023, 1 DSP MAX 2.5→3.0 noise
++0.0014, 1 DSP_SUM_MIN 5.75→5.9 inside noise band joint with depth=6.
+The just-landed e371a5d GBM_MIN_SEP_S 5.5→6.0 was kept at +0.002 INSIDE
+the ±0.003 noise band — i.e., a borderline keep with no clean
+attribution.
+
+The cited (c)(2) menu in e371a5d named THREE noise-band fallbacks:
+(1) GBM_MIN_SEP_S 6.0→6.5 — but 6.0 just landed at noise-band edge and
+6.5 enters Korean cross_voice TP-pair density (cross_voice TPs spaced
+6-6.5s apart get the secondary emit killed; Korean turn-duration
+distribution has thin but nonzero mass in this band), so going further
+likely inverts the gain.
+(2) DSP_SUM_MIN 5.9→6.0 — explicitly warned in detector docstring as
+the real-splice cliff (weakest same_voice_edit splices firing 3+3+0=6
+get killed; asymmetric DOWNSIDE).
+(3) classifier l2_regularization "HistGBM default 0; never tried" — but
+this was a factual error in the cited menu: l2_regularization has been
+at 2.0 since 4b1575e (and was probed up to 3.0 at f1e91ec which
+discarded). l2 is already saturated; bumping further (3.0 already
+discarded) is not fresh.
+
+So all three cited noise-band fallbacks are invalid or weak. The
+nearest valid candidate is feature-engineering with a truly different
+mechanism (boundary spectral flux JUMP), but two prior FE attempts
+delivered noise-or-discard, AND any FE adds a third strike on a
+content axis that has shown saturation. Hyperparam axis is cleaner.
+
+PRIMARY MOTIVATION FOR learning_rate ESPECIALLY: the dominant residual
+clean-FP shape at GBM_THRESHOLD=0.985 + DSP gates 3.0/5.9 is by
+construction "confidently wrong" — predictions that survived the high
+threshold AND the DSP confirmation gates. learning_rate directly
+controls the per-tree contribution magnitude in the boosted ensemble.
+At lr=0.07 with max_iter=300, accumulated log-odds on confident
+predictions can reach extreme values (effectively "max_iter * lr * leaf
+magnitude" ≈ 21 * leaf_value). Lowering to 0.05 (max_iter*lr ≈ 15)
+softens the high-confidence tail without breaking discrimination on
+mid-confidence TPs.
+
+This is mechanistically distinct from l2_regularization (which shrinks
+each leaf's value via (sum_hess+λ)/(sum_hess+2λ)) — l2 acts per-leaf,
+lr acts per-tree-contribution. They compose: l2 protects edge-case
+small-hessian leaves; lr scales every tree's contribution uniformly.
+Under combined l2=2.0 AND lr=0.05, BOTH small-hessian leaves AND the
+overall ensemble extremes get smoothed.
+
+WHY 0.07 → 0.05 (not 0.06 or 0.04):
+
+- 0.06 is half-step; less informative (small signal-to-noise vs the
+  ±0.003 eval noise band). If 0.07→0.06 lands in noise we won't know
+  whether the lever moved.
+- 0.04 is aggressive (43% reduction); could under-fit at fixed
+  max_iter=300, regressing recall.
+- 0.05 is the standard sklearn lr probe magnitude (factor of 1.4
+  reduction); accumulated per-tree learning drops from 21 to 15, still
+  ample for fitting; calibration shift large enough to surface as
+  signal above noise.
+
+PENALTY LEVERAGE at current state: combined=0.126497 / F0.5=0.787811
+= penalty 0.1605, → clean_fp/min ≈ 5.23 (frontier shows 9.14 stale
+baseline; back-derived). ∂penalty/∂clean_fp at x=5.23 ≈ -0.026 per
+unit, ~7× F0.5 sensitivity per unit. Plausible 0.5 cf/min trim from
+lr smoothing → combined 0.135 (+7%). Optimistic 1.0 trim → combined
+0.147 (+16%). Pessimistic R 0.58 + flat clean_fp → combined 0.122
+(-3%). Bad case R 0.55 + clean_fp slightly up → combined 0.118 (-7%).
+Asymmetric mild upside, downside floor moderate.
+
+CRITICAL RISK: recall drop. Lower lr may underfit at fixed max_iter
+=300 if the ensemble was relying on aggressive late-tree contributions
+to distinguish marginal same_voice_edit splices. The "matching
+max_iter capacity bump" path would be 0.07→0.05 + max_iter→500, but
+that's a TWO-knob change and bad for clean attribution. Single-knob
+0.07→0.05 with max_iter held at 300 lets us cleanly attribute and
+follow up next iter with max_iter=500 if recall drops.
+
+WHY OVER ALTERNATIVES:
+
+- max_iter 300→500: bare capacity bump; 36657c6 already explored that
+  axis (300→500 listed in TOP-5 keeps but on OLD per-domain GM metric;
+  no clean read under new metric); without lr cut first, capacity bump
+  alone risks more aggressive overfit.
+- max_leaf_nodes 32→16: reverses prior productive d1be6c3 keep
+  (16→32); reduces capacity, but on a previously-tuned axis.
+- max_depth 6→7: bare doubling-down on a lever that just landed at
+  noise band; high-variance without OOF telemetry.
+- class_weight further (e.g., {0:1, 1:1, 2:3}): unstable axis — toggled
+  None ↔ {0:1,1:1,2:2} multiple times; one prior 2x bump landed at
+  +0.001 noise band. Saturated.
+- DSP_SUM_MIN 5.9→6.0 / GBM_MIN_SEP_S 6.0→6.5: cited cliff/saturation
+  failures above.
+- Feature engineering: third FE in a row would be third strike on
+  content axis with no fresh mechanism evidence.
+
+Compute: ~3min retrain (US-505b sha gate auto-fires); eval ~290s.
+Total iter time ~6 min, comparable to prior retrain iters.
+
+Smoke-verifiable: 1-line literal change `learning_rate=0.07` → `0.05`;
+make_pipeline() constructs cleanly; no contract change.
+
+## (c) IF THIS FAILS
+
+(1) Combined < 0.122 (regression beyond noise band) — lr cut hurt
+recall more than it trimmed clean FPs. Bracket [0.05, 0.07] now
+characterized. Next iter probe max_iter 300→500 with lr held at 0.05
+(compensates capacity loss; canonical pairing); OR revert to lr=0.07
+and probe max_iter 300→500 alone to test capacity-only direction. If
+recall drop is dominant, the canonical "lower lr + more iters" pairing
+is the textbook fix.
+
+(2) Combined ≈ 0.124-0.128 within ±0.003 noise — lr axis saturating
+or weakly productive. Next iter pivot to a fresh feature with truly
+different mechanism: boundary spectral flux JUMP magnitude (window-
+pair difference operator over ±50ms vs the variance-style mechanism of
+the two prior failed FE attempts). OR consider max_leaf_nodes 32→48 as
+fresh capacity probe.
+
+(3) Combined > 0.130 — lr cut productive on the dominant clean-FP
+shape. Next iter compound: lr 0.05→0.04 (continue descent) OR layer
+max_iter 300→500 to compensate any latent recall loss while preserving
+the calibration gain.
+
+## (d) Information gaps
+
+(1) OOF metrics delta from EVERY classifier retrain still NOT in
+CURRENT STATE — for a learning_rate move where the central diagnostic
+question is "did lr=0.05 lift OR drop same_voice_edit recall?", a
+one-line OOF emit by the retrain log would directly answer it. Without
+it I have to wait for combined alone, which under F0.5 × penalty
+confounds calibration shift with recall change.
+
+(2) Per-class clean_fp breakdown still NOT surfaced — at the ~7x
+penalty leverage point, knowing whether residual clean FPs are
+predominantly same_voice_edit-vs-cross_voice-vs-unknown directly
+informs whether lr smoothing or class-specific feature targets the
+right population.
+
+(3) Frontier text still doesn't surface DSP tunables (3 productive
+DSP keeps) or RETRAIN tunables (lr, l2, min_samples_leaf, max_depth,
+max_leaf_nodes, max_iter, class_weight) — only PRIMARY (3 axes) are
+in the frontier block. Visibility gap binding for retrain pivots.
+
+(4) Live clean_fp_per_min in CURRENT STATE shows stale 9.14
+(back-derived 5.23). Frontier `current` column blank.
+
+(5) Eval runtime per iter still not surfaced; retrain runtime not
+surfaced.
+
+(6) Notes file's claim that "l2_regularization HistGBM default 0;
+never tried" was factually wrong (set to 2.0 since 4b1575e). Suggests
+notes-on-classifier-state can drift; needing to grep git log every
+classifier-side iter to verify.
+
+## (e) Wrapper enhancements (30 consecutive iters with persistent gaps)
+
+(1) **OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE** — the
+single highest-payoff observability fix for classifier-side iters
+like this lr move. A one-line "OOF: same_voice_edit F1 X→Y, cross_voice
+F1 X→Y, no_splice F1 X→Y" emitted by train_classifier.py and surfaced
+in CURRENT STATE would directly distinguish "lr=0.05 helped same_voice
+recall" from "lr=0.05 broke calibration without recall gain" — the
+exact attribution question this iter is built around.
+
+(2) **TIGHTEN run_autoresearch.sh:1042 trigger regex** — same urgent
+fix as e371a5d (e)(1). The regex matches several ordinary English
+words bare. Phrase-anchor the matches; drop the bare q-word.
+
+(3) **PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE** — at the metric
+where penalty drag dominates, knowing per-class clean_fp directly
+informs class-specific hyperparam/feature pivots. ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+
+(4) **RETRAIN TUNABLE FRONTIER** — frontier text currently only shows
+PRIMARY tunables (GBM_THRESHOLD, GBM_MIN_SEP_S, ANALYSIS_STRIDE_S).
+Adding lr, l2, max_depth, max_leaf_nodes, min_samples_leaf, max_iter,
+class_weight surfaces what's actually been tried on the most
+expensive axis and prevents claude turns from misremembering classifier
+state (as happened to me with l2 in this iter's preparation).
+
+(5) **FORCE-EVAL SUBCOMMAND for the wrapper** — `./run_autoresearch.sh
+force_eval` reading HEAD, running preflight + retrain (sha gate) +
+evaluate.py exactly once. Lets operator unblock evaluator-stalled
+in-flight commits without claude inventing forcing-function no-op
+edits.
+
