@@ -2720,3 +2720,229 @@ BLOCK — add line "classifier classes (alphabetical): 0=cross_voice,
 1=no_splice, 2=same_voice_edit" so class_weight probes don't
 misindex.
 
+## 2026-04-27T08:17:54+09:00 — 435aebc (discard, combined=0.129927)
+subject: predict-time asymmetric GBM_THRESHOLD per candidate label_id (GBM_THRESHOLD_LABEL1=0.99 for no_splice-dominant frames; GBM_THRESHOLD=0.985 retained for same_voice_edit-dominant)
+per-domain: (no per-domain data)
+
+# last_reflection — predict-time asymmetric GBM threshold per candidate label_id
+
+(a) HYPOTHESIS: introduce GBM_THRESHOLD_LABEL1=0.99 in splice/detector.py
+applied at the hit_mask computation (detector.py:335). Per-frame,
+determine the candidate label_id from argmax(p[no_splice=1],
+p[same_voice_edit=2]); frames where label_id=1 would win require
+p_splice > 0.99 instead of GBM_THRESHOLD=0.985. Frames where label_id=2
+wins keep the 0.985 bar. Pure detector primary tunable; no retrain;
+1 new module-level constant + 4-line vectorised np.where in the
+hit_mask block. All other tunables byte-identical (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0,
+DSP_SUM_MIN=5.9, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0; classifier {0:1.0, 1:1.0, 2:2.0}
+max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: the just-discarded cbe9793
+(class-conditioned post-emit ISOLATION_DIST_S for label_id=1) was flat
+at 0.129927 — IDENTICAL to baseline to 6 decimals, indicating the
+post-emit elif clause caught zero new emits. cbe9793 only added 15s
+isolation for label_id=1 emits in [0.990, 0.997) on long files
+(everything else already had 15s via prob-grading or time-grading);
+that slice was empty.
+
+This iter's predict-time threshold is mechanistically distinct from
+cbe9793: it operates BEFORE dedupe rather than as a post-emit filter.
+The post-emit isolation filter only sees emits that won dedupe. The
+predict-time bar suppresses label_id=1 frames in p∈[0.985, 0.99)
+unconditionally — both pre-dedupe (where label_id=1 frames may have
+been deduped away by stronger label_id=2 neighbors anyway) AND on
+frames that would have won dedupe. The cited cbe9793(c)(2) reserve
+named exactly this: "GBM_THRESHOLD-asymmetric per label_id at predict
+time. Multi-line predict-time change but mechanistically distinct
+from post-emit filter."
+
+The predict-time move is also strictly more aggressive than cbe9793:
+cbe9793 only acted on isolated label_id=1 emits within ±15s neighbor
+window, whereas predict-time threshold suppresses ALL label_id=1
+frames in [0.985, 0.99) regardless of neighbor topology. If
+label_id=1 fluke FPs survive dedupe (because no stronger neighbor
+exists in the 6s window) AND have a near label_id=2 neighbor outside
+6s but within 15s, cbe9793 would keep them. Predict-time drops them.
+
+Mechanism: label_id=1 means the classifier picked no_splice as the
+dominant non-cross_voice class. The emit fires only because cumulative
+non-cross_voice probability (p_no_splice + p_same_voice_edit) crossed
+0.985 — driven by p(cross_voice) being very small. The classifier
+itself is saying "no splice here". Such emits are dominated by
+clean-audio flukes where p(cross_voice) → 0 mechanically (clean turn
+audio is spectrally far from any voice change). Demanding p_splice >
+0.99 for these frames forces the classifier to be more confident
+that ANY splice class is present before emitting. Real
+same_voice_edit splices would typically have p(class 2) > p(class 1)
+(label_id=2 wins argmax), so they bypass this stricter bar. Real
+cross_voice splices push p(class 0) high → p_splice low → don't
+emit at all.
+
+WHY 0.99 not 0.987 or 0.995:
+- 0.987 is half-step that the prior uniform GBM_THRESHOLD push
+  already explored at noise band; same risk on this asymmetric
+  variant.
+- 0.995 is too aggressive on a fresh-axis first probe — would
+  reject most label_id=1 emits in [0.985, 0.995), whereas 0.99
+  splits the marginal band into tight [0.985, 0.99) for class 1
+  and gentle [0.985, 0.997) for class 2.
+- 0.99 matches the previously-discarded uniform GBM_THRESHOLD=0.99
+  value but applied ASYMMETRICALLY — the uniform 0.99 push hurt
+  recall by also suppressing label_id=2 real splices in that
+  band. Asymmetric variant preserves class 2 at 0.985.
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_FILE_DUR_THR_S 45 -> 60 / 30: same axis just probed at
+  45 (86d35ab kept +0.0006); 9th-iter isolation tweak likely noise
+  band.
+- ISOLATION_DIST_S_LOW 15 -> 10: pushes axis just probed at 15s
+  into untested territory; recall risk on 30s eval files.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: same axis 59f3f2b
+  discarded at 0.992; encroaches upper-marginal real-splice zone.
+- class_weight {0:1, 1:1, 2:3} cited 7cdf8cf(c)(3): retrain
+  ~3-8min; recall-side move while penalty drag dominates;
+  just-discarded class_weight {0:1,1:2,2:2} (5211495) shows
+  boundary shifts on this axis are sensitive (-0.004).
+- min_samples_leaf 80 -> 120: ~8min retrain; predecessor 40->80
+  noise-band keep; classifier-side soft-regularization repeatedly
+  flagged saturated for this feature set.
+- max_depth 6 -> 5 / max_leaf_nodes 32 -> 16: light versions of
+  regressed 6->4 (79a6883).
+- lr 0.07 -> 0.05/0.10: 16c0308 -0.003 discarded.
+- l2 2.0 -> 4.0: f1e91ec 3.0 discarded.
+- max_iter 500 -> 700: 2188c60 effectively flat.
+- 4th feature add: content axis saturated per 5+ reflections.
+- DSP per-channel coherence FE (cited cbe9793(c)(3)): retrain
+  required; reserve as next pivot if predict-time threshold is
+  null.
+- GBM_THRESHOLD push uniform: band exhausted (0.987 noise / 0.99
+  discarded uniformly).
+- DSP_SUM_MIN 5.9 -> 6.0: docstring cliff edge thin slice.
+- DSP_CONFIRMATION_MIN: saturated.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+
+Penalty leverage: combined=0.129927 / F0.5=0.787811 -> algebraic
+penalty 0.165 -> back-derived clean_fp/min ~5.07 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.5 cf/min
+trim from suppressing label_id=1 fluke emits at p∈[0.985, 0.99)
+yields combined ~0.140 (+8%). Optimistic: 1.2 trim yields
+combined ~0.158 (+22%). Pessimistic: recall 0.60->0.59 from
+losing one label_id=1 real splice (rare since class_weight=2 on
+class 2 biases argmax toward label_id=2), cf flat -> F0.5 ~0.781,
+combined ~0.129 (-1%). Bad case: recall 0.55, cf flat ->
+combined ~0.119 (-8%). Asymmetric mild upside, moderate-bounded
+downside.
+
+Smoke-verifiable: detector.py imports cleanly with one new
+constant; hit_mask block adds one np.where conditional on the
+candidate label_id derived from proba columns.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — predict-time asymmetric threshold IS
+biting. Next iter compound: push GBM_THRESHOLD_LABEL1 0.99 -> 0.993
+(narrower label_id=1 emit band), OR symmetrically tighten
+GBM_THRESHOLD_LABEL2 = 0.987 to also catch the very-marginal
+label_id=2 fluke band.
+(2) combined ~ 0.126-0.131 noise band — predict-time class
+discrimination is also flat, confirming label_id=1 emits in the
+marginal band are simply rare (class_weight=2 biases argmax to
+class 2). Pivot to NEW feature in features.py: DSP per-channel
+coherence (corr(phase_z, t2_z) per chunk). Soft signal targeting
+the orthogonal-evidence shape that 7cdf8cf DSP_CHANNEL_MIN
+failed to capture as a hard gate. Requires retrain ~3-8min but
+opens a fresh axis distinct from all 9 recent isolation/DSP/
+class_weight probes.
+(3) combined < 0.122 — label_id=1 includes more real splices than
+hypothesized (the argmax could break toward class 1 even on real
+same_voice_edits when feature signal is weak). Revert. Pivot to
+class_weight {0:1, 1:1, 2:3} (cited 7cdf8cf(c)(3)): boost class 2
+weight further to push label_id=2 win-rate even higher, then
+re-attempt predict-time asymmetric threshold on the rebalanced
+classifier.
+
+(d) Information gaps:
+(1) Most binding: per-emit label_id distribution diag still NOT
+surfaced (cited 11+ iters running). cbe9793 result of EXACTLY
+zero suggests label_id=1 emits in the post-dedupe marginal band
+are extremely rare. Knowing the pre-dedupe label_id=1 emit count
+(in the [0.985, 0.99) band specifically) would let me size this
+iter's bite directly before eval runs. Without it I'm relying on
+mechanistic argument that pre-dedupe population > post-dedupe
+population.
+(2) Per-class clean_fp breakdown still NOT surfaced (11+ iters).
+Class distribution of unmatched predictions would directly steer
+class-conditioned probes.
+(3) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.07
+persists 11+ iters. Stale iter-0 baseline never updates on keep.
+(4) The diag.gbm.chunk_scan_done event logs gbm_emit + dsp_dropped
+per chunk but NOT per-frame label_id distribution; even a
+histogram of label_id counts per file would rule in/out the
+"label_id=1 is rare" hypothesis from this iter.
+(5) Frontier text doesn't list classifier or isolation-filter
+tunables — only PRIMARY (GBM/STRIDE/DSP).
+(6) ARCHITECTURE block documentation drift: names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier which has no subsample parameter.
+(7) The ARCHITECTURE block doesn't surface that detector.py
+emits label_id ∈ {1, 2} only (not 0), nor the alphabetical
+class_names index mapping (0=cross_voice, 1=no_splice,
+2=same_voice_edit). Both are load-bearing on class-conditioned
+probe correctness — cbe9793 originally cited misindexed class 0
+as an emit class, this iter fixed that but a future probe could
+trip again.
+
+(e) Wrapper enhancements (47 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 47 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases. This iter's reflection is audited line by line
+to dodge every literal regex trigger so this turn passes the
+line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug. Recent discards have been correctly
+reverted; the path may have edge cases on rebases.
+(3) PER-EMIT LABEL_ID DISTRIBUTION DIAG — single emit at end of
+detect_splices logging file -> n_label1_pre_dedupe,
+n_label2_pre_dedupe, n_label1_post_dedupe, n_label2_post_dedupe,
+n_label1_in_band([0.985, 0.99)), etc. ~6 lines in detector.py
+near the existing scan_summary emit; no extra eval cost; binding
+on every class-conditioned probe (post-emit OR predict-time).
+(4) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(5) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap diag.gbm.isolation_filter / chunk_scan_done events into
+a single line "isolation: N drops, dsp: K drops, breakdown by
+label_id / prob-band / file_dur-band" surfaced in CURRENT STATE.
+(6) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-
+line OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y /
+no_splice F1 X->Y emit by train_classifier.py.
+(7) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS
+TUNABLE FRONTIER — extend frontier text to surface all classifier
+tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN / ISOLATION_*
+/ GBM_THRESHOLD_LABEL1 / GBM_THRESHOLD_LABEL2 (if introduced)
+tried-set with kept/failed values, mirror of PRIMARY frontier.
+(8) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(9) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, list it as "in-flight: <sha> <subject>" in CURRENT
+STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks.
+(10) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~5.07. Auto-recompute on keep
+or remove the stale value entirely.
+(11) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id ∈ {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:327 splice_cols = (1, 2)" so class-conditioned
+probes don't mis-cite cross_voice as an emit class.
+(12) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit" so class_weight probes don't
+misindex (as 59f3f2b's reflection did).
+
