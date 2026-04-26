@@ -70,6 +70,19 @@ DSP_CONFIRMATION_MIN = 3.0
 # same_voice_edit splices (firing 3+3+0=6) still survive.
 DSP_SUM_MIN = 5.9
 
+# Post-emit isolation filter: drop a selected emit when its probability is
+# barely above GBM_THRESHOLD AND no other selected emit in the same file
+# sits within ISOLATION_DIST_S. Real splices typically yield strong dense-
+# scan clusters that dedupe to high-probability survivors near 1.0; fluke
+# false alarms often manifest as a single barely-above-threshold candidate
+# with no neighbor. The marginal band [GBM_THRESHOLD, ISOLATION_PROB_CEIL)
+# is the [+0, +0.007] post-dedupe peak window. ISOLATION_DIST_S=30s
+# captures "alone in file" for short eval files (30-60s) and "spread
+# apart" for longer ones, while preserving mid-file dense-multi-splice
+# emits. Applied AFTER greedy dedupe.
+ISOLATION_PROB_CEIL = 0.992
+ISOLATION_DIST_S = 30.0
+
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
     "classifier", "fp_classifier.joblib",
@@ -351,6 +364,27 @@ def _gbm_detect_splices(
         if all(abs(emit[0] - s[0]) >= GBM_MIN_SEP_S for s in selected):
             selected.append(emit)
     selected.sort(key=lambda e: e[0])
+
+    # Post-emit isolation filter — see ISOLATION_PROB_CEIL / ISOLATION_DIST_S.
+    if len(selected) >= 1:
+        times = [e[0] for e in selected]
+        kept: list[tuple[float, int, float, list[float]]] = []
+        for i, emit in enumerate(selected):
+            if emit[2] >= ISOLATION_PROB_CEIL:
+                kept.append(emit)
+                continue
+            if len(times) == 1:
+                nearest = float("inf")
+            else:
+                nearest = min(abs(times[i] - times[j])
+                              for j in range(len(times)) if j != i)
+            if nearest < ISOLATION_DIST_S:
+                kept.append(emit)
+        iso_dropped = len(selected) - len(kept)
+        if iso_dropped:
+            get_logger("detector.gbm").emit("INFO", "diag.gbm.isolation_filter",
+                  before=len(selected), after=len(kept), dropped=iso_dropped)
+        selected = kept
 
     _DETECT_META[key] = [
         {

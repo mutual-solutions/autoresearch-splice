@@ -1,6 +1,6 @@
 {
   "version": "korean_iter1_v1",
-  "trained_at": "2026-04-26T13:54:36Z",
+  "trained_at": "2026-04-26T18:38:17Z",
   "n_train_files": 2052,
   "n_train_samples": 67947,
   "classes_": [
@@ -107,7 +107,7 @@
     "max_bins": 255,
     "max_depth": 6,
     "max_features": 1.0,
-    "max_iter": 300,
+    "max_iter": 500,
     "max_leaf_nodes": 32,
     "min_samples_leaf": 40,
     "monotonic_cst": null,
@@ -171,7 +171,7 @@
     }
   ],
   "features_py_sha": "ccbf32f0edbf4c226a37d68d6f8bcbec9c5a5b75",
-  "train_classifier_py_sha": "6d015329cf36954b8786f1577326de2c3c846a14",
+  "train_classifier_py_sha": "b6a90163836957a58d53746d1fbe50e777ef9459",
   "voice_holdout": {
     "test": [],
     "eval": [],
