@@ -2959,3 +2959,148 @@ per-domain: (no per-domain data)
     cost ratios.
 [auto] (no SHAP data for either 2d6069d or c1307ce)
 
+## 2026-04-26T11:52:02+09:00 — f5a7afa (keep, combined=0.692371)
+subject: ANALYSIS_STRIDE_S 0.07 -> 0.065 (continue cited descent on still-accelerating STRIDE axis after c1307ce landed +0.063, the largest single-iter gain ever) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from current best keep c1307ce(c)(3): retest 0.06 via operator-owned sentinel is highest-payoff but out of autoresearch loop scope; wrapper-friendly continuation is fresh micro-step downward. STRIDE descent is ACCELERATING not diminishing: 0.12 -> 0.10 gave +0.012; 0.10 -> 0.08 gave +0.027; 0.08 -> 0.07 gave +0.063 (largest of entire iter1 run, c1307ce combined=0.657046). Bisection-completion-within-bracket-before-pivoting rule from 12 consecutive keeps says continue productive axis until saturation/regression. STRIDE has neither -- gain sequence is *increasing*. Both threshold-style primaries (GBM_THRESHOLD saturated at 0.5546 across [0.971, 0.972], GBM_MIN_SEP_S saturated at 0.537 across [1.0, 1.05]) remain saturated on contract-fixed classifier; STRIDE is only axis with active descent momentum. 0.065 is fresh on frontier (set: 0.06x3 legacy keeps + 0.07x1 + 0.08x1 + 0.10x2 = 7 tried; 0.065 has never been tried on either classifier). Why -0.005 step (0.065 not 0.06): 0.06 wrapper-blocked (legacy keep on pre-contract-fix classifier; frontier guard would block as repeat, recovery is operator-owned retest sentinel). 0.065 is smallest fresh step downward, sits between current 0.07 (0.657 best) and wrapper-blocked legacy 0.06. Conservative -0.005 (half prior -0.01) preserves bisection optionality if cliff exists in [0.06, 0.07] band -- if 0.065 -> 0.665+ descent confirmed and operator can retest 0.06 with rock-solid evidence; if 0.065 saturates near 0.657 narrow band exhausted and pivot to RETRAIN; if regresses, bracket [0.065, 0.07] for finer bisection upward. Mechanism: STRIDE controls dense-scan candidate grid (line 268: t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)). Accelerating gain pattern (+0.012 -> +0.027 -> +0.063) suggests Korean voice-switch boundary distribution has heavy tail of TPs with sub-100ms peak rolloff; each finer grid step catches more of them than last. At STRIDE=0.07, candidates near GT boundary at 10.04s are 10.01/10.08 -- closest sample (10.01) is 30ms off-peak. At STRIDE=0.065 candidates become 10.01/10.075 -- same closest sample but second sample is 35ms vs 40ms off-peak in other direction, accessing different feature window. If TPs cluster with p_splice peaks rolling off below 0.972 within +-32ms of true peak, 0.065 catches them where 0.07 missed. Korean phoneme transition bands span exactly this regime. Compute cost: STRIDE 0.07 -> 0.065 is +8% candidate evaluations on top of prior +71% (so ~85% over original 0.12 baseline); c1307ce completed eval at STRIDE=0.07 within 300s budget so +8% on most recent timing should still clear though margin thinning further. Smaller -0.005 step deliberate compute-budget conservatism -- if we hit cliff at 0.065, less wasted compute than at 0.06. Why not pivot to RETRAIN now: STRIDE just delivered BIGGEST single-iter gain of entire iter1 run (+0.063), gain sequence accelerating not decelerating; pivoting away from accelerating axis is textbook violation of bisection-completion rule. Retrain (~3min) is most expensive lever; reserving until STRIDE actually saturates ensures eventual retrain decision rests on rock-solid evidence all three primary axes truly exhausted. Why not 0.06 directly: wrapper-blocked. Smoke-verified: ANALYSIS_STRIDE_S=0.065 confirmed via import; other tunables stable (GBM_THRESHOLD=0.972 GBM_MIN_SEP_S=1.05 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: ANALYSIS_STRIDE_S 0.07 → 0.065 (continue cited descent on still-accelerating STRIDE axis after c1307ce landed +0.063, the largest single-iter gain ever)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop ANALYSIS_STRIDE_S
+    from 0.07 to 0.065. No retrain, no feature change, classifier
+    byte-identical. Other primary tunables stable: GBM_THRESHOLD=0.972,
+    GBM_MIN_SEP_S=1.05, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    FEATURE_NAMES stable at 80. 0.065 is fresh on frontier (frontier set:
+    "7 tried (kept: 0.06, 0.07, 0.08, 0.10; failed: -)" → 0.065 has never
+    been tried).
+
+(b) WHY over recent failures. c1307ce just landed combined=0.657046 going
+    0.08 → 0.07 — a +0.063 gain, BIGGER than the prior +0.027 gain at
+    0.10 → 0.08, which itself was bigger than the +0.012 gain at
+    0.12 → 0.10. STRIDE descent is not just productive — it is still
+    accelerating. Bisection-completion-within-bracket-before-pivoting rule
+    from 12 consecutive keeps says continue productive axis until
+    saturation/regression. STRIDE has neither. Both threshold-style
+    primaries (GBM_THRESHOLD saturated at 0.5546 across [0.971, 0.972],
+    GBM_MIN_SEP_S saturated at 0.537 across [1.0, 1.05]) remain saturated
+    on the contract-fixed classifier; STRIDE is the only axis with active
+    descent momentum, and the momentum is *increasing*.
+
+    Why -0.005 step (0.065 not 0.06): 0.06 is wrapper-blocked (legacy keep
+    on pre-contract-fix classifier; frontier guard would block as repeat,
+    recovery requires operator-owned retest sentinel). 0.065 is the
+    smallest fresh step downward, sitting exactly between current 0.07
+    (0.657 best) and the wrapper-blocked legacy-kept 0.06. Conservative
+    -0.005 step (half the prior -0.01) preserves bisection optionality if
+    a saturation cliff exists in [0.06, 0.07] — if 0.065 lands at 0.665+
+    descent confirmed and operator can retest 0.06 with rock-solid
+    evidence; if 0.065 saturates near 0.657, narrow band exhausted and
+    pivot to RETRAIN; if regresses, bracket [0.065, 0.07] for finer
+    bisection upward.
+
+    Compute cost: STRIDE 0.07 → 0.065 is +8% candidate evaluations on top
+    of prior +71% (so ~85% over original 0.12 baseline). c1307ce
+    completed eval at STRIDE=0.07 within the 300s budget (it landed as a
+    keep, so it cleared); +8% on the most recent timing should still
+    clear, though margin is thinning further. Smaller -0.005 step (vs
+    -0.01) is deliberate compute-budget conservatism — if we hit the
+    cliff at 0.065, less wasted compute than at 0.06.
+
+    Mechanism: STRIDE controls the dense-scan candidate grid (line 268:
+    `t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)`). The
+    accelerating gain pattern (+0.012 → +0.027 → +0.063) suggests the
+    Korean voice-switch boundary distribution has a heavy tail of TPs
+    with sub-100ms peak rolloff; each finer grid step catches more of
+    them than the last. At STRIDE=0.07, candidates near a GT boundary at
+    10.04s are 10.01/10.08 — closest sample (10.01) is 30ms off-peak. At
+    STRIDE=0.065, candidates become 10.01/10.075 — same closest sample
+    but the second sample is 35ms vs 40ms off-peak in the other
+    direction, accessing a different feature window. If TPs cluster with
+    p_splice peaks rolling off below 0.972 within ±32ms of the true
+    peak, 0.065 catches them where 0.07 missed. Korean phoneme
+    transition bands span exactly this regime.
+
+    Why not pivot to RETRAIN now: STRIDE just delivered the BIGGEST
+    single-iter gain of the entire iter1 run (+0.063), and the gain
+    sequence is accelerating, not decelerating. Pivoting away from an
+    accelerating axis is the textbook violation of bisection-completion
+    rule. Retrain (~3min) is the most expensive lever; reserving it
+    until STRIDE *actually* saturates ensures the eventual retrain
+    decision rests on rock-solid evidence that all three primary axes
+    are truly exhausted.
+
+    Why not bigger jump (0.07 → 0.06 directly): 0.06 is wrapper-blocked.
+    The operator-owned retest sentinel for 0.06 is now the
+    highest-expected-payoff move per c1307ce(c)(3) but is out of the
+    autoresearch loop scope. 0.065 is the wrapper-friendly continuation
+    that produces evidence to inform the operator's retest decision: if
+    0.065 lands at 0.665+, the operator should retest 0.06 with high
+    confidence; if 0.065 saturates near 0.657, the operator should NOT
+    burn a retest cycle on 0.06.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.657 — denser scan
+    surfaces marginal off-grid candidates that fail dedupe (more
+    candidates → more chance of intra-1.05s collisions → worse outcome)
+    OR opens FP candidates the 0.07 grid never saw OR runtime exceeds
+    300s (informative cliff signal — would mean operator-owned 0.06
+    retest is also infeasible without budget relief); bisect upward to
+    STRIDE=0.0675 next iter for finer evidence on the [0.065, 0.07]
+    band, OR pivot directly to RETRAIN axis (HistGBM
+    min_samples_leaf 20→40, fcb8f4e proved productive on legacy and is
+    genuinely untouched on iter1 contract-fixed classifier).
+    (2) Combined matches 0.657 exactly — STRIDE descent saturated in
+    [0.065, 0.07] band; ALL three primary tunables now exhausted on
+    iter1; pivot immediately to RETRAIN axis next iter
+    (min_samples_leaf 20→40 most promising). (3) Combined exceeds 0.665
+    — STRIDE descent confirmed across four contract-fixed values with
+    continued productivity at finer grain; next iter the operator-owned
+    retest sentinel for legacy-kept 0.06 becomes the highest-expected-
+    payoff move (cited rule from c1307ce(c)(3)), which is out of
+    autoresearch loop scope; the wrapper-friendly continuation if
+    operator declines retest is STRIDE 0.065 → 0.06 attempted via fresh
+    classifier (post-RETRAIN — different classifier_sha, frontier guard
+    re-keys).
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has not
+    captured it yet)". 13 keeps in a row tuning toward Korean recall by
+    mechanism, still cannot verify singing/english are not silently
+    regressing under aggregate gain. The +0.063 jump at 0.08→0.07 is
+    suspiciously huge for a pure recall-gating play; something deeper
+    is happening (could be english/singing also gained, could be
+    threshold-grid alignment, could be mid-aggregate rebalancing).
+    Without per-domain visibility I am flying blind on attribution.
+    Eval runtime per iteration is also still not surfaced — would tell
+    me how close 0.07 ran to the 300s cliff before committing 0.065,
+    and whether 0.06 retest via sentinel is even compute-feasible.
+    Frontier text shows "ANALYSIS_STRIDE_S: 7 tried (kept: 0.06, 0.07,
+    0.08, 0.10; failed: -)" — same ambiguity as before where named
+    keeps total fewer than `tried` count; manual frontier inspection
+    needed to confirm 0.065 is genuinely fresh (the 7 tries are
+    presumably 0.06×3 + 0.07×1 + 0.08×1 + 0.10×2).
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks (now 12
+    consecutive keeps with these gaps unfilled):
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 12 keeps, still missing. Even three keys
+    `combined_korean / combined_english / combined_singing` would unlock
+    per-axis targeting and let me catch silent regressions during
+    Korean-recall tuning. The non-iter1 baseline_metrics.json already
+    captures this; iter1 writer evidently doesn't — likely a one-line
+    schema hookup the operator could fix in <10min. The +0.063 jump at
+    c1307ce was huge enough that I genuinely cannot tell if it was
+    Korean recall finally crossing a threshold or something else
+    re-balanced — direct observation would clarify a critical decision
+    point.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should
+    carry a tag (e.g., `classifier_sha=<8>`) so legacy-kept values
+    (ANALYSIS_STRIDE_S 0.06, GBM_THRESHOLD 0.97) can be distinguished
+    from same-value retries on the current contract-fixed classifier.
+    (3) EVAL RUNTIME PER ITERATION in CURRENT STATE: a single line like
+    "last_eval_seconds: 187 (62% of 300s budget)" would let me
+    confidently choose finer STRIDE values without burning an iteration
+    on a runtime-cliff discard. With c1307ce running at +71% over
+    baseline and +0.063 of room still on the table, this is the most
+    consequential gap right now.
+[auto] (no SHAP data for either c1307ce or f5a7afa)
+
