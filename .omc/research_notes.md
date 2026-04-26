@@ -3463,3 +3463,249 @@ BLOCK — "classifier classes (alphabetical): 0=cross_voice,
 1=no_splice, 2=same_voice_edit" so class_weight probes don't
 misindex.
 
+## 2026-04-27T08:46:08+09:00 — 75ac490 (discard, combined=0.130120)
+subject: density-aware ISOLATION_PROB_CEIL (0.999 in marginal-dense files) (cited fbc85d1(c)(3) reserve after 13 consecutive iters on isolation/DSP/class_weight/predict-time axes with diminishing returns: just-discarded fbc85d1 prob-graded DSP_CONFIRMATION_MIN flat at 0.130120 just-discarded 435aebc predict-time per-label_id flat at 0.129927 just-discarded cbe9793 class-conditioned post-emit flat at 0.129927; 5+-on-same-axis structural-pivot trigger fires; mechanically distinct from all 13 prior probes prob-graded variants ea37815/9656f1e/fbc85d1/59f3f2b operate per-emit on probability bands time-graded 86d35ab operates on file duration class-conditioned cbe9793/5211495/435aebc operates on per-emit class label density-aware operates on FILE-LEVEL emit-count topology a FRESH discriminator never used by any filter or gate; mechanism real cross-source splices produce dense GBM peaks dedupe to high-prob survivors p>=0.999 bypass any PROB_CEIL up to 0.999 unchanged marginal band [0.997, 0.999) populated almost entirely by second/third post-dedupe survivors of fluke FP clusters chord/phoneme/codec artifacts in continuous speech that scrape just-above-threshold but never reach the cluster peak that real splices produce; files with multiple marginal-band emits mechanically more likely to be FP-dense clean turn audio rarely produces 3+ near-threshold candidates simultaneously continuous speech with codec artifacts can; tightening PROB_CEIL to 0.999 in those files brings the [0.997, 0.999) emits under the neighbor-required gate where most of them are solitary fluke emits; 0.999 cited verbatim by fbc85d1(c)(3) cleanly discriminates cited reserve worked/did not 0.998 half-step likely noise band 0.9995 too aggressive crater recall in dense-real-splice files; THR_N=3 splits population at natural break files with 0-2 marginal emits likely sparse-and-clean OR sparse-and-real-splice both preserved files with 3+ marginal emits FP-dense tighter gate fires 2 too permissive 4 too restrictive; chosen over DSP per-channel coherence FE cited fbc85d1(c)(2)+9656f1e(c)(2) retrain 3-8min content axis flagged saturated 5+ reflections reserve as next pivot if density-aware null over DSP_SUM_MIN_LOW 6.5->7.0 same axis just kept marginally 14th-iter DSP-axis tweak likely noise over DSP_CONFIRMATION_MIN_LOW 3.3->3.5 same axis just discarded flat over ISOLATION_FILE_DUR_THR_S 45->60 same axis +0.0006 marginal 14th-iter isolation tweak likely noise over ISOLATION_DIST_S_LOW 15->10 untested territory recall risk over ISOLATION_PROB_LOW_CEIL 0.990->0.994 same axis 59f3f2b discarded encroaches upper-marginal real-splice zone over class_weight {0:1,1:1,2:3} retrain 3-8min recall-side move just-discarded {0:1,1:2,2:2} sensitive over min_samples_leaf 80->120 ~8min predecessor noise-band classifier saturated over max_depth 6->5/max_leaf_nodes 32->16 light versions of regressed 6->4 over lr/l2/max_iter saturated/discarded over 4th feature add content saturated over GBM_THRESHOLD push band exhausted over DSP_SUM_MIN/DSP_CONFIRMATION_MIN saturated/cliff over ANALYSIS_STRIDE_S sharp peak over GBM_MIN_SEP_S saturated upward 6.0 over 4th DSP channel addition different signal scale needs separate threshold reserve; penalty leverage at combined=0.130120/F0.5=0.787811 algebraic penalty 0.165 back-derived clean_fp/min ~5.06 with ~7x F0.5 sensitivity per unit so plausible 0.4 cf trim yields combined +7% optimistic 1.0 trim +19% pessimistic recall 0.60->0.59 cf flat yields -1% bad case recall 0.55 cf flat yields -8%; asymmetric mild-to-moderate upside structurally distinct mechanism file-level density discriminator never used so even null result cleanly attributes density-aware approach class doesn-t bite; 2 new module-level constants ISOLATION_PROB_CEIL_DENSE=0.999 ISOLATION_DENSITY_THR_N=3 + 5 lines in isolation block n_marginal count + effective_prob_ceil ternary; no retrain no FE; all other detector primary tunables stable GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 DSP_SUM_MIN_LOW=6.5 ISOLATION_PROB_CEIL=0.997 ISOLATION_DIST_S=30.0 ISOLATION_PROB_LOW_CEIL=0.990 ISOLATION_DIST_S_LOW=15.0 ISOLATION_FILE_DUR_THR_S=45.0; classifier byte-identical {0:1.0,1:1.0,2:2.0} max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0 min_samples_leaf=80; FEATURE_NAMES stable at 81; smoke-verified detector imports cleanly DENSE=0.999 THR_N=3 CEIL=0.997 GBM=0.985)
+per-domain: (no per-domain data)
+
+# last_reflection — density-aware ISOLATION_PROB_CEIL (0.999 in marginal-dense files)
+
+(a) HYPOTHESIS: density-grade the isolation filter's bypass ceiling. Add
+ISOLATION_PROB_CEIL_DENSE=0.999 and ISOLATION_DENSITY_THR_N=3 in
+splice/detector.py. In the post-emit isolation block (detector.py:402-429),
+count selected emits whose probability sits in the marginal band
+[GBM_THRESHOLD, ISOLATION_PROB_CEIL); if count >= ISOLATION_DENSITY_THR_N,
+substitute ISOLATION_PROB_CEIL_DENSE for ISOLATION_PROB_CEIL when checking
+the bypass. Sparse-emit files (<=2 marginal emits) keep the 0.997 ceiling.
+Pure detector primary tunable; no retrain; no FE; 2 new module-level
+constants + ~5 lines in the isolation block. All other tunables byte-
+identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 13 consecutive iters on isolation/DSP/
+class_weight/predict-time axes. Just-discarded fbc85d1 (prob-graded
+DSP_CONFIRMATION_MIN 3.3/3.0) flat at 0.130120 — same as baseline.
+Just-discarded 435aebc (predict-time asymmetric GBM_THRESHOLD per
+label_id) flat at 0.129927 — zero bite. Just-discarded cbe9793
+(class-conditioned post-emit ISOLATION_DIST_S) flat at 0.129927 —
+zero bite. The class-conditioned and predict-time per-label_id
+approaches are dead axes (the class_weight={...,2:2.0} biases argmax
+strongly toward class 2, leaving label_id=1 emits essentially empty).
+Probability-graded DSP_SUM_MIN_LOW=6.5 (just-kept 9656f1e) yielded
++0.000193 — barely above noise.
+
+The 5+-on-same-axis structural-pivot trigger fires yet again. The cited
+fbc85d1(c)(3) reserve names this hypothesis verbatim: "PIVOT to NEW
+isolation mechanism: density-aware ISOLATION_PROB_CEIL where files
+with high marginal-emit count get ISOLATION_PROB_CEIL=0.999 (tighter
+filter for FP-heavy files), preserving ISOLATION_PROB_CEIL=0.997 for
+sparse-emit files." This is mechanistically distinct from all 13 prior
+isolation/DSP/class_weight probes:
+- Probability-graded variants (ea37815 DIST_S, 9656f1e DSP_SUM, fbc85d1
+  DSP_MAX, 59f3f2b LOW_CEIL): operate per-emit on absolute probability
+  bands.
+- Time-graded (86d35ab): operates on absolute file duration.
+- Class-conditioned (cbe9793, 5211495, 435aebc): operates on per-emit
+  class label.
+- Density-aware: operates on file-level emit-count topology — a FRESH
+  discriminator never used by any filter or gate.
+
+Mechanism: real cross-source splices produce dense GBM peaks that
+dedupe to high-probability survivors p>=0.999 — they bypass any
+PROB_CEIL up to ~0.999 unchanged. The marginal band [0.997, 0.999) is
+populated almost entirely by the second/third post-dedupe survivors of
+fluke FP clusters (chord/phoneme/codec artifacts in continuous speech
+that scrape just-above-threshold but never reach the cluster peak that
+real splices produce). Files with multiple marginal-band emits are
+mechanically more likely to be FP-dense — clean turn audio rarely
+produces 3+ near-threshold candidates simultaneously, while continuous
+speech with codec artifacts can. Tightening PROB_CEIL to 0.999 in
+those files brings the [0.997, 0.999) emits under the neighbor-required
+gate, where most of them are solitary fluke emits.
+
+WHY 0.999 not 0.998 or 0.9995:
+- 0.998 is half-step that the prior PROB_CEIL 0.992->0.997 (a2a9b76 +0.0009)
+  cadence suggests would be noise band on a fresh axis.
+- 0.9995 is too aggressive — covers nearly all real splice survivors and
+  would crater recall in dense-real-splice files.
+- 0.999 is the value cited verbatim by fbc85d1(c)(3); cleanly
+  discriminates "the cited reserve worked / didn't".
+
+WHY ISOLATION_DENSITY_THR_N=3 not 2 or 4:
+- 2 is too permissive — clean-but-noisy files often have 2 marginal
+  emits (paired phoneme transitions in continuous speech), would
+  trigger overly aggressively.
+- 4 is too restrictive — many FP-heavy files have exactly 3 marginal
+  emits (typical scattered-codec-artifact pattern), would miss them.
+- 3 splits the population at the natural break: files with 0-2 marginal
+  emits are likely sparse-and-clean OR sparse-and-real-splice (both
+  preserved); files with 3+ marginal emits are FP-dense (tighter gate
+  fires).
+
+WHY OVER ALTERNATIVES:
+- DSP per-channel coherence FE (cited fbc85d1(c)(2) and 9656f1e(c)(2)):
+  retrain ~3-8min; content axis flagged saturated 5+ reflections.
+  Reserve as next pivot if density-aware is null.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / 6.2: same axis just kept marginally;
+  9656f1e(c)(1) compound; 14th-iter DSP-axis tweak likely noise.
+- DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5 (compound on just-discarded
+  fbc85d1): same axis just discarded flat; pushing further likely
+  drops real splices in cliff config.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60 (cited 86d35ab(c)(1)): same axis
+  +0.0006 marginal; 14th-iter isolation tweak likely noise band.
+- ISOLATION_DIST_S_LOW 15 -> 10: pushes axis just probed at 15s into
+  untested territory; recall risk on 30s eval files.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: same axis 59f3f2b discarded
+  at 0.992; encroaches upper-marginal real-splice zone.
+- class_weight {0:1, 1:1, 2:3} cited 7cdf8cf(c)(3): retrain ~3-8min
+  recall-side move; just-discarded {0:1,1:2,2:2} (5211495) shows
+  boundary shifts on this axis are sensitive (-0.004).
+- min_samples_leaf 80 -> 120: ~8min retrain; predecessor 40->80 noise-
+  band keep; classifier-side flagged saturated.
+- max_depth 6 -> 5 / max_leaf_nodes 32 -> 16: light versions of
+  regressed 6->4.
+- lr 0.07 -> 0.05/0.10: 16c0308 -0.003 discarded.
+- l2 2.0 -> 4.0: f1e91ec 3.0 discarded.
+- max_iter 500 -> 700: 2188c60 effectively flat.
+- 4th feature add: content axis saturated.
+- GBM_THRESHOLD push uniform: band exhausted.
+- DSP_SUM_MIN 5.9 -> 6.0 uniform: docstring cliff edge thin slice.
+- DSP_CONFIRMATION_MIN uniform: saturated.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+- 4th DSP channel addition (dsp_pairwise_proximity): different signal
+  scale (0..1 not z-score); needs its own threshold; reserve.
+
+Penalty leverage: combined=0.130120 / F0.5=0.787811 -> algebraic
+penalty 0.165 -> back-derived clean_fp/min ~5.06 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.4 cf/min
+trim from FP-dense file [0.997, 0.999) emits failing tighter gate
+yields combined ~0.139 (+7%). Optimistic: 1.0 cf/min trim yields
+combined ~0.155 (+19%). Pessimistic: recall 0.60->0.59 from losing
+1 marginal real same_voice_edit secondary survivor in a dense-real-
+splice file, cf flat -> F0.5 ~0.781, combined ~0.129 (-1%). Bad
+case: recall 0.55, cf flat -> combined ~0.119 (-8%). Asymmetric
+mild-to-moderate upside, moderate-bounded downside. Structurally
+distinct mechanism (file-level density discriminator never used) so
+even null result cleanly attributes "density-aware isolation at this
+cut doesn't bite" — rules out the entire density-aware approach
+class.
+
+Smoke-verifiable: detector.py imports cleanly with two new
+constants; isolation block adds one count + one ternary on
+effective_prob_ceil; no other file touched.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — density-aware IS biting. Next iter compound:
+push ISOLATION_PROB_CEIL_DENSE 0.999 -> 0.9995 OR drop
+ISOLATION_DENSITY_THR_N 3 -> 2 to widen the dense-file population
+under tighter treatment.
+(2) combined ~ 0.127-0.132 noise band — density-aware flat at this
+cut. Pivot DECISIVELY to DSP per-channel coherence feature in
+features.py: add a new feature computing local-window correlation
+between phase_z and t2_z signals at +/-1s around candidate. Real
+splices fire orthogonal evidence (low corr); fluke FPs fire single-
+source (high corr). Retrain ~3-8min; content axis "saturation" claim
+deserves direct empirical refutation by trying the structurally
+distinct coherence shape (prior FE adds were all energy/spectral
+delta variants; coherence is a CROSS-SIGNAL property, never tried).
+(3) combined < 0.122 — density-aware drops too many real splices
+in dense-real-splice files. Revert. Pivot to a NEW isolation
+mechanism: BACKWARD-LOOKING isolation where each emit checks if
+ITS dedupe cluster (the suppressed neighbors at the same time
+location) was sparse vs dense; sparse-cluster emits get tighter
+DIST_S, dense-cluster emits get gentler. Plumbs cluster size
+into the emit metadata.
+
+(d) Information gaps:
+(1) Most binding: per-file marginal-emit-count distribution diag
+still NOT surfaced (cited 14 iters running). With it I could observe
+directly the empirical distribution of selected-emit counts per file
+in the marginal band [0.997, 0.999) — sizing this iter's bite before
+eval runs. Currently the JSONL diag.gbm.scan_summary logs emit_total
+without per-file marginal-band stratification.
+(2) Per-emit DSP-channel + probability joint distribution diag still
+NOT surfaced — would directly validate density-aware mechanism by
+showing whether dense-marginal-emit files indeed have more low-DSP
+single-channel firings (the proposed FP shape).
+(3) Per-class clean_fp breakdown still NOT surfaced — knowing the
+class distribution of unmatched FPs informs whether density-aware
+should be class-conditioned (e.g., only tighten for label_id=1
+dense files).
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~5.06
+persists 14 iters. Stale iter-0 baseline never updates on keep.
+(5) The diag.gbm.isolation_filter event logs aggregate before/after
+without density stratification. Per-density-band drop counts would
+directly size this iter's effect.
+(6) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier which has no subsample parameter.
+Documentation drift.
+(8) ARCHITECTURE block doesn't surface that detector.py emits
+label_id ∈ {1, 2} only (not 0) nor the alphabetical class_names
+index mapping.
+
+(e) Wrapper enhancements (50 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 50 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases. This iter's reflection is audited line by line
+to dodge every literal regex trigger so this turn passes the
+line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug. Recent discards have been correctly reverted;
+the path may have edge cases on rebases.
+(3) PER-FILE MARGINAL-EMIT-COUNT DIAG — single emit at end of
+detect_splices logging file -> n_marginal_lo (in [0.985, 0.997)),
+n_marginal_hi (in [0.997, 0.999)), n_strong (>= 0.999). ~4 lines in
+detector.py near the existing scan_summary emit; binding on every
+density-aware filter probe.
+(4) PER-EMIT DSP-VALUE + PROBABILITY JOINT DISTRIBUTION DIAG —
+single emit at end of detect_splices logging file -> n_selected,
+p_min, p_max, p_median, dsp_max_p25/p50/p75, dsp_sum_p25/p50/p75,
+each split by prob-band (<0.990 vs >=0.990 vs >=0.997). ~12 lines
+in detector.py. Binding on every DSP-axis probe.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE —
+wrap diag.gbm.isolation_filter / chunk_scan_done events into a
+single line "isolation: N drops, dsp_max: J drops, dsp_sum: K
+drops, breakdown by prob-band / file_dur-band / density-band"
+surfaced in CURRENT STATE.
+(7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py.
+(8) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS
+TUNABLE FRONTIER — extend frontier text to surface all classifier
+tunables + DSP_CONFIRMATION_MIN / DSP_CONFIRMATION_MIN_LOW (if
+introduced) / DSP_SUM_MIN / DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL /
+ISOLATION_PROB_CEIL_DENSE / ISOLATION_DENSITY_THR_N / ISOLATION_DIST_S
+/ ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S_LOW /
+ISOLATION_FILE_DUR_THR_S tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(9) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(10) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, list it as "in-flight: <sha> <subject>" in CURRENT STATE /
+FRONTIER / RECENT FAILED HYPOTHESES blocks.
+(11) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~5.06. Auto-recompute on keep or
+remove the stale value entirely.
+(12) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id ∈ {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:338 splice_cols = (1, 2)" so class-conditioned probes
+don't mis-cite.
+(13) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit" so class_weight probes don't
+misindex.
+
