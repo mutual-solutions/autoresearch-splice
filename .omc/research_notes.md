@@ -3253,3 +3253,149 @@ per-domain: (no per-domain data)
     both the next STRIDE choice AND the operator's 0.06 retest
     feasibility decision.
 
+## 2026-04-26T12:03:07+09:00 — 322fa29 (keep, combined=0.720911)
+subject: ANALYSIS_STRIDE_S 0.065 -> 0.0635 (bisect upward into the regressed [0.0625, 0.065] band to confirm cliff after 9e6d82a delivered first STRIDE regression -0.0014) -- pure splice/detector.py change, no retrain, no feature change. Cited next-step from just-discarded 9e6d82a(c)(1): 'bisect upward to STRIDE=0.0635 next iter for finer evidence on the [0.0625, 0.065] band, OR pivot directly to RETRAIN axis'. STRIDE descent sequence on contract-fixed classifier: 0.12->0.10 +0.012, 0.10->0.08 +0.027, 0.08->0.07 +0.063, 0.07->0.065 +0.035, 0.065->0.0625 -0.0014 (FIRST REGRESSION). Bisection-completion-within-bracket-before-pivoting rule from 13 prior keeps says complete bracket before pivoting. 0.0635 is bisection midpoint of [0.0625, 0.065] and definitively settles cliff: if 0.0635 -> 0.692+ matching f5a7afa best, cliff narrow (only [0.0625] is bad) and finer bisection at 0.0628 next; if 0.0635 -> 0.691 or below, regression broad across [0.0625, 0.0635] and STRIDE rock-solid saturated, pivot cleanly to RETRAIN axis (HistGBM min_samples_leaf 20->40, fcb8f4e proved productive on legacy and untouched on iter1). Either outcome high-information. -0.0015 step (half prior -0.0025) continues halving cadence (-0.02 -> -0.01 -> -0.005 -> -0.0025 -> -0.0015), preserves bisection optionality, minimizes wasted compute if cliff confirmed. 0.0635 is fresh on frontier (set: 0.06x3 legacy + 0.0625x1 + 0.065x1 + 0.07x1 + 0.08x1 + 0.10x2 = 9 tried; 0.0635 never tried). Why 0.0635 not 0.0628 (closer to known-bad 0.0625): bisection midpoint maximizes information regardless of cliff location; 0.0628 too close to known-regressed 0.0625 risks duplicating regression signal without testing upper half of band. Why not pivot to RETRAIN now: 9e6d82a was SINGLE regression and -0.0014 sits inside plausible eval noise (prior +0.035 gain at 0.065 was 25x larger than this regression); without confirming second regression, pivoting to ~3min retrain on single noisy data point violates bisection-completion rule. One more cheap data point at 0.0635 either confirms saturation with rock-solid evidence enabling clean RETRAIN pivot, or reveals cliff is sub-0.0035 wide and STRIDE has more room. Why not retest 0.06 via sentinel: still operator-owned per CLAUDE.md retest sentinel doc; out of autoresearch loop scope; with first regression now in evidence, operator's retest decision becomes LESS attractive (0.06 likely also regresses given 0.0625 did). Compute cost: STRIDE 0.065 -> 0.0635 is +2.4% candidate evaluations on top of prior +85% (~88% over 0.12 baseline); 9e6d82a at 0.0625 (~92%) ran without runtime cliff so 0.0635 sits between two cleared budgets, runtime non-issue. Mechanism: STRIDE controls dense-scan candidate grid (line 268: t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)). First regression pattern (-0.0014 at 0.0625 after +0.035 at 0.065) suggests denser-than-0.0625 grid surfaces marginal candidates that lose dedupe collisions (more candidates within GBM_MIN_SEP_S 1.05s of each other -> greedy 1-to-1 dedupe drops real TP) OR opens FP candidates whose features cluster near 0.972 just above threshold. At 0.0635 candidates near GT boundary at 10.04s are 10.0085/10.072 -- closer to 0.0625's 10.0125/10.075 than 0.065's 10.01/10.075 so regression mechanism likely persists if purely candidate-density-driven; but if cliff is sharp (e.g. particular GT boundary's nearest sample shifts by feature-window-width threshold), 0.0635 could land back at 0.692. Smoke-verified: ANALYSIS_STRIDE_S=0.0635 confirmed via import; other tunables stable (GBM_THRESHOLD=0.972 GBM_MIN_SEP_S=1.05 DSP_CONFIRMATION_MIN=2.0 DSP_SUM_MIN=5.0); FEATURE_NAMES stable at 80; classifier byte-identical (no retrain).
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: ANALYSIS_STRIDE_S 0.065 → 0.0635 (bisect upward into the regressed [0.0625, 0.065] band to confirm cliff)
+
+(a) HYPOTHESIS. Pure `splice/detector.py` change — drop ANALYSIS_STRIDE_S
+    from 0.065 to 0.0635. No retrain, no feature change, classifier
+    byte-identical. Other primary tunables stable: GBM_THRESHOLD=0.972,
+    GBM_MIN_SEP_S=1.05, DSP_CONFIRMATION_MIN=2.0, DSP_SUM_MIN=5.0.
+    FEATURE_NAMES stable at 80. 0.0635 is fresh on the frontier (frontier
+    set: 0.06×3 legacy + 0.0625×1 + 0.065×1 + 0.07×1 + 0.08×1 + 0.10×2 = 9
+    tried; 0.0635 has never been tried).
+
+(b) WHY over recent failures. EXPLICIT CITED NEXT-STEP from just-discarded
+    9e6d82a(c)(1): "Combined regresses below 0.692 — denser scan surfaces
+    marginal off-grid candidates that fail dedupe... bisect upward to
+    STRIDE=0.0635 next iter for finer evidence on the [0.0625, 0.065]
+    band, OR pivot directly to RETRAIN axis." 9e6d82a delivered the FIRST
+    REGRESSION on the STRIDE axis (-0.0014, 0.692371 → 0.691030) — the
+    well is draining and the cliff appears to sit somewhere in
+    [0.0625, 0.065]. Full STRIDE descent sequence on contract-fixed
+    classifier:
+      0.12 → 0.10  : +0.012
+      0.10 → 0.08  : +0.027
+      0.08 → 0.07  : +0.063
+      0.07 → 0.065 : +0.035
+      0.065 → 0.0625: -0.0014  (FIRST REGRESSION)
+    Bisection-completion-within-bracket-before-pivoting-to-fresh-axis is
+    the explicit cited rule from 13 prior keeps and now from 9e6d82a's
+    own (c)(1). 0.0635 is the bisection midpoint of [0.0625, 0.065] and
+    definitively settles the cliff question:
+      - If 0.0635 → 0.692+ matching/exceeding f5a7afa best, the cliff is
+        narrow (only [0.0625] is bad) and a finer bisection at 0.0628 is
+        next; descent is NOT yet saturated.
+      - If 0.0635 → 0.691 or below, the regression is broad across
+        [0.0625, 0.0635] and STRIDE is rock-solid saturated; pivot
+        cleanly to RETRAIN axis next iter (HistGBM min_samples_leaf
+        20→40, fcb8f4e proved productive on legacy and is genuinely
+        untouched on iter1 contract-fixed classifier).
+    Either outcome is high-information. -0.0015 step (half the prior
+    -0.0025) continues the deliberate halving cadence (-0.02 → -0.01 →
+    -0.005 → -0.0025 → -0.0015), preserves bisection optionality, and
+    minimizes wasted compute if we hit the cliff again.
+
+    Why 0.0635 not 0.0628 (closer to known-bad 0.0625): bisection
+    midpoint maximizes information regardless of cliff location;
+    0.0628 too close to known-regressed 0.0625 and risks duplicating
+    the regression signal without testing the upper half of the band.
+
+    Why not pivot to RETRAIN now: 9e6d82a was a SINGLE regression, and
+    -0.0014 sits inside plausible eval noise (the prior +0.035 gain at
+    0.065 was 25× larger than this regression). Without a confirming
+    second regression, pivoting to ~3min retrain on a single noisy
+    data point violates bisection-completion rule. One more cheap data
+    point at 0.0635 either (i) confirms saturation with rock-solid
+    evidence enabling clean RETRAIN pivot, or (ii) reveals the cliff
+    is sub-0.0035 wide and STRIDE descent has more room.
+
+    Why not retest 0.06 via sentinel: still operator-owned per CLAUDE.md
+    retest sentinel doc; out of autoresearch loop scope. With the first
+    regression now in evidence, the operator's retest decision becomes
+    LESS attractive (0.06 likely also regresses given 0.0625 did).
+
+    Compute cost: STRIDE 0.065 → 0.0635 is +2.4% candidate evaluations
+    on top of prior +85% (so ~88% over the 0.12 baseline). 9e6d82a
+    (at 0.0625, ~92%) ran without runtime cliff (regressed on metric,
+    not budget); 0.0635 sits between two cleared budgets so runtime is
+    a non-issue.
+
+    Mechanism: STRIDE controls the dense-scan candidate grid (line 268:
+    `t_grid = np.arange(0.5, chunk_dur_s - 0.5, ANALYSIS_STRIDE_S)`).
+    The first regression pattern (-0.0014 at 0.0625 after +0.035 at
+    0.065) suggests denser-than-0.0625 grid surfaces marginal candidates
+    that lose dedupe collisions (more candidates within GBM_MIN_SEP_S
+    1.05s of each other → greedy 1-to-1 dedupe drops a real TP) OR
+    opens FP candidates whose features cluster near 0.972 just above
+    threshold. At 0.0635, candidates near a GT boundary at 10.04s are
+    10.0085/10.072 — closer to 0.0625's 10.0125/10.075 than 0.065's
+    10.01/10.075, so the regression mechanism likely persists if it's
+    purely candidate-density-driven; but if the cliff is sharp (e.g.
+    a particular GT boundary's nearest sample shifts by exactly the
+    feature-window-width threshold), 0.0635 could land back at 0.692.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.692 (matching or
+    extending 9e6d82a's regression) — saturation confirmed bilaterally
+    across [0.0625, 0.0635, 0.065 boundary]; pivot immediately to
+    RETRAIN axis next iter (HistGBM min_samples_leaf 20→40 most
+    promising, cited proven productive on legacy and untouched on
+    iter1). (2) Combined matches 0.692 (within ~0.0005 noise) —
+    saturation on the upper half of the band, cliff lies in
+    [0.0625, 0.0635]; next iter try 0.0628 (still fresh, smaller
+    -0.0007 step) to confirm cliff location, OR pivot to RETRAIN
+    (highest-payoff given the well is draining). (3) Combined exceeds
+    0.692 — descent has more room than the 9e6d82a regression suggested
+    (which was eval-noise after all); next iter try 0.062 (still fresh,
+    one micro-step above legacy 0.06) — but more conservatively, the
+    operator-owned retest of legacy 0.06 becomes the highest-confidence
+    move given the response surface holds something productive in that
+    band.
+
+(d) Information gaps. Per-domain combined STILL missing from
+    baseline_metrics.json on korean-iter1 — CURRENT STATE prompt says
+    "(per-dataset breakdown unavailable — baseline_metrics.json has not
+    captured it yet)". 14 keeps + 1 STRIDE regression in, still cannot
+    verify which domain delivered the +0.156 aggregate gain across the
+    iter1 STRIDE descent (0.5546 → 0.692). Without per-domain
+    visibility I cannot confirm whether the just-observed -0.0014
+    regression was Korean recall losing a TP, English / Singing
+    rebalancing, or eval noise. This is the most critical gap right at
+    the saturation/pivot decision point. Eval runtime per iteration is
+    also still not surfaced — would tell me whether 0.0625 ran near
+    the 300s cliff (eval-noise plausible) or comfortably below
+    (regression more likely real). Frontier text shows
+    "ANALYSIS_STRIDE_S: 9 tried (kept: 0.06, 0.065, 0.07, 0.08, 0.10;
+    failed: 0.0625)" — 9 tried but 5 named keeps + 1 fail = 6, leaving
+    3 unnamed (presumably 0.06×3 from legacy keeps), confirming 0.0635
+    is genuinely fresh.
+
+(e) Wrapper enhancements. Three unchanged highest-priority asks (now 14
+    consecutive iterations with these gaps unfilled):
+    (1) PER-DOMAIN combined IN BASELINE_METRICS.JSON on iter1 branch —
+    same ask as last 13 keeps + this iter, still missing. Now ESPECIALLY
+    consequential at the STRIDE-saturation/RETRAIN-pivot decision
+    point: a one-line schema hookup (writing
+    `combined_korean / combined_english / combined_singing` into
+    baseline_metrics.json on iter1) would let me confirm or deny that
+    the 9e6d82a regression was Korean-recall noise vs a real
+    cross-domain rebalance. The non-iter1 baseline already captures
+    this; iter1 writer is missing it. Highest-priority operator fix.
+    (2) FRONTIER CLASSIFIER-CONTEXT TAG: each frontier entry should
+    carry a tag (e.g., `classifier_sha=<8>`) so legacy-kept
+    ANALYSIS_STRIDE_S 0.06 and GBM_THRESHOLD 0.97 can be distinguished
+    from same-value retries on the current contract-fixed classifier
+    — would unlock legitimate retries when the underlying model has
+    changed without operator-owned retest sentinel workaround. With
+    STRIDE saturation evidence accumulating, the legacy 0.06 keep
+    becomes the most informative single experiment we can't run.
+    (3) EVAL RUNTIME PER ITERATION in CURRENT STATE: a single line like
+    "last_eval_seconds: 287 (96% of 300s budget)" would let me
+    distinguish runtime-induced noise from true metric regression. The
+    9e6d82a regression of -0.0014 sits inside plausible eval-noise; a
+    runtime line would tell me whether 0.0625 ran tight (more
+    noise-prone) or comfortably (regression more likely real).
+[auto] (no SHAP data for either f5a7afa or 322fa29)
+
