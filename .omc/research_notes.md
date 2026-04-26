@@ -5327,3 +5327,66 @@ per-domain: (no per-domain data)
     last frontier-blind-spot for the current optimization regime.
 [auto] (no SHAP data for either 890b5ba or 44263a9)
 
+## 2026-04-26T19:42:38+09:00 — a592333 (keep, combined=0.122277)
+subject: DSP_CONFIRMATION_MIN 2.5 -> 3.0 (cited compound MAX-gate pivot after DSP_SUM_MIN 5.75 landed +0.0023 INSIDE +/-0.003 noise band; trigger 44263a9(c)(2) recommends compound DSP_CONFIRMATION_MIN 2.5->3.0 on orthogonal MAX axis as first option vs MFCC variance feature engineering; SUM_MIN axis decelerated decisively 5.0->5.5 +0.0071 / 5.5->5.75 +0.0023 with per-unit halving 0.0142->0.0094->NB; mechanism: after SUM=5.75 dedupe ALL surviving emits have sum(dsp_vals)>=5.75 so borderline-FP profile is one strong channel passing MAX floor 2.5 + phantom multi-channel support summing to 5.75+; raising MAX 2.5->3.0 attacks exactly this population since real splices fire >=1 channel at 3-5z (preserved) while FPs whose MAX is 2.5-3.0 with phantom support get cut; earlier d5d0f37 (2.0->2.5) gained only +0.0008 BEFORE SUM_MIN tightening so survivor distribution now different post-5.75-cut and MAX may bite where it did not before; OR-gate at detector.py:310 drops emits where max(dsp_vals)<3.0 OR sum(dsp_vals)<5.75 - widening MAX cut band [<2.5]->[<3.0] targets borderline single-strong-channel FPs (chord transitions T2~2.7 + smooth phase + low CPE; phoneme transitions with one z-score peak at 2.5-3.0); penalty leverage ~7x F0.5: combined=0.121/F0.5=0.788=penalty 0.154 so clean_fp/min ~5.5; pessimistic R 0.55+clean_fp 5.0 yields combined 0.127 +5%; optimistic clean_fp 4.0 yields 0.158 +30%; bad-case R 0.50+clean_fp flat yields 0.114 -6%; asymmetric upside; single-knob change preserves clean attribution; +0.5 step mirrors prior d5d0f37 cadence; smoke-verified DSP_CONFIRMATION_MIN=3.0 imports cleanly all other tunables stable FEATURE_NAMES stable at 81)
+per-domain: (no per-domain data)
+
+(a) HYPOTHESIS — DSP_CONFIRMATION_MIN 2.5 → 3.0 (cited compound MAX-gate pivot
+after DSP_SUM_MIN 5.75 just landed +0.0023 INSIDE ±0.003 noise band, triggering
+44263a9(c)(2) "pivot to compound DSP_CONFIRMATION_MIN 2.5→3.0 on the orthogonal
+MAX axis"). Pure splice/detector.py:60 one-line change. No retrain.
+
+(b) WHY OVER RECENT FAILURES — SUM_MIN axis decelerated decisively:
+5.0→5.5 +0.0071, 5.5→5.75 +0.0023 (per-unit halved 0.0142 → 0.0094 then NB).
+44263a9 result 0.121 sits 0.002 above prior best 0.119, well INSIDE the cited
+noise band. Cited (c)(2) explicitly recommends DSP_CONFIRMATION_MIN 2.5→3.0
+as first option (instant, single-knob, orthogonal mechanism) before MFCC-
+variance feature engineering (~3min retrain, 9699545 stationarity feature
+already noise-band wash). Mechanism: after SUM=5.75 dedupe, ALL surviving
+emits have sum(dsp_vals)≥5.75. The borderline-FP profile is now "one strong
+channel passing MAX floor 2.5 + phantom multi-channel support summing to
+5.75+". Raising MAX 2.5→3.0 attacks exactly this population: real splices
+fire ≥1 channel at 3-5z (preserved); FPs whose MAX is 2.5-3.0 with phantom
+support get cut. Earlier d5d0f37 (2.0→2.5) gained only +0.0008 BEFORE
+SUM_MIN tightening — survivor distribution now different post-5.75-cut, so
+MAX may bite where it didn't before. Penalty leverage ~7× F0.5: combined=
+0.121/F0.5≈0.788 → penalty≈0.154 → clean_fp/min≈5.5. Pessimistic R 0.55 +
+clean_fp 5.0: combined=0.127 +5%; optimistic clean_fp 4.0: combined=0.158
++30%; bad-case R 0.50 + clean_fp flat: combined=0.114 −6%. Asymmetric upside.
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.119 — MAX=3.0 killed real
+TPs whose strongest channel sits in [2.5,3.0] (weak same_voice_edit splices);
+bracket [2.5,3.0] now known, next iter bisect to 2.75 OR pivot to feature
+engineering with MFCC delta-delta variance over ±200ms (boundary-localized,
+orthogonal to wide-window centroid CV that already failed). (2) Combined
+matches 0.121 ±0.003 noise — both DSP gate axes saturated; pivot decisively
+to feature engineering with MFCC delta-delta variance ±200ms (genuinely new
+boundary-localized dimension). (3) Combined exceeds 0.130 — compound MAX gate
+productive; next iter step DSP_CONFIRMATION_MIN 3.0→3.25 OR layer
+DSP_SUM_MIN 5.75→5.9 for compound-compound gain.
+
+(d) Information gaps. (1) Per-class clean_fp breakdown still not surfaced —
+critical for picking next classifier-side hypothesis after DSP saturation.
+(2) DSP channel-level distribution histogram (P50/P90 per channel and per
+SUM/MAX at clean FPs) — would let me predict MAX 3.0 cut population directly.
+Highest-leverage missing diagnostic. (3) live clean_fp_per_min (CURRENT STATE
+shows stale baseline 9.14, actual ≈5.5). (4) Frontier text doesn't list DSP
+tunables. (5) eval runtime per iter not surfaced.
+
+(e) Wrapper enhancements (now 26 consecutive iters with persistent gaps; both
+DSP axes are now active and we're at DSP saturation pivot point):
+(1) DSP CHANNEL-LEVEL DISTRIBUTION HISTOGRAM in CURRENT STATE — at the
+exact iter where I'm pivoting between MAX/SUM compound layering, knowing
+"post-emit DSP at clean FPs: phase_z P50/P90, t2_z P50/P90, cpe_z P50/P90,
+SUM P50/P90, MAX P50/P90" would let me directly predict the cut population
+instead of inferring from docstring mechanism. Single most consequential
+prompt fix.
+(2) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — knowing whether clean
+FPs are same_voice_edit-vs-cross_voice-vs-unknown-labeled directly determines
+whether DSP MAX, DSP SUM, or feature-engineering targets the dominant
+source. ~5 lines in splice/evaluate.py compute_clean_fps_per_file.
+(3) LIVE clean_fp_per_min IN CURRENT STATE — currently shows pre-dedupe
+baseline 9.14; should reflect latest-keep state. Without it I back-derive
+from combined/F0.5 algebra each iter.
+[auto] (no SHAP data for either 44263a9 or a592333)
+
