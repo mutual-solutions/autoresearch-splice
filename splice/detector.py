@@ -82,6 +82,17 @@ DSP_SUM_MIN = 5.9
 # emits. Applied AFTER greedy dedupe.
 ISOLATION_PROB_CEIL = 0.997
 ISOLATION_DIST_S = 30.0
+# Probability-graded sub-band: emits with p < ISOLATION_PROB_LOW_CEIL are
+# the very-marginal slice within [GBM_THRESHOLD, ISOLATION_PROB_CEIL) where
+# fluke FPs concentrate (chord transitions / phoneme boundaries / codec
+# artifacts that barely scrape GBM_THRESHOLD). Real splices typically
+# dedupe to higher-probability survivors. Tightening the isolation
+# distance to ISOLATION_DIST_S_LOW for this sub-band drops solitary
+# very-marginal emits while keeping the gentle 30s threshold for the
+# upper-marginal [ISOLATION_PROB_LOW_CEIL, ISOLATION_PROB_CEIL) band where
+# softer real same_voice_edits live.
+ISOLATION_PROB_LOW_CEIL = 0.990
+ISOLATION_DIST_S_LOW = 15.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -378,7 +389,10 @@ def _gbm_detect_splices(
             else:
                 nearest = min(abs(times[i] - times[j])
                               for j in range(len(times)) if j != i)
-            if nearest < ISOLATION_DIST_S:
+            dist_thresh = (ISOLATION_DIST_S_LOW
+                           if emit[2] < ISOLATION_PROB_LOW_CEIL
+                           else ISOLATION_DIST_S)
+            if nearest < dist_thresh:
                 kept.append(emit)
         iso_dropped = len(selected) - len(kept)
         if iso_dropped:
