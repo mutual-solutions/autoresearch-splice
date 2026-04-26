@@ -1,6 +1,6 @@
 {
   "version": "korean_iter1_v1",
-  "trained_at": "2026-04-25T15:25:02Z",
+  "trained_at": "2026-04-26T05:14:21Z",
   "n_train_files": 2052,
   "n_train_samples": 67947,
   "classes_": [
@@ -93,7 +93,11 @@
   ],
   "hyperparameters": {
     "categorical_features": "from_dtype",
-    "class_weight": null,
+    "class_weight": {
+      "0": 1.0,
+      "1": 1.0,
+      "2": 2.0
+    },
     "early_stopping": "auto",
     "interaction_cst": null,
     "l2_regularization": 2.0,
@@ -115,12 +119,12 @@
     "warm_start": false
   },
   "oof_metrics": {
-    "f1_macro": 0.788178,
-    "f1_weighted": 0.929694,
+    "f1_macro": 0.801453,
+    "f1_weighted": 0.931513,
     "f1_per_class": {
-      "cross_voice": 0.95671,
-      "no_splice": 0.961925,
-      "same_voice_edit": 0.445898
+      "cross_voice": 0.955601,
+      "no_splice": 0.961395,
+      "same_voice_edit": 0.487362
     }
   },
   "class_counts": {
@@ -133,40 +137,40 @@
       "fold": 1,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.9314343527019467,
-      "f1_macro": 0.7940401247117742
+      "f1_weighted": 0.9336235599152566,
+      "f1_macro": 0.8059039401461706
     },
     {
       "fold": 2,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.9320188974908511,
-      "f1_macro": 0.7994196482961581
+      "f1_weighted": 0.9328305196587864,
+      "f1_macro": 0.8082182584959541
     },
     {
       "fold": 3,
       "n_train": 54366,
       "n_test": 13581,
-      "f1_weighted": 0.9280037386688444,
-      "f1_macro": 0.7834592971305767
+      "f1_weighted": 0.9282210690929648,
+      "f1_macro": 0.7930353012237603
     },
     {
       "fold": 4,
       "n_train": 54345,
       "n_test": 13602,
-      "f1_weighted": 0.9278113598571507,
-      "f1_macro": 0.7798055862077208
+      "f1_weighted": 0.9314455816929506,
+      "f1_macro": 0.7975901393558077
     },
     {
       "fold": 5,
       "n_train": 54345,
       "n_test": 13602,
-      "f1_weighted": 0.929113315153459,
-      "f1_macro": 0.7835710490916211
+      "f1_weighted": 0.9314055632056764,
+      "f1_macro": 0.8022890053448842
     }
   ],
   "features_py_sha": "6e1d206c336a6156cdcc522acf4a0dd343e40781",
-  "train_classifier_py_sha": "48d311d67125a0ae8ad16442690bab844e7ee696",
+  "train_classifier_py_sha": "26c981b066ae060a57fe2cdc964ac73c02336e19",
   "voice_holdout": {
     "test": [],
     "eval": [],
