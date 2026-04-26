@@ -67,7 +67,7 @@ DSP_CONFIRMATION_MIN = 3.0
 # (chord transitions with one strong channel + partial support, speech phoneme
 # shifts with T²≈2.5 + CPE≈1.0) while preserving multi-channel-confirmed real
 # splices (sum 6-12).
-DSP_SUM_MIN = 5.75
+DSP_SUM_MIN = 5.9
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
