@@ -3879,3 +3879,143 @@ per-domain: (no per-domain data)
     active, this is the second-highest-priority fix after per-domain
     combined.
 
+## 2026-04-26T17:29:01+09:00 — c681ee7 (verify-fail, combined=0.077736)
+subject: revert class_weight={0:1,1:1,2:2} -> default None (METRIC PIVOT — same_voice_edit boost is now actively harmful under F0.5 x clean_fp_penalty; OOF same_voice_edit F1 dropped 0.530->0.487 under boost; under new precision-favoring metric this calibration distortion surfaces as confident clean FPs that the 10x penalty drag punishes hardest; THRESH 0.985 already filtered marginals so root-cause attack on same_voice_edit overconfidence is highest leverage)
+per-domain: (no per-domain data)
+
+# 2026-04-26 — hypothesis: REVERT class_weight={0:1,1:1,2:2} → default (None) (METRIC PIVOT IMPLICATION — same_voice_edit boost is now actively harmful under F0.5 × clean_fp_penalty)
+
+(a) HYPOTHESIS. Single-line `splice/classifier/train_classifier.py:make_pipeline()`
+    edit — DELETE the `class_weight={0: 1.0, 1: 1.0, 2: 2.0}` line. Wrapper
+    auto-retrains via US-505b sha gate (~3 min). No detector edit, no feature
+    edit. Other classifier hyperparams stable (max_iter=300, max_depth=5,
+    max_leaf_nodes=32, learning_rate=0.07, l2_regularization=2.0,
+    min_samples_leaf=40, loss=log_loss, random_state=42). Other primary
+    tunables stable (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=1.05,
+    ANALYSIS_STRIDE_S=0.0635). FEATURE_NAMES stable at 80.
+
+(b) WHY OVER RECENT FAILURES — METRIC PIVOT FUNDAMENTALLY CHANGES OPTIMUM.
+    Metric pivoted (commits 44b798f, 5ecc430, 4a98c85): combined =
+    F0.5(P,R) × clean_fp_penalty where penalty = 1/(1+clean_fp_per_min/1.0).
+    Current state (post-4a98c85 keep): combined=0.0777, F0.5=0.7878,
+    P=0.853, R=0.603, clean_fp_per_min=9.143, clean_fp_penalty=0.0986.
+    PROMPT METRIC DEFINITION IS STALE — still cites F1×clean_score / GM
+    across singing/korean/english, but actual evaluator runs F0.5 × penalty
+    over single dataset (data/eval/korean_iter1/eval).
+
+    Decomposition: F0.5 already near-saturated (0.79); penalty=0.099 is the
+    10× drag. Every clean_fp_per_min reduction translates ~directly into
+    combined gain. 4a98c85 (THRESH 0.972→0.985) only moved clean_fp_per_min
+    9.54→9.14 (-4%) — surviving clean FPs are HIGHLY confident (well above
+    0.99 in p_splice), so further threshold raises = diminishing returns.
+    Need to attack the SOURCE of confident clean FPs, not gate them harder.
+
+    Root cause documented in classifier metadata
+    (splice/classifier/fp_classifier.meta.json):
+        cross_voice OOF F1     = 0.956
+        no_splice OOF F1       = 0.961
+        same_voice_edit OOF F1 = 0.487   ← weak class, made WORSE by boost
+    Pre-boost baseline (cited in 36657c6 commit / 8530ba8): same_voice_edit
+    OOF F1 = 0.530. So class_weight 2x DROPPED OOF same_voice_edit F1 from
+    0.530→0.487. Under F1 metric this masked itself as +0.001 deployment
+    gain (recall up, precision down ≈ wash). Under F0.5 × penalty this is
+    pure cost: F0.5 weights P 2x, AND the precision distortion surfaces
+    as confident same_voice_edit predictions inside clean audio → clean
+    FPs that the penalty punishes 10x harder.
+
+    Why class_weight revert > other levers:
+    - GBM_THRESHOLD 0.985→0.99: just-tried 0.972→0.985 cut clean_fp by
+      only 4%; clean FPs are confident, more raise = same diminishing
+      returns AND more recall loss (R already dropped 0.632→0.603 in
+      one threshold step; another would push R below 0.55 and tank F0.5).
+    - GBM_MIN_SEP_S 1.05→3.0: dedupes adjacent emits, but isolated clean
+      FPs in continuous speech have no neighbor to dedupe; doesn't attack
+      clean FPs; also hurts Korean recall.
+    - max_iter 300→500: just-discarded 00bafe5; capacity not the bottleneck.
+    - Suppress same_voice_edit class entirely: aggressive, untested
+      cross-class effects, blunt instrument.
+    Class_weight revert directly attacks the ONE documented OOF precision
+    drop and the ONE class structurally capable of confident emissions
+    inside continuous single-speaker audio. Mechanism: reverting to
+    default class_weight=None means HistGBM training spends gradient
+    proportional to class frequency (no_splice 45298 / cross_voice 18593 /
+    same_voice_edit 4056). Same_voice_edit gets less per-epoch boost →
+    model less aggressive predicting same_voice_edit on boundary-case
+    features → P(same_voice_edit) inside clean audio drops → fewer
+    p_splice values cross 0.985 → clean_fp_per_min drops.
+
+    Risk-reward: F0.5(0.85, 0.60) = 0.788. Pessimistic outcome (R drops
+    to 0.50, clean_fp_per_min only to 5.0): F0.5=0.745, penalty=0.167,
+    combined=0.124 (vs 0.078 = +60%). More pessimistic (clean_fp only
+    to 7.0): F0.5=0.745, penalty=0.125, combined=0.093 (vs 0.078 = +20%).
+    Even pessimistic outcomes net positive because penalty leverage
+    dominates F0.5 sensitivity. Asymmetric upside under new metric.
+
+    Smoke-verifiable: deleting the class_weight kwarg yields sklearn
+    default (None). Wrapper retrain triggered by train_classifier.py sha
+    change (US-505b).
+
+(c) IF THIS FAILS. (1) Combined regresses below 0.0777 — class_weight
+    revert dropped recall too far without proportionate clean_fp gain
+    (e.g., R: 0.603→0.45, clean_fp_per_min: 9.14→7.5 only); next iter
+    try smaller revert step class_weight={0:1, 1:1, 2:1.5} (compromise),
+    OR pivot to GBM_THRESHOLD 0.985→0.99 (one more threshold push since
+    F0.5 still has marginal headroom), OR GBM_MIN_SEP_S 1.05→2.0
+    (instant; dedupes any per-utterance clusters even if isolated clean
+    FPs persist).
+    (2) Combined matches 0.0777 (within ±0.003 noise) — class_weight
+    wasn't the source of confident clean FPs (they came from cross_voice
+    overconfidence or feature-level signal); next iter pivot to
+    GBM_THRESHOLD 0.985→0.99 (tighten gate further), OR feature-
+    engineering pivot in splice/features.py adding a "clean-audio guard"
+    feature (rolling spectral stationarity over ±1s window — high
+    stationarity = continuous speech = should not emit; targets clean
+    FPs at the feature level).
+    (3) Combined exceeds 0.090 — class_weight revert productive on iter1
+    classifier under new metric; next iter try DROPPING same_voice_edit
+    weight further class_weight={0:1, 1:1, 2:0.5} (test whether
+    deweighting same_voice_edit further continues to slash clean FPs —
+    same_voice_edit is structurally low-precision so under-weighting
+    shifts posterior toward no_splice on ambiguous cases), OR test
+    class_weight={0:1.5, 1:1, 2:1} (boost cross_voice instead — high-
+    precision class, its boost shifts confident predictions toward the
+    "correct" splice class without precision cost).
+
+(d) Information gaps. (1) Per-class FP composition NOT surfaced — I
+    cannot confirm clean FPs are predominantly same_voice_edit-labeled.
+    If clean FPs are mostly cross_voice, reverting class_weight would
+    be misdirected. CURRENT STATE line "clean_fp by class:
+    same_voice_edit=N1 cross_voice=N2 unknown=N3" would have made this
+    hypothesis directly verifiable rather than confident-but-untested
+    inference from OOF metadata.
+    (2) PROMPT METRIC DEFINITION SECTION IS STALE — still cites
+    "splice_f1 × clean_score" + GM across singing/korean/english.
+    Actual evaluator (post-44b798f) is F0.5 × clean_fp_penalty over
+    single korean_iter1 eval. Could mislead future hypotheses.
+    (3) RESEARCH NOTES still contain stale per-domain ask repeated 14×
+    — that ask is MOOT under single-dataset eval. Notes need pruning
+    so they don't continue to skew hypothesis framing.
+    (4) PER-TUNABLE EXPLORATION FRONTIER `current` column blank
+    ("current ?") — had to grep detector.py manually for actual values.
+    (5) Frontier 'kept' values for THRESH/STRIDE were tuned under OLD
+    metric — those keeps are now stale optima. The frontier should
+    distinguish 'kept under metric_v1' vs 'kept under metric_v2'.
+
+(e) Wrapper enhancements (re-prioritized for new metric reality):
+    (1) PROMPT METRIC DEFINITION REFRESH — top-of-prompt block still
+    describes OLD metric and OLD multi-dataset GM. Single most
+    consequential prompt fix; misleading the agent on the objective is
+    the highest-cost wrapper bug right now. Should auto-emit from
+    splice/evaluate.py docstring or constants.
+    (2) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — at new metric
+    where clean_fp dominates 10×, knowing whether clean FPs are
+    same_voice_edit-vs-cross_voice-labeled directly determines next
+    classifier-side hypothesis. splice/evaluate.py already labels every
+    prediction; per-class clean_fp counts = ~5 lines in
+    compute_clean_fps_per_file.
+    (3) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — same ask
+    as last 2 iters. With class_weight revert pending, knowing whether
+    same_voice_edit OOF F1 returned to ~0.530 or moved differently is
+    the key sanity check on the revert mechanism. Would reduce
+    attribution ambiguity to zero.
+
