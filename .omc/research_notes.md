@@ -8033,3 +8033,176 @@ remove the stale value entirely.
 (17) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL
 IS HistGradientBoostingClassifier — fix the docstring drift.
 
+## 2026-04-27T23:36:35+09:00 — 553b40a (discard, combined=0.147171)
+subject: add stationarity_onset_cv_2s FE — wide-window onset CV for clean-stretch fluke discrimination
+per-domain: (no per-domain data)
+
+# last_reflection — WIDE-WINDOW ONSET STATIONARITY FE: stationarity_onset_cv_2s
+
+(a) HYPOTHESIS: add a new feature `stationarity_onset_cv_2s` to
+splice/features.py. For each candidate at t_sec, compute coefficient
+of variation (std / mean) of feat_onset (librosa onset_strength,
+i.e. broadband spectral flux) sampled over ±2s. Both onset and its
+hop live in chunk_ctx already (feat_onset / feat_frame_hop); accessor
+mirrors the existing _block_clean_audio_guard which uses the same
+shape but on feat_centroid with ±1s. Adds 1 new block
+(`_block_onset_stationarity`), 1 entry in FEATURE_NAMES, 1 update to
+the count assert (81 -> 82). Triggers automatic retrain via the
+wrapper. All other tunables byte-identical.
+
+(b) WHY OVER RECENT FAILURES: 9 consecutive discards across:
+- 5 isolation/intersection variants (94b6b42, f53e71e, 687205d,
+  00a9b0a, c35ba8e — 4 cratered, 2 flat at baseline 0.151237).
+- 3 phase/cpe-derived FE (efe38ee peak_align timing -0.006;
+  da02a01 peak_height_diff amplitude -0.010; 4c25c09 phase-CPE
+  coherence -0.004 historical).
+- 1 class_weight (cbc742d cross_voice 1.5 -0.007).
+The c35ba8e(c)(2) directs verbatim: "Pivot DECISIVELY to PER-BAND
+SPECTRAL-FLUX PEAK TIME FE — different signal source than the DSP
+fused channels — uses raw STFT spectral flux not phase/cpe z-scores."
+This iter probes a SIMPLER variant of that pivot family: single-band
+broadband onset CV over ±2s, not multi-band timing spread. The 3
+failed phase/cpe FE shared a feature shape (PAIRWISE channel
+relationship over a ±1s window — coherence/timing/amplitude); they
+likely failed because GBM already extracts those signals from the
+existing dsp_phase_z + dsp_cpe_z + boundary_phase_coherence
+ensemble. This iter uses a totally different feature shape:
+SINGLE-CHANNEL WIDE-WINDOW STATIONARITY on a FRESH signal channel
+(raw onset strength, not DSP fused). Mechanistically aligned with
+the proven-productive stationarity_centroid_cv_1s but in an
+orthogonal channel (attack/transient signal vs spectral-center
+signal) and a wider window (±2s vs ±1s) — broadband onset
+strength is exactly the spec_flux signal that SPLICE fluke FPs
+resemble inside continuous speech: many moderate peaks every
+phoneme/syllable producing moderate CV ~0.5-1.0; whereas a real
+splice produces ONE LARGE SPIKE amid mostly-quiet onset producing
+high CV ~2-4. Direct discriminator for the failure mode the
+metric definition pins down: "spraying spurious detections inside
+continuous single-speaker stretches".
+
+Mechanically distinct from all 81 existing features:
+- stationarity_centroid_cv_1s: centroid CV over ±1s — different
+  signal channel (timbre-center, not attack), narrower window.
+- voiced_mfcc/chroma/spec_contrast_cosine_dist: pre-vs-post timbre
+  comparisons at t — pairwise-window not single-window-CV.
+- spec_flux_delta: pre-vs-post DELTA of onset at t — local
+  contrast, no wide-window stationarity.
+- boundary_spec_flux_peak: MAX of onset in ±0.2s — local PEAK
+  HEIGHT, not WIDE-WINDOW CV.
+- All recent failed FE (peak_align, peak_height_diff, phase-CPE
+  coherence): pairwise channel relationships in DSP fused
+  channels — different feature shape AND different signal source.
+
+WHY ±2s window not ±1s or ±3s:
+- ±2s gives ~172 onset samples at hop=512/sr — ample for stable
+  CV; well within real-splice spacing (5+s).
+- ±1s could be too narrow (a single phoneme's onset might
+  dominate); matches existing centroid_cv_1s without orthogonal
+  contribution.
+- ±3s widens past typical splice-pair spacing (real pairs cluster
+  at 5-10s); could include neighboring real splices flattening
+  the CV signal.
+
+WHY OVER ALTERNATIVES:
+- Per-band spec-contrast peak-time spread (cited c35ba8e(c)(2)
+  reserve): timing-based; recent peak_align failure suggests
+  timing-based features saturated. Reserve as next pivot if null.
+- ISOLATION_DIST_S_LOW 8 -> 7: trajectory decelerating; approaches
+  GBM_MIN_SEP_S=6 cliff; affects 4 routed populations broader
+  recall risk.
+- ISOLATION_FILE_DUR_THR_S 60 -> 75: same axis just-discarded at
+  60 (c35ba8e flat); pushing further high-risk-low-reward.
+- ISOLATION_PROB_CEIL push: encroaches dense-real-splice survivor
+  zone.
+- class_weight {0:2, 1:1, 2:2}: just-discarded {0:1.5} -0.007;
+  full doubling likely worse.
+- min_samples_leaf / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN: regressed -0.005 historically.
+- GBM_THRESHOLD push: band exhausted.
+- 4th phase/cpe-derived FE: 3 recent failures.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21. With ~7x F0.5
+sensitivity per unit. Plausible: GBM picks up onset_cv_2s as a
+moderate-importance fluke discriminator, lifts F0.5 by 0.008 and
+trims 0.5 cf/min, combined ~0.165 (+9%). Optimistic: top-3 SHAP,
+F0.5 +0.018 and 1.0 cf/min trim, combined ~0.182 (+20%).
+Pessimistic: redundant with existing onset-derived features
+(boundary_spec_flux_peak + spec_flux_delta), combined ~0.146
+(-3%). Bad case: chunk-edge sentinels create degenerate signal,
+combined ~0.135 (-11%) — mitigated by _slice_frames bounds-
+clamping returning 0-array fallback to cv=0.0. Asymmetric mild-
+to-moderate upside, moderate-bounded downside. Even null cleanly
+attributes "wide-window onset stationarity adds no information
+beyond existing onset-derived features" — bounds the wide-window
+stationarity FE class.
+
+Smoke-verifiable: features.py imports cleanly with new block; new
+feature name appears in FEATURE_NAMES; len assert 81 -> 82.
+Wrapper auto-retrains on features.py change.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — onset_cv_2s IS productive. Next iter
+compound: add complementary stationarity_chroma_cv_2s or
+stationarity_mfcc_cv_2s; mini-block of wide-window stationarity
+across signal channels.
+(2) combined ~ 0.148-0.153 noise — onset stationarity redundant.
+Pivot to PER-BAND SPEC_CONTRAST PEAK TIME spread (cited
+c35ba8e(c)(2) reserve) using 7-band feat_contrast already in ctx.
+(3) combined < 0.144 — onset_cv_2s confuses GBM (chunk-edge
+sentinels). Revert. Pivot to chunk-relative spec_flux RATIO
+(boundary_spec_flux_peak / chunk_median_onset).
+
+(d) Information gaps:
+(1) Most binding: SHAP feature-importance from current 81-feature
+classifier still NOT surfaced. Knowing whether
+boundary_spec_flux_peak / spec_flux_delta / stationarity_centroid
+_cv_1s are top-10 SHAP would inform whether wide-window onset
+stationarity is additive vs redundant.
+(2) FAILED-FE SHAP RANK in RECENT FAILED HYPOTHESES.
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 35 iters.
+(5) Eval file duration / splice-position distribution unknown.
+(6) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, actual is
+HistGradientBoostingClassifier — documentation drift.
+(7) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min.
+
+(e) Wrapper enhancements (72 consecutive iters with persistent
+gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 72 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT STATIONARITY DIAG — single emit at end of
+detect_splices logging file -> n_selected, onset_cv_2s_p25/p50/p75,
+centroid_cv_1s_p25/p50/p75 for each survivor.
+(4) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id +
+stationarity_features).
+(5) FAILED-FE SHAP RANK DIAG — for failed features.py iters,
+surface new feature's SHAP rank and importance value alongside
+combined in RECENT FAILED HYPOTHESES.
+(6) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES.
+(7) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(8) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(9) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(10) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-10 SHAP
+features and their delta vs prior keep.
+(11) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(12) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(13) FORCE-EVAL SUBCOMMAND for the wrapper.
+(14) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(15) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(16) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(18) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
+ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift.
+
