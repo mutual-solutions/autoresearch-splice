@@ -6863,3 +6863,223 @@ BLOCK.
 (17) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
 PROMPT ARCHITECTURE BLOCK.
 
+## 2026-04-27T13:02:49+09:00 — efe38ee (discard, combined=0.144902)
+subject: add dsp_phase_cpe_peak_align_2s FE — temporal phase/CPE peak distance in +/-1s window
+per-domain: (no per-domain data)
+
+# last_reflection — TEMPORAL CHANNEL-PEAK ALIGNMENT FE: dsp_phase_cpe_peak_align_2s
+
+(a) HYPOTHESIS: add a new feature `dsp_phase_cpe_peak_align_2s` to
+splice/features.py. For each candidate at t_sec, find argmax time of
+phase_curve in [t-1, t+1], same for cpe_curve, and return the absolute
+time distance between the two peaks. Both curves and their hops live in
+the existing chunk_ctx (phase_curve / phase_hop_s / cpe_curve /
+cpe_hop_s); accessor pattern mirrors phase_z_at / cpe_z_at. Adds 1 new
+block (`_block_phase_cpe_peak_align`), 1 entry in FEATURE_NAMES, 1
+update to the count assert (81 -> 82). Triggers automatic retrain via
+the wrapper. All other tunables byte-identical (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0,
+DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997,
+ISOLATION_DIST_S=30.0, ISOLATION_PROB_LOW_CEIL=0.990,
+ISOLATION_DIST_S_LOW=8.0, ISOLATION_FILE_DUR_THR_S=45.0,
+ISOLATION_EDGE_HEAD_S=4.0, ISOLATION_EDGE_TAIL_S=3.0,
+ISOLATION_CLUSTER_THR_N=5, ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier
+{0:1.0,1:1.0,2:2.0}, max_iter=500, max_depth=6, max_leaf_nodes=32,
+lr=0.07, l2=2.0, min_samples_leaf=80).
+
+(b) WHY OVER RECENT FAILURES: 4 consecutive isolation/intersection
+discards establish the isolation-axis ceiling. The just-discarded
+00a9b0a (ISOLATION_DIST_S 30->25) landed FLAT at 0.151237 — the 4th-
+tier high-conf interior population has no fluke real estate at 25-30s
+neighbor distance. The (c)(2) directive from the just-discarded
+explicitly says "Pivot DECISIVELY to TEMPORAL CHANNEL-PEAK ALIGNMENT
+FE in features.py: for each candidate, find argmax time of phase_curve
+in [t-1, t+1], same for cpe_curve, distance as feature." This pivot
+has been queued in (c)(2) of EVERY reflection from 4c25c09 onwards
+(6+ iters including 3785e80, 6d11b7f, 035b8d0, f7e5205, 94b6b42,
+f53e71e, 687205d, 00a9b0a). The cumulative ledger of isolation-axis
+keeps:
+  cluster: THR_N 2(+0.001) -> 3(+0.004) -> 4(+0.0004) -> 5(+0.0002) — saturated
+  gate-distance: 15->12(+0.003) -> 10(+0.004) -> 8(+0.002) — decelerating
+  intersection: edge+sparse VERY_TIGHT(+0.003) — single keep, then 4 fails
+The "5+ recent entries on same axis" structural-pivot trigger is fired.
+
+Mechanically distinct from all 24 prior probes:
+- Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+  absolute probability bands.
+- Time-graded (86d35ab): file DURATION.
+- Class-conditioned (cbe9793, 5211495, 435aebc): emit class label —
+  proven dead.
+- Density-aware file-level (75ac490): wrong granularity.
+- Edge-aware / cluster-aware / gate-distance / per-tier intersection:
+  all isolation-block geometry on existing channels.
+- 4c25c09 phase-CPE coherence FE: VALUE-correlation between phase
+  and cpe windows. Regressed -0.004. PEAK ALIGNMENT is mechanistically
+  distinct: it measures TIMING coincidence, not value covariance —
+  two channels can produce uncorrelated z-score curves (different
+  units, different sensitivity to chord vs phoneme vs codec) yet still
+  have peaks co-located in time at a real splice instant.
+
+Mechanism: real cross-source splices disrupt mic/room/speaker/encoder
+state SIMULTANEOUSLY at the splice moment, so phase_z (carrier
+discontinuity) and cpe_z (signal predictability break) both peak at
+the same instant within a couple of strides. Distance typically
+<0.2s. Fluke FPs are usually monotone signal events:
+- Chord transitions: phase_z spikes at the strongest harmonic shift,
+  cpe_z peaks at a possibly different moment when prediction error
+  cumulates from the new chord's leading note.
+- Phoneme boundaries: phase_z fires on formant trajectory shifts,
+  cpe_z fires on consonant-onset prediction breakdown — temporal
+  mismatch typical 0.1-0.5s.
+- Codec artifacts: spectrally narrow events (single-frame quantization
+  noise) fire one channel strongly, the other weakly — argmax of the
+  weak channel within ±1s wanders to whatever fluctuation dominates
+  the local window.
+
+The +/-1s window is wide enough to capture the local peak of each
+channel without spilling into adjacent splices (real splices are
+spaced 5+s apart; window touches at most one real splice instant).
+
+Mechanically distinct from existing voiced cosine-distance features
+(value covariance over windowed mean), boundary phase coherence
+(STFT-bin residual std around ±200ms), and the existing dsp_phase_z /
+dsp_cpe_z (instantaneous z-score sample at exactly t_sec). PEAK
+ALIGNMENT measures timing relationship between two ALREADY-extracted
+DSP curves — uses no new audio analysis, just geometric query on
+existing precomputed signals. Cheap (O(window_size) argmax, ~30
+samples per channel at typical hop_s=0.064s).
+
+WHY 1.0s window not 0.5s or 2.0s:
+- 1.0s gives ~30 samples per channel (sufficient for argmax stability)
+  while staying within the +/-2s feature window of existing pre/post
+  blocks (parity with mfcc/spec/nf/f0 windowing).
+- 0.5s is too narrow — peaks within ±0.3s of t can be cut off if the
+  candidate stride sampled slightly off the true peak; argmax becomes
+  noise-dominated.
+- 2.0s starts to cover adjacent real-splice peaks in dense-multi-edit
+  files (real splices spaced 5+s apart but boundary events from the
+  same conversation cluster within a couple of seconds).
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_DIST_S 30 -> 22 (push the just-flat axis further): same
+  axis just landed flat; pushing further is high-risk-low-reward.
+- ISOLATION_DIST_S file-duration-graded (cited 00a9b0a(c)(1)
+  alternative): introduces a new constant; muddies attribution; same
+  axis just-flat suggests the population doesn't exist.
+- ISOLATION_PROB_CEIL 0.997 -> 0.998 / 0.999: encroaches dense-real-
+  splice survivor zone; any push here drops real splices.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  26th-iter isolation tweak likely noise band.
+- ISOLATION_EDGE_HEAD_S 4 -> 5 / TAIL_S 3 -> 4: edge-zone axis
+  saturated +0.0002 last push.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21. With ~7x F0.5
+sensitivity per unit, even a small recall lift compounds. Plausible:
+GBM picks up peak-alignment as a moderate-importance feature, lifts
+F0.5 by 0.005 and trims 0.3 cf/min, combined ~0.158 (+5%).
+Optimistic: peak-alignment becomes a top-5 SHAP feature lifting F0.5
+by 0.012 and trimming 0.6 cf/min, combined ~0.166 (+10%).
+Pessimistic: GBM already extracts the same temporal signal from
+existing dsp_phase_z + dsp_cpe_z + boundary_phase_coherence, the new
+feature is redundant and slightly degrades training (StandardScaler
+fits on more dimensions, moderate-leaf split picks the wrong axis),
+combined ~0.146 (-3%). Bad case: sentinel value at the window edge
+(when t_sec is within 1s of chunk start/end) causes the model to
+key on a degenerate signal at chunk boundaries, combined ~0.135
+(-11%). Asymmetric mild upside, moderate-bounded downside; sentinel
+edge cases mitigated by the existing _safe_nanmean / clamp-to-bounds
+guards in the chunk-context accessors. Even null result cleanly
+attributes "phase-CPE peak alignment doesn't add information beyond
+what dsp_phase_z + dsp_cpe_z already give the GBM" — bounds the
+DSP-temporal-relationship FE class.
+
+Smoke-verifiable: features.py imports cleanly with new block; new
+feature name appears in FEATURE_NAMES; len assert updated. Wrapper
+auto-retrains on features.py change.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — peak alignment IS a productive feature.
+Next iter compound: add a complementary DSP-temporal feature like
+phase-T2 peak alignment (already cited), or cpe-T2 peak alignment,
+forming a mini-block of pairwise channel-peak distances.
+(2) combined ~ 0.148-0.153 noise band — peak alignment redundant
+with existing features. Pivot to ANOTHER FE direction: per-band
+spectral-flux peak time within ±200ms (different signal class than
+the DSP fused channels), or codec-frame-relative timing variance
+within ±1s (codec-artifact discriminator). Reserve as next pivot.
+(3) combined < 0.144 — peak alignment confuses the GBM (e.g., on
+short clips the argmax wanders to chunk-edge sentinels and the
+model learns spurious chunk-boundary signal). Revert. Pivot to a
+different FE: phase / cpe peak HEIGHT differential (max value in
+±1s of each, take ratio) which uses values not timing.
+
+(d) Information gaps:
+(1) Most binding: per-emit DSP-channel peak-alignment empirical
+distribution still NOT surfaced. Knowing the histogram of |argmax_t
+phase - argmax_t cpe| across the 60-file eval would directly size
+this feature's discriminative power before paying the retrain cost.
+(2) SHAP feature-importance from the existing 81-feature classifier
+still NOT surfaced in CURRENT STATE — knowing whether dsp_phase_z
+/ dsp_cpe_z are already top-5 SHAP would inform whether peak
+alignment adds new information.
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 30 iters.
+(5) Eval file duration / splice-position distribution unknown.
+(6) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(7) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+(8) The just-discarded f53e71e evaluation in last_eval.log shows
+recall cratered to 0.102 — but the prompt's RECENT FAILED
+HYPOTHESES line for f53e71e only shows combined=0.151082. The
+recall/precision/cf decomposition for failed iters would let me
+distinguish "near-miss flat" from "recall-cratered + precision-
+saved" patterns directly.
+
+(e) Wrapper enhancements (67 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 67 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT DSP CHANNEL-PEAK ALIGNMENT DIAG — single emit at end
+of detect_splices logging file -> n_selected, peak_align_p25/p50/p75
+where peak_align = |argmax_t phase - argmax_t cpe| in [t-1, t+1]
+for each survivor. Binding for any DSP-temporal FE probe.
+(4) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id +
+peak_align) — combined per-emit metadata logged once per file.
+(5) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss vs recall-crater
+vs precision-save patterns directly.
+(6) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(7) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(8) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-5 SHAP
+features and their delta vs prior keep would let me decide whether
+to add complementary FE or pivot.
+(10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(11) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(12) FORCE-EVAL SUBCOMMAND for the wrapper.
+(13) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(14) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(15) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(16) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+
