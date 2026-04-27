@@ -5123,3 +5123,246 @@ BLOCK.
 PROMPT ARCHITECTURE BLOCK.
 [auto] (no SHAP data for either 6d11b7f or 75150c4)
 
+## 2026-04-27T11:06:29+09:00 — 59b6b1b (keep, combined=0.146208)
+subject: ISOLATION_DIST_S_LOW 12.0 -> 10.0 (push the just-kept gate-distance axis)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_DIST_S_LOW 12.0 -> 10.0 (push the just-kept gate-distance axis)
+
+(a) HYPOTHESIS: edit splice/detector.py:106 to lower
+ISOLATION_DIST_S_LOW from 12.0 to 10.0. Pure detector primary tunable;
+no retrain; no FE; no new constants; no structural change. The post-
+emit isolation gate routes four populations to ISOLATION_DIST_S_LOW
+(the "tight" neighbor distance): (i) edge-zone emits (HEAD<4s OR
+TAIL<3s), (ii) sparse-cluster emits (cluster_size < 5), (iii) short-
+file emits (file_dur < 45s), (iv) very-marginal probability emits
+(p < 0.990) in long files. Tightening the shared gate from 12s to
+10s trims solitary survivors across all four tiers simultaneously.
+All other tunables byte-identical (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0,
+DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997,
+ISOLATION_DIST_S=30.0, ISOLATION_PROB_LOW_CEIL=0.990,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5; classifier
+{0:1.0,1:1.0,2:2.0}, max_iter=500, max_depth=6, max_leaf_nodes=32,
+lr=0.07, l2=2.0, min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: the just-kept 75150c4
+(ISOLATION_DIST_S_LOW 15.0 -> 12.0) yielded +0.002679 to combined=
+0.142135 — the LARGEST single-iter gain since 3785e80 (cluster
+THR_N 2->3, +0.004191). The gate-distance axis was untouched for
+the entire history before the just-kept iter (15.0 since ea37815
+introduced it) and is now demonstrably productive with substantial
+fluke real estate at the 12-15s neighbor band. The cited 75150c4(c)(1)
+compound names this hypothesis verbatim: "push DIST_S_LOW 12 -> 10
+(the cited risky-but-untested step)". Single-knob push is the
+cleanest follow-up — the tiered alternative
+(ISOLATION_DIST_S_VERY_TIGHT=8s for singletons+edge intersection)
+introduces a new constant + multi-tier branch and would muddy
+attribution between "tighter-gate-helps" and "specific-tier-cut-works".
+
+The cluster-axis trajectory establishes the productive-axis push
+template: each step decelerates but stays above noise until a
+saturation point. The gate-distance trajectory has only one data
+point so far (15->12: +0.002679), no evidence of saturation. The
+12->10 push tests one of two outcomes: (i) gate-distance has a
+similar productive tail like the cluster axis did (THR_N 2->3->4->5
+each kept), or (ii) the 10s threshold is the cited recall-cliff for
+real splice pairs spaced 10-15s in 30s eval files. Either result
+cleanly bounds the gate-distance approach class.
+
+Mechanically distinct from all 20+ prior probes — same axis as the
+just-kept but tests a different gate-distance value:
+- Probability-graded, time-graded, class-conditioned, density-aware
+  (file-level), edge-aware, cluster-aware: all explored.
+- Gate-distance push: the unexplored extension of a freshly-productive
+  primary tunable.
+
+Mechanism: solitary fluke survivors across the four routed populations
+currently survive when their nearest neighbor sits at 11-12s away
+(just under the 12s threshold). Tightening to 10s catches that
+geometric tail across all four tiers. In 30s eval files, real splice
+pairs are typically spaced with 5-10s separation per the splice
+generator's natural distribution (most paired splices have 3-8s
+internal spacing); pairs spaced 10-12s are at the sparse end. Real
+same_voice_edits at 10-12s spacing exist but are minority cases —
+the wrapper reverts cleanly on regression so the bounded downside
+makes this worth probing.
+
+WHY 10.0 not 11.0 or 8.0:
+- 10.0 is the value cited verbatim by 75150c4(c)(1); cleanly
+  discriminates "the cited compound worked / didn't".
+- 11.0 (half-step from 12) is likely noise band given the gate
+  is already tight; 1s window slightly trims survivors.
+- 8.0 enters territory where real-splice pairs at typical 5-8s
+  spacing risk losing their second member's neighbor support;
+  10s is the conservative midpoint between current 12s and the
+  "untested risky" 8s reserve.
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_CLUSTER_THR_N 5 -> 6: same axis kept at +0.0002 last
+  push; cluster_size=5 spans ~0.32s = full +/-2s window real-splice
+  shape; high recall risk; trajectory saturating.
+- Tiered cluster gate (DIST_S_VERY_TIGHT=8s for singletons+edge
+  intersection): introduces new constant; muddies attribution.
+  Reserve as next-iter compound IF this push is null.
+- ISOLATION_DIST_S 30 -> 25 (gentle gate tightening): affects only
+  high-confidence interior emits in long files, a population already
+  filtered by every prior tier; lower expected fluke density.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  21st-iter isolation tweak likely noise band.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: 59f3f2b discarded at 0.992;
+  encroaches upper-marginal real-splice zone.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed; pushing further likely catches real
+  splices firing cliff-config.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive.
+- TEMPORAL CHANNEL-PEAK ALIGNMENT FE (cited 4c25c09(c)(2),
+  3785e80(c)(2), 6d11b7f(c)(2)): retrain required; phase-CPE coherence
+  4c25c09 regressed -0.004; reserve as next pivot if gate-distance
+  exhausts at 10s.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push uniform: band exhausted.
+- Density-aware file-level ISOLATION_PROB_CEIL: 75ac490 flat zero
+  bite — wrong granularity.
+
+Penalty leverage: combined=0.142135 / F0.5=0.787811 -> algebraic
+penalty 0.180 -> back-derived clean_fp/min ~4.54 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.3 cf/min
+trim from solitary-fluke drops at 10-12s tail yields combined ~0.149
+(+5%). Optimistic: 0.7 cf/min trim yields combined ~0.157 (+10%).
+Pessimistic: recall 0.60 -> 0.58 from losing 1-2 real splice pairs
+spaced 10-12s in short eval files, cf flat -> F0.5 ~0.776, combined
+~0.140 (-1.5%). Bad case: recall 0.55, cf flat -> combined ~0.124
+(-13%). Asymmetric mild upside, moderate-bounded downside. Broad
+mechanism (affects four populations simultaneously) — same shape as
+the just-kept iter so attribution mechanism is consistent. Even null
+result cleanly attributes "gate-distance bite saturates at 12s, no
+solitary fluke tail at 10-12s neighbor distance" — confirms gate-
+distance axis ceiling.
+
+Smoke-verifiable: detector.py imports cleanly with one constant
+value change; isolation block unchanged in shape; dist_thresh
+selection unchanged.
+
+(c) IF THIS FAILS:
+(1) combined > 0.146 — tighter gate IS biting further. Next iter
+compound: push DIST_S_LOW 10 -> 8 OR introduce per-tier tighter
+sub-gate (ISOLATION_DIST_S_VERY_TIGHT=8s for the most fluke-dense
+intersection of singletons + edge-zone) preserving 10s for the
+gentler tiers.
+(2) combined ~ 0.139-0.144 noise band — gate-distance saturates
+at 12s; no fluke tail at 10-12s neighbor distance. Pivot DECISIVELY
+to TEMPORAL CHANNEL-PEAK ALIGNMENT FE in features.py: for each
+candidate, find argmax time of phase_curve in [t-1, t+1], same for
+cpe_curve, distance as feature. Captures "are the channel peaks
+co-located in time?" — orthogonal to phase-CPE value-correlation
+(which 4c25c09 regressed on). Retrain ~3-8min.
+(3) combined < 0.135 — tighter gate drops too many real splice
+pairs spaced 10-12s. Revert to 12.0 and pivot to the tiered cluster
+gate variant: ISOLATION_DIST_S_VERY_TIGHT=8s applied ONLY when
+both is_sparse_cluster AND is_edge fire (the most fluke-dense
+intersection), keeping the broader 12s for non-intersecting tiers.
+
+(d) Information gaps:
+(1) Most binding: per-emit nearest-neighbor distance distribution
+diag still NOT surfaced. Knowing the empirical histogram of nearest
+neighbor distances across the 60-file eval would directly size this
+iter's bite — what fraction of survivors have nearest neighbor in
+[10, 12)s? Currently no diag captures this; relying on first-
+principles reasoning about file durations and gate geometry.
+(2) Per-emit cluster-size distribution diag still NOT surfaced
+(cited 22 iters running).
+(3) Per-emit FILE-RELATIVE-TIME distribution diag still NOT
+surfaced.
+(4) Per-class clean_fp breakdown still NOT surfaced.
+(5) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.54
+persists 23 iters. Stale iter-0 baseline never updates on keep.
+(6) Eval file duration distribution unknown beyond "30-120s".
+(7) Eval splice-position distribution unknown — operator-side data
+on whether real splice pairs are placed with median spacing of
+3-8s, 8-12s, or 12-25s would directly size the recall risk of
+this iter.
+(8) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(9) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(10) ARCHITECTURE block doesn't surface that detector emits
+label_id in {1, 2} only nor the alphabetical class_names index
+mapping.
+(11) The cluster-axis trajectory data (THR_N gain pattern) is
+only recoverable by reading 4 sequential reflections; same is now
+true for the gate-distance axis as it builds out.
+
+(e) Wrapper enhancements (60 consecutive iters with persistent
+gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 60 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific service
+phrases.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT NEAREST-NEIGHBOR DISTANCE DIAG — single emit at end
+of detect_splices logging file -> n_selected, nearest_dist_p25/
+p50/p75, n_in_neighbor_band([0,5)), n_in_neighbor_band([5,8)),
+n_in_neighbor_band([8,10)), n_in_neighbor_band([10,12)),
+n_in_neighbor_band([12,15)), n_in_neighbor_band([15,20)),
+n_in_neighbor_band([20,30)), n_in_neighbor_band([30,inf)). ~6
+lines in detector.py near the existing scan_summary emit; binding
+on every gate-distance probe.
+(4) PER-EMIT CLUSTER-SIZE DISTRIBUTION DIAG — single emit logging
+file -> n_selected, cluster_size_p25/p50/p75, n_singletons,
+n_doublets, n_triplets, n_quadruplets, n_dense (>=5). Repeat ask
+22+ iters running.
+(5) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit logging file ->
+file_dur_s, n_in_first_2s, n_in_2_3s, n_in_3_4s, n_in_4_5s,
+n_in_last_2s, n_in_last_2_3s, n_in_last_3_4s, n_interior. Repeat
+ask 22+ iters running.
+(6) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE-
+TIME + CLUSTER-SIZE + NEAREST-NEIGHBOR JOINT DIAG — combined
+per-emit metadata logged once per file, filterable downstream by
+any axis.
+(7) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(8) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap diag.gbm.isolation_filter / chunk_scan_done events into a
+single line "isolation: N drops, dsp_max: J drops, dsp_sum: K
+drops, breakdown by prob-band / file_dur-band / edge-head-band /
+edge-tail-band / cluster-size-band / neighbor-distance-band"
+surfaced in CURRENT STATE.
+(9) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(10) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(11) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE TUNABLE FRONTIER — extend frontier text to surface
+all classifier tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN /
+DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL /
+ISOLATION_DIST_S / ISOLATION_DIST_S_LOW / ISOLATION_FILE_DUR_THR_S /
+ISOLATION_EDGE_HEAD_S / ISOLATION_EDGE_TAIL_S /
+ISOLATION_CLUSTER_THR_N tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(12) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt — for any
+tunable that has multiple sequential keeps on the same axis,
+surface a one-line trajectory with delta per iter. e.g.,
+"ISOLATION_CLUSTER_THR_N: 2(+0.001) -> 3(+0.004) -> 4(+0.0004)
+-> 5(+0.0002)" and "ISOLATION_DIST_S_LOW: 15(baseline) ->
+12(+0.003)". Currently only recoverable by reading 4+ sequential
+reflections.
+(13) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(14) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(15) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.54. Auto-recompute on keep or
+remove the stale value entirely.
+(16) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(18) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+[auto] (no SHAP data for either 75150c4 or 59b6b1b)
+
