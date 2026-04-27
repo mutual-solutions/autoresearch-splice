@@ -7816,3 +7816,220 @@ PROMPT ARCHITECTURE BLOCK.
 ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift
 in the prompt-builder so the classifier surface matches reality.
 
+## 2026-04-27T22:29:01+09:00 — c35ba8e (discard, combined=0.151237)
+subject: ISOLATION_FILE_DUR_THR_S 45.0 -> 60.0 (broaden short-file tier population)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_FILE_DUR_THR_S 45.0 -> 60.0 (broaden short-file tier population)
+
+(a) HYPOTHESIS: edit splice/detector.py:115 to raise ISOLATION_FILE_DUR_THR_S
+from 45.0 to 60.0. Pure detector primary tunable; no retrain; no FE; no
+new constants; no structural change. The is_short_file flag (file_dur_s
+< ISOLATION_FILE_DUR_THR_S) routes non-edge non-sparse emits in those
+files to ISOLATION_DIST_S_LOW=8.0 instead of the probability-graded
+ISOLATION_DIST_S=30.0 / LOW=8.0 split. Raising the threshold to 60s
+expands the short-file population — files in [45, 60)s now also use the
+tight 8s gate for their 4th-tier emits (the residual high-conf interior
+non-sparse non-edge population which 00a9b0a flat result showed has no
+fluke real estate at 25-30s neighbor distance, but might at 8-30s
+neighbor distance via the file_dur-tier reroute). All other tunables
+byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S
+=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_EDGE_HEAD_S=4.0, ISOLATION_EDGE_TAIL_S=3.0,
+ISOLATION_CLUSTER_THR_N=5, ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier
+{0:1.0,1:1.0,2:2.0}, max_iter=500, max_depth=6, max_leaf_nodes=32,
+lr=0.07, l2=2.0, min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 8 consecutive discards establish saturation
+across:
+- 4 isolation/intersection variants (94b6b42 sparse+short cluster<5
+  -0.020 cratered; f53e71e edge cluster<6 recall to 0.102; 687205d
+  short+sparse cluster<3 -0.012; 00a9b0a DIST_S 30->25 flat).
+- 3 FE pivots (efe38ee peak_align -0.006; da02a01 peak_height_diff
+  -0.010; f67afba cluster_marginal=3 -0.002).
+- 1 class_weight (cbc742d {0:1.5, 1:1, 2:2} -0.007 cross_voice boost).
+
+The just-discarded cbc742d(c)(3) directs verbatim: "Pivot to
+ISOLATION_FILE_DUR_THR_S 45 -> 60 (untouched-direction single-knob
+isolation push) OR per-band spectral-flux FE." This iter probes the
+former — fresh primary axis, instant, no retrain, structurally narrow.
+
+ISOLATION_FILE_DUR_THR_S=45.0 has been STABLE since 86d35ab introduced
+file-duration-graded isolation. Never touched since. Recent failure
+patterns rule out broadening short-file population with sparse cluster
+predicates (94b6b42, 687205d both failed because short-file interior
+sparse clusters CONTAIN real splices). But this iter is mechanistically
+distinct: it doesn't combine short_file with sparse — it broadens the
+short_file definition itself, affecting the 4th-tier (non-edge AND
+non-sparse) population in newly-classified-short files [45, 60)s.
+
+The short_file tier in the elif branch (detector.py:485-486) routes
+NON-edge AND NON-sparse_cluster emits to ISOLATION_DIST_S_LOW=8.0
+regardless of probability. This is a milder treatment than the
+intersection branch (VERY_TIGHT=6.0 unconditional drop) but tighter
+than the long-file 4th-tier 30s gate. Files in [45, 60)s currently use
+the 30s/8s probability-graded split for their 4th-tier emits; raising
+the threshold to 60s reroutes them to the unconditional 8s gate.
+
+Mechanism: in 45-60s files, the 30s gate spans 50-67% of the file —
+nearly "anywhere in file" — so isolation rarely fires. Real splices in
+those files typically pair within 5-10s natural splice spacing
+(generator's distribution); pairs 30s+ apart in a 50s file are
+mechanically rare. So 4th-tier solitary survivors in 45-60s files are
+biased toward fluke shapes that scraped above all gates AND happen to
+be alone at >30s neighbor distance. Tightening to 8s catches these
+solitary survivors while preserving real-splice pairs spaced within
+8-30s.
+
+Mechanically distinct from all 26 prior probes:
+- All gate-distance LOW pushes (15->12->10->8): single shared gate
+  applied uniformly across OR-routed tiers.
+- All cluster-axis (THR_N 2->5): dedupe topology global threshold.
+- All intersection variants (edge+sparse, sparse+short, edge+broader-
+  cluster, short+narrow-sparse, marginal+sparse): conjunctive sub-gates.
+- Probability-graded (ISOLATION_PROB_LOW_CEIL): per-emit probability
+  bands.
+- Edge-aware (ISOLATION_EDGE_HEAD_S/TAIL_S): per-emit time POSITION.
+- File-duration-aware (this iter): per-FILE duration property
+  controlling which gate applies to non-edge non-sparse emits — the
+  file_dur axis untouched since introduction.
+
+WHY 60.0 not 50.0 or 75.0:
+- 60.0 cited verbatim by cbc742d(c)(3); cleanly discriminates "the
+  cited reserve worked / didn't".
+- 50.0 a quarter-step expansion; smaller population subset (only files
+  in [45, 50)s); likely noise band.
+- 75.0 reroutes 4th-tier emits in [45, 75)s files to 8s gate; that's
+  ~50% of 30-120s eval files; broader recall risk especially in
+  60-75s files where real-splice pairs spaced 10-20s become routed
+  through the 8s gate which defeats the gate's purpose (the file is
+  long enough that 30s would be a real "alone in file" check).
+
+WHY OVER ALTERNATIVES:
+- Per-band spectral-flux peak time FE (cited cbc742d(c)(2) reserve):
+  retrain ~3-8min; recent 3 FE failures on phase/cpe-derived signals
+  suggest GBM saturated on existing 81-feature set; risk of repeating
+  null pattern. Reserve as next pivot if this null.
+- ISOLATION_DIST_S_LOW 8 -> 7 (push global LOW further): trajectory
+  decelerating (+0.003 -> +0.004 -> +0.002); approaches GBM_MIN_SEP_S
+  =6 cliff (1s above); affects all 4 routed populations broader recall
+  risk; same axis 4th iter likely diminishing return.
+- ISOLATION_PROB_CEIL 0.997 -> 0.998: encroaches dense-real-splice
+  survivor zone; recall risk.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- ISOLATION_DIST_S 30 -> 22: 00a9b0a 30->25 flat; pushing further
+  into thin population is high-risk-low-reward.
+- class_weight {0:2, 1:1, 2:2} (full doubling cited cbc742d(c)(1)):
+  retrain ~3-8min; just-discarded {0:1.5} regression suggests cross_
+  voice boost direction is non-productive at half-step; doubling
+  likely worse.
+- class_weight {0:1, 1:1, 2:3}: recall-side move while penalty drag
+  dominates.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated 5+ iters.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+- ANALYSIS_STRIDE_S smaller: sharp peak ruled out.
+- GBM_MIN_SEP_S 6 -> 7: saturated upward.
+- 4th feature add on phase/cpe-derived signals: 3 recent failures.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.2 cf/min
+trim from 4th-tier solitary fluke drops in 45-60s files yields
+combined ~0.157 (+4%). Optimistic: 0.5 cf/min trim yields combined
+~0.162 (+7%). Pessimistic: recall 0.60 -> 0.59 from losing 1 real
+splice in a 45-55s file with no neighbor within 8s (real splice pairs
+typically cluster 5-10s apart but boundary cases exist), cf flat ->
+F0.5 ~0.781, combined ~0.150 (-1%). Bad case: recall 0.55, cf flat
+-> combined ~0.135 (-11%). Asymmetric small-to-mild upside, moderate-
+bounded downside. Population is structurally narrow (45-60s files
+~25% of 30-120s eval set; only 4th-tier non-edge non-sparse emits
+in those files affected, ~10-20% of survivors per file). Even null
+result cleanly attributes "the file_dur axis ceiling sits at 45s,
+broadening to 60s adds no fluke real estate" — bounds the file-
+duration-aware approach.
+
+Smoke-verifiable: detector.py imports cleanly with one constant value
+change; isolation block unchanged in shape.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — broader short-file tier IS biting. Next iter
+compound: push 60 -> 75 OR introduce a per-tier sub-threshold
+(ISOLATION_FILE_DUR_THR_S_TIGHT=45.0, route emits in [45, 60)s to
+LOW=8s, emits in [<45)s to a TIGHTER gate VERY_TIGHT=6s).
+(2) combined ~ 0.148-0.153 noise band — file_dur axis ceiling at 45s.
+Pivot DECISIVELY to PER-BAND SPECTRAL-FLUX PEAK TIME FE in
+features.py (cited cbc742d(c)(2) and efe38ee(c)(2)/da02a01(c)(2)
+reserve): for each candidate, compute STFT spectral flux per band
+(low/mid/high), find argmax time of each in [t-0.2, t+0.2], measure
+peak co-location distance. Mechanistically distinct from the failed
+phase/cpe-derived FEs — different signal source (raw STFT spectral
+flux not fused-channel z-scores). Retrain ~3-8min.
+(3) combined < 0.144 — broader short-file tier drops real splices in
+45-60s files (e.g., natural splice pairs spaced 10-20s in mid-
+duration Korean dialogue). Revert. Pivot DECISIVELY to PER-BAND
+SPECTRAL-FLUX FE.
+
+(d) Information gaps:
+(1) Most binding: eval file duration distribution unknown beyond
+"30-120s". Knowing what fraction of eval files fall in [45, 60)s
+vs [30, 45)s vs [60, 120]s would directly size this iter's bite —
+the affected population. Currently no diag captures file_dur
+distribution; relying on first-principles reasoning.
+(2) Per-emit nearest-neighbor distance distribution diag still NOT
+surfaced.
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 34 iters. Stale iter-0 baseline never updates on keep.
+(5) Eval splice-position distribution unknown.
+(6) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(8) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss flat vs recall-
+crater vs precision-save patterns directly.
+(9) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+(10) SHAP feature-importance from current 81-feature classifier
+still NOT surfaced — would inform whether recent FE failures were
+redundancy or weak feature.
+
+(e) Wrapper enhancements (71 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 71 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-FILE DURATION HISTOGRAM in PROMPT ARCHITECTURE BLOCK —
+add a one-line summary of eval file duration distribution
+(p10/p25/p50/p75/p90 across the 60 sampled files, plus count in
+[<45)s, [45-60)s, [60-90)s, [90-120]s bins). Binding for any
+file_dur-axis probe. ~5 lines in evaluate.py + ~3 lines in
+prompt-builder.
+(4) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id).
+(5) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min.
+(6) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(7) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(8) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(11) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(12) FORCE-EVAL SUBCOMMAND for the wrapper.
+(13) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(14) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep or
+remove the stale value entirely.
+(15) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE BLOCK.
+(16) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK.
+(17) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL
+IS HistGradientBoostingClassifier — fix the docstring drift.
+
