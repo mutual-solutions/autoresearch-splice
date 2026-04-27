@@ -103,7 +103,7 @@ ISOLATION_DIST_S = 30.0
 # upper-marginal [ISOLATION_PROB_LOW_CEIL, ISOLATION_PROB_CEIL) band where
 # softer real same_voice_edits live.
 ISOLATION_PROB_LOW_CEIL = 0.990
-ISOLATION_DIST_S_LOW = 12.0
+ISOLATION_DIST_S_LOW = 10.0
 # File-duration-graded variant: in short eval files (file_dur_s <
 # ISOLATION_FILE_DUR_THR_S), the fixed 30s gentle threshold collapses
 # to "anywhere in the file" — marginal upper-band emits effectively
