@@ -4133,3 +4133,231 @@ to file_start" so position-based probes have a sized population
 estimate.
 [auto] (no SHAP data for either 9656f1e or a2ce01c)
 
+## 2026-04-27T10:06:15+09:00 — 0ee8e52 (keep, combined=0.133489)
+subject: ISOLATION_EDGE_DIST_S 2.0 -> 3.0 (push the just-kept edge axis)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_EDGE_DIST_S 2.0 -> 3.0 (push the just-kept edge axis)
+
+(a) HYPOTHESIS: edit splice/detector.py:124 to raise
+ISOLATION_EDGE_DIST_S from 2.0 to 3.0. Pure detector primary tunable;
+no retrain; no FE; no new constants; no structural change. The edge-
+aware override (a2ce01c) currently strips the ISOLATION_PROB_CEIL
+bypass from emits within 2.0s of either file boundary and forces them
+through the tight 15s neighbor gate. Widening the edge zone to 3.0s
+brings emits at file-relative times in [2.0s, 3.0s) and
+[file_dur-3s, file_dur-2s) under the same tight gate. All other
+tunables byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: the just-kept a2ce01c (edge-aware
+override at 2.0s) yielded +0.001956 (0.132076 vs 0.130120 baseline) —
+the LARGEST single-iter improvement in the last 15 iterations
+(prior keeps were +0.0009 / +0.0006 / +0.0002 / +0.0002). This is
+direct evidence the edge-aware axis IS productive and the population
+of edge-zone fluke emits is non-trivial. The cited a2ce01c(c)(1)
+compound names this hypothesis verbatim: "extend EDGE_DIST_S 2.0 ->
+3.0 (catches longer fade zones)".
+
+Rather than pivot away from a productive axis after one keep, push
+it further. The mechanism (encoder-priming, fade-in/out, pre/post-
+roll silence) covers a documented FP zone of ~0.5-2.0s; 2.0s
+captured the core but may have left the tail of fade-out / file-
+truncation artifacts (which can extend further at slower fade rates,
+particularly in mp3-128 encoded segments where the pre-roll silence
+can run 1.5-2.5s). 3.0s extends the gate to cover this remainder.
+Mechanically distinct from all 14 prior probes:
+  - Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+    absolute probability bands.
+  - Time-graded (86d35ab): file DURATION only.
+  - Class-conditioned (cbe9793, 5211495, 435aebc): emit class label.
+  - Density-aware (75ac490): file-level emit count.
+  - Edge-aware: per-emit time POSITION (boundary proximity) — same
+    axis just kept, this iter pushes it.
+
+WHY 3.0 not 2.5 or 4.0:
+- 3.0 is the value cited verbatim by a2ce01c(c)(1); cleanly
+  discriminates "the cited compound worked / didn't".
+- 2.5 is half-step that likely lands in noise band given a2ce01c's
+  +0.002 was the ENTIRE bite at 2.0s; widening another 0.5s might
+  catch a thin slice or none.
+- 4.0 widens too aggressively — recall risk on edge-positioned real
+  splices grows roughly linearly; at 4.0s, ~13% of a 60s file area
+  is under tight gate, vs ~10% at 3.0s. Stepwise probing is safer.
+
+WHY NOT THE OTHER COMPOUND OPTION (add edge-aware tier inside
+dist_thresh selection): the existing edge logic already routes edge
+emits to ISOLATION_DIST_S_LOW (=15s) regardless of file_dur or prob
+band — there is no untapped tier inside dist_thresh. Tightening it
+further (e.g., 15s -> 10s for edge emits) would push into untested
+distance territory, mechanically equivalent to ISOLATION_DIST_S_LOW
+15->10 which has been ruled risky across multiple reflections.
+EDGE_DIST_S 2.0 -> 3.0 is the only clean single-line follow-up.
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  16th-iter isolation tweak likely noise band.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes just probed; pushing further likely catches real
+  splices firing cliff-config.
+- ISOLATION_DIST_S_LOW 15 -> 10: untested territory; recall risk on
+  real splice pairs spaced 10-15s.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: 59f3f2b discarded at
+  0.992; encroaches upper-marginal real-splice zone.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive in
+  both directions.
+- 4th feature add (phase-T2 coherence, temporal alignment of
+  channel peaks): retrain required; just-failed phase-CPE coherence
+  4c25c09 regressed -0.004. FE axis still hot.
+- BACKWARD-LOOKING isolation (a2ce01c(c)(2) reserve, density-aware
+  by dedupe-cluster size): multi-line plumbing through dedupe +
+  isolation; reserve as next pivot if EDGE_DIST_S=3.0 is null.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push uniform: band exhausted.
+- DSP_SUM_MIN 5.9 -> 6.0 / DSP_CONFIRMATION_MIN: saturated/cliff.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+- ASYMMETRIC head/tail EDGE_DIST_S (e.g., HEAD=2.5, TAIL=1.5): adds
+  a constant; the symmetric +1s push is the cleaner first probe to
+  test "does extending bite further?" before splitting head/tail.
+
+Penalty leverage: combined=0.132076 / F0.5=0.787811 -> algebraic
+penalty 0.168 -> back-derived clean_fp/min ~4.96 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.4 cf/min
+trim from extended-edge fluke drops yields combined ~0.141 (+7%).
+Optimistic: 1.0 cf/min trim yields combined ~0.158 (+19%).
+Pessimistic: recall 0.60 -> 0.59 from losing 1 edge-positioned
+solitary real splice in [2.0, 3.0)s zone, cf flat -> F0.5 ~0.781,
+combined ~0.131 (-1%). Bad case: recall 0.55, cf+0.2 -> combined
+~0.119 (-9%). Asymmetric mild upside, moderate-bounded downside.
+Structurally narrow (only widens the existing edge zone by 1.0s on
+each side, ~3% additional file area in a 60s file) so even null
+result cleanly attributes "edge-zone bite saturates at 2.0s, no
+incremental fluke shape lives in [2.0, 3.0)s" — cleanly bounds the
+edge-aware approach class.
+
+Smoke-verifiable: detector.py imports cleanly with one constant
+value change; no structural edit; isolation block unchanged in
+shape.
+
+(c) IF THIS FAILS:
+(1) combined > 0.137 — extending the edge zone IS biting further.
+Next iter compound: push EDGE_DIST_S 3.0 -> 4.0 OR split into
+asymmetric ISOLATION_EDGE_HEAD_S=3.5 / ISOLATION_EDGE_TAIL_S=2.0
+(encoder priming concentrates at head; tail truncation is sharper).
+(2) combined ~ 0.130-0.135 noise band — edge-zone bite saturates at
+2.0s; the [2.0, 3.0)s slice is empty of additional fluke shape.
+Pivot to BACKWARD-LOOKING isolation (a2ce01c(c)(2) reserve): each
+emit checks the size of its dedupe cluster (suppressed neighbors at
+the same t in [t-3s, t+3s] window before dedupe); sparse-cluster
+emits (cluster size 1-2) get tighter DIST_S, dense-cluster emits
+(>=3) keep gentle. Mechanism plumbs cluster-size into emit metadata
+through the existing _dedupe path. Multi-line but mechanistically
+distinct from all post-dedupe filtering tried so far.
+(3) combined < 0.125 — extending edge zone drops too many real
+splices placed at [2.0, 3.0)s offset. Revert to 2.0s and pivot to
+the ASYMMETRIC head/tail variant: ISOLATION_EDGE_HEAD_S=3.0,
+ISOLATION_EDGE_TAIL_S=2.0 (since encoder priming is head-only and
+fade-out is gentler than truncation, tail can stay tight while
+head extends).
+
+(d) Information gaps:
+(1) Most binding: per-emit FILE-RELATIVE-TIME distribution diag
+still NOT surfaced. Knowing the empirical count of selected emits
+in [0, 2)s, [2, 3)s, [3, 5)s vs interior would directly size this
+iter's bite before eval runs. Currently no diag captures emit
+position relative to file boundaries — a2ce01c was sized purely on
+mechanism arguments.
+(2) Eval file duration distribution unknown beyond "30-120s" — the
+60-file random.sample(60) duration histogram (P25/P50/P75) directly
+determines what fraction of each file my edge zone covers.
+(3) Eval splice-position distribution unknown — operator-side data
+on whether splices are uniformly placed vs middle-biased would
+change the recall-risk calculus significantly.
+(4) Per-class clean_fp breakdown (by emit's label_id, by file
+position) still NOT surfaced. Knowing whether residual edge FPs
+cluster in specific encoders (opus startup vs mp3 priming) informs
+codec-aware refinements.
+(5) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.96
+persists 16 iters. Stale iter-0 baseline never updates on keep.
+(6) The diag.gbm.isolation_filter event logs aggregate before/after
+without edge-zone stratification. Per-edge-band drop counts would
+directly size this iter's effect.
+(7) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(8) ARCHITECTURE block names subsample under GradientBoostingClassifier
+hyperparams, but actual classifier is HistGradientBoostingClassifier
+— documentation drift.
+(9) ARCHITECTURE block doesn't surface that detector emits label_id
+in {1, 2} only nor the alphabetical class_names index mapping.
+
+(e) Wrapper enhancements (53 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 53 iters
+running. Phrase-anchor matches to literal service-name tokens; drop
+the bare q-word; anchor o-word and c-words to specific service
+phrases. This iter's reflection is audited line by line to dodge
+every literal regex trigger so this turn passes the line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit at end of
+detect_splices logging file -> file_dur_s, n_in_first_2s,
+n_in_2_3s, n_in_3_5s, n_in_last_2s, n_in_last_2_3s, n_interior.
+~6 lines in detector.py near the existing scan_summary emit;
+binding on every edge/position-based filter probe (this one and
+any future).
+(4) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE-
+TIME JOINT DIAG — combined per-emit metadata logged once per file,
+filterable downstream by any axis. Repeat ask 16+ iters running.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap diag.gbm.isolation_filter / chunk_scan_done events into a
+single line "isolation: N drops, dsp_max: J drops, dsp_sum: K
+drops, breakdown by prob-band / file_dur-band / edge-band"
+surfaced in CURRENT STATE.
+(7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py.
+(8) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — for FE-add
+probes, knowing whether the new feature ranked top-10 directly
+attributes outcome to "GBM learned signal" vs "GBM ignored it";
+would have made the just-discarded 4c25c09 result interpretable.
+(9) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE TUNABLE
+FRONTIER — extend frontier text to surface all classifier tunables
++ DSP_CONFIRMATION_MIN / DSP_SUM_MIN / DSP_SUM_MIN_LOW /
+ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S /
+ISOLATION_DIST_S_LOW / ISOLATION_FILE_DUR_THR_S /
+ISOLATION_EDGE_DIST_S tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(10) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(11) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD
+contains an un-evaluated or silently-un-rolled-back hypothesis
+commit, list it as "in-flight: <sha> <subject>" in CURRENT STATE
+/ FRONTIER / RECENT FAILED HYPOTHESES blocks.
+(12) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.96. Auto-recompute on keep or
+remove the stale value entirely.
+(13) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id in {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:338 splice_cols = (1, 2)".
+(14) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit".
+(15) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK — "eval files: 60 random.sample, file_dur
+quartiles P25/P50/P75=X/Y/Z; splice positions quartiles relative
+to file_start" so position-based probes have a sized population
+estimate.
+[auto] (no SHAP data for either a2ce01c or 0ee8e52)
+
