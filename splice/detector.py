@@ -136,12 +136,17 @@ ISOLATION_EDGE_TAIL_S = 3.0
 # (singleton) means the survivor was the ONLY frame above all gates
 # within +/-6s — characteristic of single-frame fluke spikes (chord
 # transitions / phoneme boundaries / codec artifacts that scrape the
-# threshold at exactly one stride). Singletons lose the
-# ISOLATION_PROB_CEIL bypass and must satisfy the tight
+# threshold at exactly one stride). Sparse clusters (cluster_size <
+# THR_N) lose the ISOLATION_PROB_CEIL bypass and must satisfy the tight
 # ISOLATION_DIST_S_LOW neighbor gate regardless of probability or file
-# duration. THR_N=2 is the conservative first probe — only true
-# singletons (size=1) fire the new gate.
-ISOLATION_CLUSTER_THR_N = 2
+# duration. THR_N=3 widens the population to doublets (size in {1, 2})
+# — doublets are emits where two adjacent strides above all gates were
+# collapsed by dedupe, still characteristic of fluke shape (brief codec
+# artifact spanning ~0.13s, phoneme transition with extended formant
+# trail, chord transition where energy peak slopes across two strides)
+# vs real splices which typically span 3-5 adjacent strides at the
+# 0.0635s stride / +/-2s feature window geometry.
+ISOLATION_CLUSTER_THR_N = 3
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
