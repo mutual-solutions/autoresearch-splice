@@ -7345,3 +7345,253 @@ BLOCK.
 (17) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
 PROMPT ARCHITECTURE BLOCK.
 
+## 2026-04-27T21:18:12+09:00 — da02a01 (discard, combined=0.141600)
+subject: add dsp_phase_cpe_peak_height_diff_2s FE — phase/cpe channel-peak height differential in +/-1s window
+per-domain: (no per-domain data)
+
+# last_reflection — PHASE/CPE PEAK HEIGHT DIFFERENTIAL FE: dsp_phase_cpe_peak_height_diff_2s
+
+(a) HYPOTHESIS: add a new feature `dsp_phase_cpe_peak_height_diff_2s` to
+splice/features.py. For each candidate at t_sec, compute max value of
+phase_curve in [t-1, t+1], same for cpe_curve, return signed difference
+(phase_peak - cpe_peak). Both curves and their hops live in chunk_ctx
+(phase_curve / phase_hop_s / cpe_curve / cpe_hop_s); accessor pattern
+mirrors existing phase_z_at / cpe_z_at instantaneous samplers but uses
+nanmax over a window. Adds 1 new block (`_block_phase_cpe_peak_height`),
+1 entry in FEATURE_NAMES, 1 update to len assert (81 -> 82). Triggers
+automatic retrain via the wrapper. All other tunables byte-identical
+(GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5,
+ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80).
+
+(b) WHY OVER RECENT FAILURES: 6 consecutive discards establish two
+ceilings:
+- 4 isolation/intersection variants (94b6b42 sparse+short_file at
+  VERY_TIGHT cratered -0.020; f53e71e edge cluster<6 recall to 0.102;
+  687205d short+sparse cluster<3 -0.012; 00a9b0a DIST_S 30->25 flat).
+- 1 FE pivot (efe38ee dsp_phase_cpe_peak_align_2s timing distance
+  -0.006).
+- 1 intersection-axis confidence-prior (f67afba cluster_marginal=3
+  -0.002).
+
+The just-discarded f67afba(c)(2) directs verbatim: "Pivot DECISIVELY
+to PHASE/CPE PEAK HEIGHT DIFFERENTIAL FE in features.py: for each
+candidate, max value of phase_curve in [t-1, t+1] and same for
+cpe_curve, take ratio (or min/max). Captures channel-strength
+asymmetry not channel-timing — orthogonal to the just-failed
+peak_align FE." This iter probes that exact pivot with signed
+difference (cleaner than ratio which is unstable when peaks near
+zero — z-score curves can have low-magnitude regions).
+
+The 5+-on-isolation-axis structural-pivot trigger fired multiple
+iters back; FE direction has been queued for many reflections. The
+peak_align FE failed (-0.006) but that does NOT rule out all
+phase/cpe-derived FE — peak_align measures TIMING, height_diff
+measures AMPLITUDE BALANCE. These are mechanistically distinct
+physical signals:
+- Peak alignment (failed): "do channels fire at the same instant?"
+  GBM may have already extracted similar info from existing
+  dsp_phase_z + dsp_cpe_z + boundary_phase_coherence ensemble.
+- Peak height differential (this iter): "do channels fire with
+  similar magnitude?" — captures channel-strength asymmetry that
+  is NOT extractable from instantaneous z-scores alone (which only
+  see exactly-at-t magnitudes, not the local windowed peak height).
+
+Mechanism: real cross-source splices disrupt mic/room/speaker
+state simultaneously, so phase-z (carrier discontinuity) and
+cpe-z (signal predictability break) both peak at COMPARABLE
+magnitudes within ±1s of the splice instant. abs(phase_peak -
+cpe_peak) is small. Fluke FPs are usually monotone signal events
+where one channel dominates:
+- Chord transitions in singing: phase-z spikes hard at the
+  harmonic shift, cpe-z stays quiet (chord predictable from
+  harmonic context).
+- Phoneme boundaries in speech: phase-z fires on formant shifts,
+  cpe-z fires later or weaker; or vice versa for fricative-onset.
+- Codec micro-artifacts: spectrally narrow events fire one
+  channel strongly, the other weakly.
+- Pitch shift / vocal vibrato extrema: phase wraps strongly
+  while cpe sees stable predicted pitch.
+
+The signed difference preserves directional information (which
+channel dominates) — the GBM tree can split on positive and
+negative ranges to learn fluke-class-specific asymmetry patterns.
+
+Mechanically distinct from existing 81 features:
+- dsp_phase_z, dsp_cpe_z: instantaneous samples at exactly t_sec,
+  no windowed maximum.
+- _block_boundary boundary_phase_coherence: STFT-bin residual std
+  around ±200ms — different signal (boundary residual not z-score).
+- voiced cosine-distance features: value covariance over windowed
+  MEAN, not peak.
+- 4c25c09 phase-CPE coherence (regressed -0.004): value-correlation
+  over a window — measures linear covariance, not peak amplitude
+  asymmetry.
+- efe38ee peak_align (regressed -0.006): timing distance |argmax_t
+  phase - argmax_t cpe| — measures peak co-location, not peak
+  height balance.
+- This iter peak_height_diff: signed (phase_peak - cpe_peak) —
+  the only feature in the entire FE family that explicitly
+  captures channel-magnitude balance.
+
+The ±1s window matches the cited efe38ee mechanism narrative and
+sits inside the existing ±2s feature window of pre/post blocks
+(parity with mfcc/spec/nf/f0). Window is wide enough to capture
+the local channel peak without spilling into adjacent splices
+(real splices spaced 5+s apart; ±1s touches at most one peak).
+
+WHY signed difference not ratio or abs:
+- Signed: GBM tree splits naturally on both positive and negative
+  ranges; preserves information about which channel dominates
+  (different fluke classes have different dominant channel).
+- Ratio min(phase, cpe) / max(phase, cpe): unstable when both
+  peaks near zero (z-scores can be small in clean audio); requires
+  epsilon hack which adds noise.
+- Abs |phase - cpe|: loses direction info; signed strictly more
+  informative for tree splits.
+
+WHY OVER ALTERNATIVES:
+- Per-band spectral-flux peak time within ±200ms (cited
+  efe38ee(c)(2) reserve): different signal class but adds another
+  TIMING-based feature, peak_align failure suggests timing-based
+  features are redundant with existing ensemble.
+- Codec-frame-relative timing variance within ±1s (cited
+  efe38ee(c)(2)): codec-specific; eval mix has ~3 codecs equally,
+  needs codec-aware extraction.
+- ISOLATION_DIST_S_LOW 8 -> 7 (push global LOW further): trajectory
+  decelerating (+0.003 -> +0.004 -> +0.002); approaches GBM_MIN_SEP_S
+  =6 cliff (1s above); affects all 4 routed populations broader
+  recall risk; same axis 4th iter likely diminishing return.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  28th-iter isolation tweak likely noise band.
+- ISOLATION_PROB_CEIL 0.997 -> 0.998: encroaches dense-real-splice
+  survivor zone; recall risk.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive;
+  recall-side move while penalty drag dominates.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated 5+ iters.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21. With ~7x F0.5
+sensitivity per unit. Plausible: GBM picks up height_diff as a
+moderate-importance fluke discriminator, lifts F0.5 by 0.005
+(better separation of fluke chord/phoneme/codec emits at the
+classifier level so they don't fire above 0.985), trims 0.3 cf/min,
+combined ~0.158 (+5%). Optimistic: height_diff becomes a top-10
+SHAP feature that meaningfully reshapes the decision boundary,
+lifts F0.5 by 0.012 and trims 0.6 cf/min, combined ~0.166 (+10%).
+Pessimistic: GBM already extracts equivalent signal from
+ensemble of existing dsp_phase_z + dsp_cpe_z + voiced features,
+new feature is redundant and slightly degrades training (more
+dimensions for moderate-leaf splits), combined ~0.146 (-3%).
+Bad case: sentinel zero values at chunk boundaries (when t_sec
+is within 1s of chunk start/end) cause the model to key on a
+degenerate signal at chunk-edge candidates, combined ~0.135
+(-11%) — mitigated by the (p_hi <= p_lo) guard and existing
+_safe_nanmean / clamp-to-bounds patterns. Asymmetric mild-to-
+moderate upside, moderate-bounded downside; the signed-difference
+form is more stable than the ratio variant explicitly cited
+(no divide-by-zero edge case). Even null result cleanly attributes
+"phase-CPE peak height balance doesn't add information beyond
+what the existing 81-feature set provides" — bounds the
+DSP-amplitude-asymmetry FE class.
+
+Smoke-verifiable: features.py imports cleanly with new block;
+new feature name appears in FEATURE_NAMES; len assert updated.
+Wrapper auto-retrains on features.py change.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — height_diff IS a productive feature. Next
+iter compound: add complementary phase-CPE peak ratio (different
+nonlinearity) OR phase/cpe peak-window mean differential (smoothed
+variant of peak); forms a mini-block of pairwise channel-magnitude
+features.
+(2) combined ~ 0.148-0.153 noise band — height_diff redundant with
+existing features. Pivot to a TOTALLY DIFFERENT FE class: per-band
+spectral-flux peak time within ±200ms (different signal source than
+the DSP fused channels — uses raw STFT spectral flux not phase/cpe
+z-scores); reserve as next pivot.
+(3) combined < 0.144 — height_diff confuses GBM (e.g., chunk-edge
+sentinels create spurious training signal). Revert. Pivot to
+ISOLATION_DIST_S_LOW 8 -> 7 as a small-knob fallback OR to a
+totally orthogonal FE direction (per-band spectral-flux peak
+time, codec-frame variance).
+
+(d) Information gaps:
+(1) Most binding: per-emit phase-CPE peak height differential
+empirical distribution still NOT surfaced. Knowing the histogram
+of (phase_peak - cpe_peak) across the 60-file eval would directly
+size this feature's discriminative power before paying retrain
+cost.
+(2) SHAP feature-importance from existing 81-feature classifier
+still NOT surfaced — knowing whether dsp_phase_z / dsp_cpe_z are
+already top-5 SHAP would inform whether the height_diff feature
+adds new information vs being redundant.
+(3) FAILED-FE SHAP RANK in RECENT FAILED HYPOTHESES — efe38ee
+peak_align combined=0.144902 doesn't tell me whether the feature
+landed at SHAP rank 50 (ignored) or rank 5 (used but bumped a
+useful feature out of top-5). This would be decisive for whether
+to try ANOTHER phase/cpe-derived FE.
+(4) Per-class clean_fp breakdown still NOT surfaced.
+(5) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 32 iters.
+(6) Eval file duration / splice-position distribution unknown.
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(8) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+
+(e) Wrapper enhancements (69 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 69 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT PHASE-CPE PEAK HEIGHT DIFFERENTIAL DIAG — single emit
+at end of detect_splices logging file -> n_selected,
+height_diff_p25/p50/p75 where height_diff = (phase_peak -
+cpe_peak) in [t-1, t+1] for each survivor. Binding for any
+phase/cpe-derived FE probe. Mirrors the peak_align diag request.
+(4) FAILED-FE SHAP RANK DIAG — for failed features.py iters,
+surface the new feature's SHAP rank and importance value alongside
+combined in RECENT FAILED HYPOTHESES. Decisive for FE pivot
+attribution.
+(5) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id +
+peak_align + peak_height_diff) — combined per-emit metadata
+logged once per file.
+(6) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision,
+recall, clean_fp_per_min so I can distinguish near-miss vs
+recall-crater vs precision-save patterns directly.
+(7) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(8) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(9) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(10) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-5 SHAP
+features and their delta vs prior keep would let me decide
+whether to add complementary FE or pivot.
+(11) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(12) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(13) FORCE-EVAL SUBCOMMAND for the wrapper.
+(14) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(15) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep or
+remove the stale value entirely.
+(16) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(18) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+
