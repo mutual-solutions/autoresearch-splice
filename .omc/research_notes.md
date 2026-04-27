@@ -7083,3 +7083,265 @@ BLOCK.
 (17) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
 PROMPT ARCHITECTURE BLOCK.
 
+## 2026-04-27T13:11:01+09:00 — f67afba (discard, combined=0.149756)
+subject: ISOLATION_CLUSTER_THR_N_MARGINAL=3 (very-marginal+very-sparse intersection -> VERY_TIGHT)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_CLUSTER_THR_N_MARGINAL=3 (very-marginal-prob AND very-sparse cluster intersection -> VERY_TIGHT)
+
+(a) HYPOTHESIS: add ISOLATION_CLUSTER_THR_N_MARGINAL=3 in
+splice/detector.py. Insert one new branch in the dist_thresh selection
+(detector.py:481-490) BEFORE the existing edge+sparse intersection
+branch:
+`if (emit[2] < ISOLATION_PROB_LOW_CEIL
+    and cluster_sizes[i] < ISOLATION_CLUSTER_THR_N_MARGINAL):
+    dist_thresh = ISOLATION_DIST_S_VERY_TIGHT`
+This routes (p<0.990 AND cluster<3) emits — i.e., very-marginal
+singletons+doublets anywhere in the file — to unconditional drop
+(VERY_TIGHT=6.0 == GBM_MIN_SEP_S, structurally unsatisfiable post-
+dedupe). All other tiers byte-identical (intersection edge+sparse =
+VERY_TIGHT=6.0, edge XOR sparse = LOW=8.0, short-file alone = LOW=8.0,
+long-file high-conf interior = ISOLATION_DIST_S=30.0, long-file
+marginal interior = LOW=8.0). All other tunables byte-identical
+(GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5,
+ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81). Pure detector primary
+tunable; no retrain; no FE; 1 new module-level constant + 1 new
+3-line branch.
+
+(b) WHY OVER RECENT FAILURES: 5 consecutive discards establish two
+ceilings:
+- 4 isolation/intersection variants discarded (94b6b42 short+sparse
+  cluster<5: -0.020 cratered; f53e71e edge cluster<6: recall to 0.102;
+  687205d short+sparse cluster<3: -0.012; 00a9b0a DIST_S 30->25: flat).
+- 1 FE pivot discarded (efe38ee dsp_phase_cpe_peak_align_2s: -0.006).
+
+The cited 687205d(c)(1) reserve names this hypothesis verbatim:
+"introduce parallel ISOLATION_CLUSTER_THR_N_MARGINAL=3 routing
+(very-marginal-prob AND cluster<3) to VERY_TIGHT for the long-file
+marginal tier." This iter probes that with branch reordering so the
+intersection drops unconditionally regardless of overlapping
+edge/short_file membership.
+
+The failure pattern across 4 isolation variants pins down where
+intersection-tier expansion CAN'T go:
+- 94b6b42: cluster<5 at short_file is too broad (cluster=3,4 in
+  short interior contains real same_voice_edits).
+- f53e71e: cluster<6 at edge crosses real-splice support shape
+  (cluster=5 spans full +/-2s window).
+- 687205d: cluster<3 at short_file interior still contains real
+  splices (short Korean dialogue with rapid same-speaker turn cuts
+  produces single-stride splice signatures).
+
+Common signature: every failure is a SHAPE prior (cluster<N)
+combined with a POSITION/DURATION prior (edge / short_file). Real
+splices in those contexts retain support shape relative to the
+gate-truncation effects of edges and the splice-density per minute
+in short files. THIS iter's intersection uses a CONFIDENCE prior
+(p<0.990) instead — a mechanistically distinct prior class:
+- p<0.990 is the very-marginal probability tier where ea37815
+  prob-graded LOW gate kept +0.0002. Real splices typically dedupe
+  to high-prob survivors (p>=0.997 bypasses entirely; most kept
+  splices sit in [0.995, 0.999]). Marginal emits at p<0.990 are
+  predominantly fluke shapes.
+- Conjunction (marginal AND cluster<3) compounds two narrow priors
+  at their TIGHTEST safe settings: p<0.990 (lower than
+  PROB_LOW_CEIL bound; ea37815 demonstrated this band has fluke
+  real estate without recall cliff), and cluster<3 (singletons +
+  doublets only; cluster trajectory THR_N=3 had biggest keep
+  +0.004 confirming this is the safe fluke zone).
+
+Mechanically distinct from all 25 prior probes:
+- Probability-graded variants (ea37815, 9656f1e, fbc85d1, 59f3f2b):
+  per-emit probability bands ALONE.
+- Cluster-size global / per-tier-broaden (faf4f67, 3785e80, e240f96,
+  6d11b7f, f53e71e): dedupe topology ALONE or at edge.
+- Per-tier intersection with POSITION/DURATION priors (f7e5205 edge,
+  94b6b42 short, 687205d short-narrow): position/duration + shape.
+- Per-tier intersection with CONFIDENCE prior (this iter): probability
+  + shape — first hypothesis to use confidence prior in an
+  intersection.
+
+Mechanism: real cross-source splices and real same_voice_edits both
+typically produce GBM probability >= 0.99 because the +/-2s feature
+window picks up distinct spectral/temporal discontinuity from
+multiple stride centers. P<0.990 is the "barely-above-threshold"
+band where:
+- Chord transitions in singing barely scrape 0.985-0.989 because
+  STFT bins blur the harmonic shift.
+- Phoneme boundaries in continuous speech fire weak GBM prob.
+- Codec micro-artifacts (single-frame quantization noise from mp3
+  LAME / opus) fire one channel weakly.
+Combined with cluster<3 (single-frame or 2-stride support), the
+intersection is the textbook fluke definition: low-confidence,
+single-frame spike. Real same_voice_edits with cluster_size in {1,2}
+AND p<0.990 in a long-file interior with no neighbor within 6s would
+be triple-narrow: weak shape AND weak confidence AND solitary in
+file. Real splices generally cluster AND fire >0.99 prob.
+
+WHY THR_N_MARGINAL=3 not 2 or 4:
+- 3 catches singletons+doublets (cluster_size in {1, 2}) — the
+  trajectory-validated safe fluke zone; same predicate as the
+  proven-productive THR_N=3 cluster-axis bite.
+- 2 catches singletons only — narrower; expected smaller bite.
+  Reserve as fallback.
+- 4 catches singletons+doublets+triplets — but triplets at cluster=3
+  are at the "moderate-support" boundary (94b6b42 evidence shows
+  this is recall-fragile). Crosses the safe zone boundary.
+
+WHY OVER ALTERNATIVES:
+- Pivot to ANOTHER FE direction (cited efe38ee(c)(2) reserves: per-
+  band spectral-flux peak time, codec-frame-relative timing variance,
+  phase/cpe peak HEIGHT differential): retrain ~3-8min recall-side
+  move; FE axis just regressed -0.006 with peak_align; reserve as
+  next pivot if intersection-axis null.
+- ISOLATION_CLUSTER_THR_N_MARGINAL=2 (singletons only): same axis
+  but narrower; safer fallback if 3 cratered.
+- Triple intersection (very-marginal AND cluster<3 AND interior):
+  same as this iter since marginal+sparse is already structurally
+  rare at edges (edge+sparse already drops via existing branch);
+  adding interior is redundant.
+- ISOLATION_DIST_S 30 -> 22 / 28: same axis just-flat at 30->25;
+  pushing further is high-risk-low-reward.
+- ISOLATION_PROB_CEIL 0.997 -> 0.998: encroaches dense-real-splice
+  survivor zone; any push here drops real splices.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  27th-iter isolation tweak likely noise band.
+- ISOLATION_EDGE_HEAD_S 4 -> 5 / TAIL_S 3 -> 4: edge-zone axis
+  saturated +0.0002 last push.
+- ISOLATION_DIST_S_LOW 8 -> 7: trajectory decelerating; approaches
+  GBM_MIN_SEP_S=6 cliff; affects 4 routed populations broader recall
+  risk.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.2 cf/min
+trim from marginal+sparse-fluke unconditional drops yields combined
+~0.157 (+4%). Optimistic: 0.5 cf/min trim yields combined ~0.162
+(+7%). Pessimistic: recall 0.60 -> 0.59 from losing 1 real
+same_voice_edit firing cluster_size 1-2 with p<0.990 alone in long
+file (triple-narrow case, mechanically rare since real splices
+cluster AND fire >0.99), cf flat -> F0.5 ~0.781, combined ~0.150
+(-1%). Bad case: recall 0.55, cf flat -> combined ~0.135 (-11%).
+Asymmetric mild upside, moderate-bounded downside. Population is
+structurally narrow (intersection of TWO at-tightest-safe-setting
+priors: p<0.990 AND cluster<3) so even null result cleanly
+attributes "marginal+sparse intersection has no fluke real estate
+beyond edge+sparse" — bounds the per-tier intersection approach
+class as exhausted on confidence prior.
+
+Smoke-verifiable: detector.py imports cleanly with one new constant;
+isolation block adds one branch at top of dist_thresh selection.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — marginal+sparse intersection IS biting. Next
+iter compound: tighten THR_N_MARGINAL 3 -> 2 (singletons only,
+narrower) OR introduce parallel ISOLATION_PROB_CEIL_MARGINAL routing
+the upper-marginal+sparse [0.990, 0.997)+cluster<3 intersection to
+VERY_TIGHT.
+(2) combined ~ 0.148-0.153 noise band — marginal+sparse intersection
+is empty or balanced. Pivot DECISIVELY to PHASE/CPE PEAK HEIGHT
+DIFFERENTIAL FE in features.py (cited efe38ee(c)(3)): for each
+candidate, max value of phase_curve in [t-1, t+1] and same for
+cpe_curve, take ratio (or min/max). Captures channel-strength
+asymmetry not channel-timing — orthogonal to the just-failed
+peak_align FE. Retrain ~3-8min.
+(3) combined < 0.144 — marginal+sparse contains real same_voice_edits
+(rare-but-real low-confidence sparse-support splice firings, e.g.,
+weak DSP confirmation when one channel dominates). Revert. Pivot
+DECISIVELY to FE direction (peak HEIGHT differential or per-band
+spectral-flux peak time).
+
+(d) Information gaps:
+(1) Most binding: per-emit probability + cluster-size JOINT
+distribution diag still NOT surfaced. Knowing the empirical count
+of survivors with p<0.990 AND cluster<3 across the 60-file eval
+would directly size this iter's bite — what fraction of survivors
+fall in this 2-prior intersection? Currently no diag; relying on
+first-principles reasoning.
+(2) Per-emit nearest-neighbor distance distribution diag still NOT
+surfaced.
+(3) SHAP feature-importance from current 81-feature classifier still
+NOT surfaced — would inform whether peak_align FE failed because
+existing dsp_phase_z + dsp_cpe_z already encode that signal.
+(4) Per-class clean_fp breakdown still NOT surfaced.
+(5) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 31 iters.
+(6) Eval file duration / splice-position distribution unknown.
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(8) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+(9) The just-discarded efe38ee FE evaluation in last_eval.log shows
+which SHAP rank dsp_phase_cpe_peak_align_2s landed at — but the
+prompt's RECENT FAILED HYPOTHESES line only shows combined=0.144902.
+SHAP rank for failed FE iters would let me distinguish "feature
+useful but bumped existing top-5 / churned scaler" vs "feature
+ignored entirely" patterns.
+
+(e) Wrapper enhancements (68 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 68 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id) — single
+emit at end of detect_splices logging file -> n_selected, file_dur_s,
+n_intersection_edge_sparse, n_intersection_marginal_sparse (NEW
+this iter), n_singletons, n_doublets, n_triplets, n_quadruplets,
+n_dense, n_in_first_4s, n_in_last_3s, nearest_dist_p25/p50/p75,
+n_marginal (p<0.990), n_high_conf (p>=0.997). ~14 lines in
+detector.py near the existing scan_summary emit; binding on every
+intersection / cluster / edge / gate-distance / probability probe.
+(4) FAILED-FE SHAP RANK DIAG — for failed features.py iters,
+surface the new feature's SHAP rank and importance value alongside
+combined in RECENT FAILED HYPOTHESES.
+(5) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss vs recall-crater
+vs precision-save patterns directly.
+(6) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(7) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(8) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-5 SHAP
+features and their delta vs prior keep would let me decide whether
+to add complementary FE or pivot.
+(10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER — extend
+frontier text to surface ISOLATION_DIST_S / ISOLATION_DIST_S_LOW /
+ISOLATION_DIST_S_VERY_TIGHT / ISOLATION_FILE_DUR_THR_S /
+ISOLATION_EDGE_HEAD_S / ISOLATION_EDGE_TAIL_S /
+ISOLATION_CLUSTER_THR_N / ISOLATION_CLUSTER_THR_N_MARGINAL tried-set.
+(11) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt — for any
+tunable that has multiple sequential keeps on the same axis,
+surface a one-line trajectory with delta per iter. e.g.,
+"ISOLATION_DIST_S_LOW: 15 -> 12(+0.003) -> 10(+0.004) -> 8(+0.002)"
+and "INTERSECTION: edge_sparse_VERY_TIGHT(+0.003)".
+(12) FORCE-EVAL SUBCOMMAND for the wrapper.
+(13) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(14) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep or
+remove the stale value entirely.
+(15) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(16) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+
