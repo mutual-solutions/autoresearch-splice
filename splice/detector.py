@@ -121,7 +121,7 @@ ISOLATION_FILE_DUR_THR_S = 45.0
 # that produce high-confidence GBM emits from spectral discontinuity
 # alone (no actual cross-source splice). Real splices placed near
 # file boundaries with another emit within 15s still survive.
-ISOLATION_EDGE_DIST_S = 2.0
+ISOLATION_EDGE_DIST_S = 3.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
