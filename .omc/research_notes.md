@@ -8634,3 +8634,99 @@ BLOCK.
 (18) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
 ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift.
 
+## 2026-04-28T00:12:18+09:00 — f32d5a0 (discard, combined=0.039612)
+subject: CLASS_EVIDENCE_MIN=0.5 — require positive splice subclass confidence to filter confused-clean flukes
+per-domain: (no per-domain data)
+
+# last_reflection — CLASS_EVIDENCE_MIN=0.5 filter — require positive splice subclass confidence
+
+(a) HYPOTHESIS: add CLASS_EVIDENCE_MIN=0.5 in splice/detector.py and add a
+SECOND condition to hit_mask: emit only if max(p[cross_voice],
+p[same_voice_edit]) >= 0.5. Structurally:
+```
+class_evidence = np.maximum(proba[:, col_for[0]], proba[:, col_for[2]])
+hit_mask = (p_splice > GBM_THRESHOLD) & (class_evidence > CLASS_EVIDENCE_MIN)
+```
+Pure narrowing filter; no retrain; no FE; 1 new module constant + 3 lines
+in the gate. All other tunables byte-identical (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0,
+DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5, all ISOLATION_*; classifier
+{0:1.0,1:1.0,2:2.0}, max_iter=500, max_depth=6, max_leaf_nodes=32,
+lr=0.07, l2=2.0, min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 10 consecutive discards exhausted both
+small-knob axes (4 isolation/intersection variants flat-or-cratered;
+4 phase/cpe-derived FE all regressed -0.004 to -0.010; 1 class_weight
+regressed -0.007; 1 sparse-interior gate-distance regressed -0.008).
+
+Existing p_splice gate `1 - p[cross_voice] > 0.985` fires when model
+is "highly confident NOT cross_voice" — but for confused-clean frames
+where model splits 50/50 between no_splice and same_voice_edit with
+p[cross_voice]≈0.005, p_splice = 0.995 fires. These are the dominant
+fluke real-estate inside continuous speech, exactly the failure mode
+the metric pins down ("spraying spurious detections inside continuous
+single-speaker stretches"). All 27+ prior probes touched
+position/cluster/file-duration/probability-band of p_splice or DSP
+signal magnitude — NO probe has ever required class-specific predicted
+confidence as a gate. Class probabilities are the freshest unused
+signal in the entire emit pipeline.
+
+Mechanism: real cross_voice splice → p[cross_voice]≈0.5-0.8, max≥0.5
+passes; real same_voice_edit → p[same_voice_edit]≈0.6-0.9, passes;
+confused-clean fluke (p[no_splice]≈0.5, p[same_voice_edit]≈0.5,
+p[cross_voice]≈0.005) → max≈0.5 borderline, narrowly drops at 0.5
+threshold; chord/phoneme transitions where model splits non-cross_voice
+mass between no_splice and same_voice_edit with neither dominant →
+drops. Structurally distinct from all 27+ prior probes which gated on
+isolation geometry, DSP magnitude, or p_splice band — never on
+max(p[positive_class]).
+
+WHY 0.5 not 0.4 or 0.6: 0.5 is the natural "model commits to a class"
+boundary; below 0.5 means model is genuinely uncertain. 0.4 too
+permissive (still admits 60/40 confusion). 0.6 risks dropping real
+splices the model has only moderate confidence on (OOF f1_weighted
+~0.55-0.62 indicates moderate calibration — many real splices may
+have max in [0.5, 0.6]).
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — class evidence IS biting. Next iter: push 0.5
+→ 0.6 OR add a graded version (require higher class-evidence for
+marginal-p_splice emits, lower for high-p_splice).
+(2) combined ~ 0.148-0.153 noise band — class probabilities
+co-distribute with p_splice such that the new gate is redundant.
+Pivot to per-band spec_contrast peak time FE (using 7-band
+feat_contrast already in chunk_ctx) — the still-untried FE direction.
+(3) combined < 0.144 — gate drops real splices the model assigns
+diffuse confidence to. Revert. Pivot to per-band spec_contrast FE.
+
+(d) Information gaps: (1) most binding — distribution of max(p[0],
+p[2]) across emits never surfaced; can't predict bite size. (2) SHAP
+feature-importance still NOT surfaced. (3) Per-class clean_fp
+breakdown still NOT surfaced. (4) clean_fp_per_min=9.143 in CURRENT
+STATE vs algebraic ~4.21 persists 38 iters. (5) Eval file duration /
+splice-position distribution unknown. (6) ARCHITECTURE block names
+GradientBoostingClassifier but actual is HistGBC.
+
+(e) Wrapper enhancements (75 consecutive iters with persistent gaps):
+(1) PER-EMIT CLASS-PROBABILITY DISTRIBUTION DIAG — log per-survivor
+max(p[0], p[2]) percentiles. Binding for any class-evidence-axis
+probe.
+(2) PER-EMIT JOINT DIAG (class_evidence + cluster-size + nearest +
+file-relative-time + label_id).
+(3) FAILED-HYPOTHESIS RECALL/PRECISION/CF DECOMPOSITION in RECENT
+FAILED HYPOTHESES.
+(4) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS.
+(7) PRODUCTIVE-AXIS TRAJECTORY BLOCK.
+(8) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(9) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL
+IS HistGradientBoostingClassifier.
+
+
+---
+## [auto-diagnosis]
+diagnose: no-traceback
+tsv: RESULTS_TSV: combined=<REDACTED> f0_5=0.041265 f1=0.016925 precision=1.000000 recall=0.008535 clean_fp_per_min=0.041750 clean_fp_penalty=0.959923 n_files=60 cross_voice_f1=0.000000 same_voice_edit_f1=0.000000 unknown_label_count=6
+note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
+
