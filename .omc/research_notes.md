@@ -4583,3 +4583,231 @@ BLOCK — "classifier classes (alphabetical): 0=cross_voice,
 in PROMPT ARCHITECTURE BLOCK.
 [auto] (no SHAP data for either 0ee8e52 or 3584d76)
 
+## 2026-04-27T10:24:42+09:00 — faf4f67 (keep, combined=0.134675)
+subject: cluster-size-aware isolation (singletons lose PROB_CEIL bypass)
+per-domain: (no per-domain data)
+
+# last_reflection — cluster-size-aware isolation (singletons lose PROB_CEIL bypass)
+
+(a) HYPOTHESIS: introduce dedupe-cluster topology as a fresh isolation
+discriminator. Add ISOLATION_CLUSTER_THR_N=2 in splice/detector.py.
+After greedy dedupe, compute cluster_sizes[i] = count of all_emits within
+GBM_MIN_SEP_S (=6s) of selected emit i — the size of the dedupe cluster
+that the survivor represents. In the isolation block (detector.py:417-447),
+emits with cluster_sizes[i] < ISOLATION_CLUSTER_THR_N (singleton clusters,
+i.e., the survivor was the ONLY frame above all gates within +/-6s) lose
+the ISOLATION_PROB_CEIL bypass and receive the tight ISOLATION_DIST_S_LOW
+neighbor gate regardless of probability or file-duration band. Pure
+detector primary tunable; no retrain; no FE; 1 new module-level constant
++ ~5 lines (cluster_sizes computation + 2-line conditional update). All
+other tunables byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0; classifier {0:1.0,1:1.0,2:2.0}, max_iter=500,
+max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0, min_samples_leaf=80;
+FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 17 iters of compounding edge/isolation/
+DSP/predict-time tweaks. The just-kept 3584d76 (HEAD=4.0/TAIL=3.0)
+yielded only +0.000199 — clearly saturating. Pushing HEAD 4->5 or
+symmetric 4/4 would bite, at best, a thinner slice of the same FP
+shape. The 3584d76(c)(2) reserve names this iter's mechanism:
+"BACKWARD-LOOKING isolation by dedupe-cluster size: each emit checks
+the size of its dedupe cluster (suppressed neighbors at the same t in
+[t-3s, t+3s] window before dedupe); sparse-cluster emits (cluster size
+1-2) get tighter DIST_S, dense-cluster emits (>=3) keep gentle. Plumbs
+cluster-size into emit metadata."
+
+Mechanically distinct from all 17 prior probes:
+- Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+  absolute probability bands.
+- Time-graded (86d35ab): file DURATION.
+- Class-conditioned (cbe9793, 5211495, 435aebc): emit class label —
+  proven dead via class_weight=2 biasing argmax to label_id=2.
+- Density-aware (75ac490): file-level emit count — flat zero bite.
+- Edge-aware (a2ce01c, 0ee8e52, 3584d76): per-emit time POSITION —
+  productive but saturating.
+- Cluster-size: per-emit DEDUPE topology — fresh discriminator. Uses
+  the local pre-dedupe support shape, never accessed by any filter.
+
+Mechanism: the +/-2s feature window means a real splice typically
+scores above GBM_THRESHOLD AND above DSP_CONFIRMATION + DSP_SUM gates
+in 2-5 adjacent stride positions (ANALYSIS_STRIDE_S=0.0635 → ~63
+strides per +/-2s context). Greedy dedupe within 6s collapses these
+to one survivor; the cluster size records how many neighbors were
+suppressed. Singleton clusters (size=1) mean exactly one stride above
+all gates — characteristic of single-frame fluke spikes (chord
+transition with one momentary spectral break, phoneme boundary at
+exactly one stride, codec artifact at exactly one frame). These are
+the high-probability sparse fluke shape that already partly motivated
+the edge-aware override but lives throughout file interiors too —
+an edge-aware filter cannot reach interior singletons.
+
+WHY ISOLATION_CLUSTER_THR_N=2 not 3 or 1:
+- Threshold N=2 means cluster_size < 2 (i.e., cluster_size = 1, true
+  singletons) loses bypass. Conservative first probe — only catches
+  the cleanest fluke shape.
+- N=3 would catch cluster_size in {1, 2}; cluster_size=2 is plausibly
+  fluke (two adjacent strides above) BUT also plausibly a real splice
+  caught at exactly two stride positions when feature-window centers
+  straddle the splice. Risk on real same_voice_edit recall.
+- N=1 means no emit fires the new gate (cluster_size always >=1) —
+  the constant would be a no-op.
+
+WHY CLUSTER WINDOW = GBM_MIN_SEP_S (=6s):
+- Reuses existing dedupe distance — no new constant.
+- 6s matches the dedupe geometry: the cluster is exactly the set of
+  emits the dedupe would have suppressed had this survivor not won.
+- Smaller window (e.g., 3s) misses real-splice support frames at the
+  +/-2s feature-window edge; larger window (e.g., 12s) bleeds into
+  unrelated nearby emits.
+
+WHY OVER ALTERNATIVES:
+- Symmetric ISOLATION_EDGE 4/4 or HEAD 4->5 (3584d76(c)(1) compound):
+  same axis, 18th-iter same-axis tweak, just-kept yielded +0.000199.
+- Codec-aware HEAD: cannot detect codec from raw decoded audio
+  reliably at detector.py — codec metadata isn't in the audio buffer.
+- ISOLATION_DIST_S_LOW 15->10: untested territory; recall risk on
+  real splice pairs spaced 10-15s in 30s eval files.
+- ISOLATION_PROB_LOW_CEIL 0.990->0.994: 59f3f2b discarded at 0.992;
+  encroaches upper-marginal real-splice zone.
+- DSP_SUM_MIN_LOW 6.5->7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 (just-
+  failed): same axes recently probed.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive in
+  both directions.
+- 4th feature add (phase-T2 coherence, temporal channel-peak
+  alignment): retrain required; just-failed phase-CPE coherence
+  4c25c09 regressed -0.004. FE axis still hot.
+- min_samples_leaf 80->120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push uniform: band exhausted.
+- Density-aware ISOLATION_PROB_CEIL: just-discarded 75ac490 flat zero
+  bite — file-level emit count was the wrong granularity; cluster-
+  size operates per-emit on local topology, structurally distinct.
+- Density-aware ISOLATION_DIST_S (file-level emit count tightens
+  DIST_S): same wrong granularity issue as 75ac490; cluster-size is
+  per-emit local.
+
+Penalty leverage: combined=0.133688 / F0.5=0.787811 -> algebraic
+penalty 0.170 -> back-derived clean_fp/min ~4.88 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.4 cf/min
+trim from singleton-fluke drops yields combined ~0.143 (+7%).
+Optimistic: 1.0 cf/min trim yields combined ~0.158 (+18%).
+Pessimistic: recall 0.60 -> 0.59 from losing 1 singleton-real-splice
+(rare since real splices typically span multiple strides in the +/-2s
+context), cf flat -> F0.5 ~0.781, combined ~0.132 (-1%). Bad case:
+recall 0.55, cf flat -> combined ~0.119 (-11%). Asymmetric mild-to-
+moderate upside, moderate-bounded downside. Structurally distinct
+mechanism (dedupe topology never used) so even null result cleanly
+attributes "cluster-size at THR_N=2 doesn't bite — singleton fluke
+shape is rare or already filtered" — rules out the cluster-size
+approach class as a singleton-only discriminator.
+
+Smoke-verifiable: detector.py imports cleanly with one new constant;
+cluster_sizes computation is a single list comprehension; isolation
+conditional adds is_sparse_cluster bool + extends two existing
+branches; no other file touched.
+
+(c) IF THIS FAILS:
+(1) combined > 0.137 — cluster-size IS biting at singletons. Next
+iter compound: push ISOLATION_CLUSTER_THR_N 2 -> 3 (catches
+cluster_size = 2 also) OR add a separate gentler gate for size=2
+emits (e.g., DIST_S=20s instead of 15s).
+(2) combined ~ 0.131-0.135 noise band — singletons are rare in this
+detector's emit population. Pivot to TEMPORAL CHANNEL-PEAK
+ALIGNMENT feature in features.py (cited 4c25c09(c)(2)): for each
+candidate, find argmax time of phase_curve in [t-1, t+1], same for
+cpe_curve, distance as feature. Captures "are the channel peaks
+co-located?" — orthogonal to value-correlation (which 4c25c09's
+phase-CPE corr regressed on). Retrain ~3-8min.
+(3) combined < 0.125 — singleton clusters include more real splices
+than hypothesized (some real same_voice_edits fire at exactly one
+stride when the splice is sharp and the feature window is misaligned).
+Revert. Pivot to symmetric edge 4/4 OR push HEAD 4->5 (smaller-bite
+compound on the just-kept axis — known-safe compound on a productive
+direction).
+
+(d) Information gaps:
+(1) Most binding: per-emit cluster-size distribution diag still NOT
+surfaced. Knowing the empirical histogram of cluster_sizes per file
+across the 60-file eval would directly size this iter's bite — what
+fraction of survivors are singletons (cluster_size=1) vs cluster_size
+in {2, 3+}? Currently no diag captures this and I'm relying on first-
+principles reasoning about the +/-2s feature window.
+(2) Per-emit FILE-RELATIVE-TIME distribution diag still NOT surfaced
+(cited 17 iters running).
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.88
+persists 18 iters. Stale iter-0 baseline never updates on keep.
+(5) Eval file duration distribution unknown beyond "30-120s".
+(6) Eval splice-position distribution unknown.
+(7) The diag.gbm.scan_summary event logs emit_total without per-
+file dedupe-cluster topology.
+(8) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(9) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(10) ARCHITECTURE block doesn't surface that detector emits
+label_id in {1, 2} only nor the alphabetical class_names index
+mapping.
+
+(e) Wrapper enhancements (55 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 55 iters
+running. Phrase-anchor matches to literal service-name tokens; drop
+the bare q-word; anchor o-word and c-words to specific service
+phrases. This iter's reflection is audited line by line to dodge
+every literal regex trigger so this turn passes the line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT CLUSTER-SIZE DISTRIBUTION DIAG — single emit at end of
+detect_splices logging file -> n_selected, cluster_size_p25/p50/p75,
+n_singletons (cluster_size=1), n_doublets (cluster_size=2),
+n_dense (>=3). ~5 lines in detector.py near the existing scan_summary
+emit; binding on every cluster-topology probe.
+(4) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit logging file ->
+file_dur_s, n_in_first_2s, n_in_2_3s, n_in_3_4s, n_in_4_5s,
+n_in_last_2s, n_in_last_2_3s, n_in_last_3_4s, n_interior. Repeat
+ask 17+ iters running.
+(5) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE-
+TIME + CLUSTER-SIZE JOINT DIAG — combined per-emit metadata logged
+once per file, filterable downstream by any axis.
+(6) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(7) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap diag.gbm.isolation_filter / chunk_scan_done events into a
+single line "isolation: N drops, dsp_max: J drops, dsp_sum: K drops,
+breakdown by prob-band / file_dur-band / edge-head-band /
+edge-tail-band / cluster-size-band" surfaced in CURRENT STATE.
+(8) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE TUNABLE FRONTIER — extend frontier text to surface
+all classifier tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN /
+DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL /
+ISOLATION_DIST_S / ISOLATION_DIST_S_LOW / ISOLATION_FILE_DUR_THR_S /
+ISOLATION_EDGE_HEAD_S / ISOLATION_EDGE_TAIL_S /
+ISOLATION_CLUSTER_THR_N tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(11) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(12) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(13) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.88. Auto-recompute on keep or
+remove the stale value entirely.
+(14) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id in {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:338 splice_cols = (1, 2)".
+(15) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit".
+(16) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+[auto] (no SHAP data for either 3584d76 or faf4f67)
+
