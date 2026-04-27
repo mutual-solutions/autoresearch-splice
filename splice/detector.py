@@ -114,14 +114,19 @@ ISOLATION_DIST_S_LOW = 15.0
 # Long files keep the existing probability-graded behavior.
 ISOLATION_FILE_DUR_THR_S = 45.0
 # Edge-aware override: emits whose file-relative time sits within
-# ISOLATION_EDGE_DIST_S of either file boundary lose the
-# ISOLATION_PROB_CEIL bypass and must satisfy a tight neighbor gate
-# at ISOLATION_DIST_S_LOW regardless of probability. Targets
-# encoder-priming, fade-in/out, and pre/post-roll silence boundaries
-# that produce high-confidence GBM emits from spectral discontinuity
-# alone (no actual cross-source splice). Real splices placed near
-# file boundaries with another emit within 15s still survive.
-ISOLATION_EDGE_DIST_S = 3.0
+# ISOLATION_EDGE_HEAD_S of file start or ISOLATION_EDGE_TAIL_S of
+# file end lose the ISOLATION_PROB_CEIL bypass and must satisfy a
+# tight neighbor gate at ISOLATION_DIST_S_LOW regardless of
+# probability. Targets encoder-priming, fade-in/out, and pre/post-
+# roll silence boundaries that produce high-confidence GBM emits
+# from spectral discontinuity alone (no actual cross-source splice).
+# Real splices placed near file boundaries with another emit within
+# 15s still survive. HEAD > TAIL because encoder priming (mp3 LAME
+# header padding, opus lookahead, m4a iTunSMPB pre-roll) extends
+# 1.5-3s at the file start while fade-out and tail truncation are
+# typically sharper.
+ISOLATION_EDGE_HEAD_S = 4.0
+ISOLATION_EDGE_TAIL_S = 3.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -415,8 +420,8 @@ def _gbm_detect_splices(
         times = [e[0] for e in selected]
         kept: list[tuple[float, int, float, list[float]]] = []
         for i, emit in enumerate(selected):
-            is_edge = (emit[0] < ISOLATION_EDGE_DIST_S
-                       or emit[0] > file_dur_s - ISOLATION_EDGE_DIST_S)
+            is_edge = (emit[0] < ISOLATION_EDGE_HEAD_S
+                       or emit[0] > file_dur_s - ISOLATION_EDGE_TAIL_S)
             if emit[2] >= ISOLATION_PROB_CEIL and not is_edge:
                 kept.append(emit)
                 continue
