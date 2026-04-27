@@ -151,6 +151,21 @@ ISOLATION_EDGE_TAIL_S = 3.0
 # (extended chord transitions, multi-frame codec artifacts) while
 # strong-support real splices typically span 4+ strides.
 ISOLATION_CLUSTER_THR_N = 5
+# Per-tier intersection sub-gate: when an emit is BOTH is_edge AND
+# is_sparse_cluster (the conjunction of two productive fluke
+# discriminators), apply a tighter neighbor-distance threshold than
+# the shared ISOLATION_DIST_S_LOW. The intersection is the most
+# fluke-dense subset because the two priors compound — sparse-cluster
+# fluke at a file boundary is structurally rare for real splices
+# (real splices accumulate multi-stride support in the +/-2s feature
+# window unless placed at the absolute file edge, which splice
+# generators avoid). VERY_TIGHT = GBM_MIN_SEP_S means the gate
+# threshold equals the dedupe distance, so the condition
+# `nearest < VERY_TIGHT` is structurally unsatisfiable post-dedupe —
+# intersection emits drop unconditionally. Other tiers (is_edge XOR
+# is_sparse_cluster, is_short_file alone, very-marginal probability
+# alone) keep the gentler ISOLATION_DIST_S_LOW gate.
+ISOLATION_DIST_S_VERY_TIGHT = 6.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -463,7 +478,9 @@ def _gbm_detect_splices(
             else:
                 nearest = min(abs(times[i] - times[j])
                               for j in range(len(times)) if j != i)
-            if is_edge or is_sparse_cluster:
+            if is_edge and is_sparse_cluster:
+                dist_thresh = ISOLATION_DIST_S_VERY_TIGHT
+            elif is_edge or is_sparse_cluster:
                 dist_thresh = ISOLATION_DIST_S_LOW
             elif is_short_file:
                 dist_thresh = ISOLATION_DIST_S_LOW
