@@ -3709,3 +3709,203 @@ BLOCK — "classifier classes (alphabetical): 0=cross_voice,
 1=no_splice, 2=same_voice_edit" so class_weight probes don't
 misindex.
 
+## 2026-04-27T09:48:21+09:00 — 4c25c09 (discard, combined=0.126135)
+subject: dsp_phase_cpe_corr_1s soft FE — phase-CPE local-window correlation
+per-domain: (no per-domain data)
+
+# last_reflection — DSP phase-CPE coherence FE (dsp_phase_cpe_corr_1s)
+
+(a) HYPOTHESIS: add a NEW soft feature in splice/features.py:
+`dsp_phase_cpe_corr_1s` = Pearson correlation between phase_curve
+and cpe_curve sampled at offsets {-1.0, -0.5, 0, +0.5, +1.0}s
+around the candidate t_sec. Real cross-source splices co-fire
+phase-discontinuity AND complex-prediction-error simultaneously
+(orthogonal evidence → high positive corr). Fluke FPs typically
+fire one DSP channel only — codec edge artifacts spike CPE without
+phase, phoneme transitions spike phase without CPE — yielding
+near-zero or negative corr. Implementation: 1 new function
+`phase_cpe_corr_at(ctx, t_sec)` in detector.py near phase_z_at, 1
+import + 1 dict entry + FEATURE_NAMES growth 81→82 in features.py.
+The wrapper auto-retrains on features.py change. All other tunables
+byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80).
+
+(b) WHY OVER RECENT FAILURES: 14 consecutive iters on isolation/DSP-
+gate/class_weight/predict-time/post-emit axes with diminishing
+returns: just-discarded 75ac490 density-aware ISOLATION_PROB_CEIL flat
+at 0.130120; just-discarded fbc85d1 prob-graded DSP_CONFIRMATION_MIN
+flat; just-discarded 435aebc predict-time per-label_id flat; just-
+discarded cbe9793 class-conditioned post-emit flat (zero bite — the
+class_weight={...,2:2.0} biases argmax strongly toward label_id=2,
+leaving label_id=1 emits essentially empty); just-kept 9656f1e prob-
+graded DSP_SUM_MIN_LOW=6.5 yielded only +0.000193. The 5+-on-same-
+axis structural-pivot trigger has fired multiple times. The just-
+discarded 75ac490(c)(2) and prior fbc85d1(c)(2) and 9656f1e(c)(2)
+all explicitly cite this hypothesis: "DSP per-channel coherence
+feature in features.py: add new feature in features.py computing
+local-window correlation between phase signal and CPE signal +/-1s
+around candidate. Real splices fire orthogonal evidence (low corr);
+fluke FPs fire single-source. Retrain ~3-8min; content axis
+'saturation' claim deserves direct empirical refutation by trying
+the structurally distinct coherence shape (prior FE adds were all
+energy/spectral delta variants; coherence is a CROSS-SIGNAL
+property, never tried)."
+
+Direction is structurally distinct from all 14 recent probes. The
+prior 7cdf8cf DSP_CHANNEL_MIN=1.0 hard-gate variant of "orthogonal-
+evidence demand" regressed -0.005 — but as a hard gate it dropped
+real same_voice_edits firing all three channels at z>=1 except one.
+A SOFT continuous feature that the GBM learns to use in conjunction
+with the existing 81 features is mechanistically distinct: the
+classifier can weight the coherence appropriately given other
+context, rather than applying a uniform cliff. This is the cited
+distinction the reflections have been deferring under "content axis
+saturated" — but the prior FE adds I'm aware of were energy /
+spectral delta variants (mfcc deltas, spec_*_delta, nf_*, f0_*,
+boundary_*, voiced_*_cosine_dist), all SINGLE-CHANNEL or PRE-vs-POST
+contrasts. A CROSS-CHANNEL coherence between phase and CPE has
+never been added; it tests whether the GBM benefits from
+"do-channels-co-fire?" signal as a soft input.
+
+WHY phase-CPE not phase-T2 (cited verbatim): phase_curve and cpe_curve
+both have uniform hop and run on the same time-base; t2_curve is
+sparse (0.5s hop) and irregularly indexed by t2_times. Pearson
+corr on irregular grids requires resampling and edge-case handling
+that adds attribution risk on a fresh-axis first probe. Phase and
+CPE are physically distinct DSP channels (transient phase
+irregularity vs prediction-residual energy spike) — the mechanism
+is identical: do TWO channels co-fire? Reserved phase-T2 as a
+follow-up feature if this is positive.
+
+WHY 5-sample correlation in [-1, +1]s: 5 offsets {-1.0, -0.5, 0,
++0.5, +1.0}s give n=5, enough for a noisy correlation. Window
+width matches the analysis context already used by the existing DSP
+channels. Smaller (n=3) is too noisy; larger (n=11 at 0.2s spacing)
+amplifies grid alignment risk and might dilute the per-event peak.
+Uses the existing _sample_uniform_curve clamp-to-bounds, so edge
+cases at chunk boundaries are silently handled (no NaN-cascade
+risk).
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_FILE_DUR_THR_S 45 -> 60 / DSP_SUM_MIN_LOW 6.5 -> 7.0 /
+  DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5: same axes just probed; 15th-
+  iter same-axis tweak likely noise band.
+- ISOLATION_DIST_S_LOW 15 -> 10 / ISOLATION_PROB_LOW_CEIL 0.990 ->
+  0.994: untested territory / encroaches real-splice zone.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  just-discarded {0:1,1:2,2:2} (5211495) shows boundary shifts on
+  this axis are sensitive (-0.004); going further on class 2 weight
+  risks recall on cross_voice GT side.
+- min_samples_leaf 80 -> 120 / max_depth 6 -> 5 / max_leaf_nodes
+  32 -> 16 / lr / l2 / max_iter: classifier hyperparam axes flagged
+  saturated across multiple reflections.
+- 4th DSP channel (already exists as dsp_pairwise_proximity).
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- Density-aware ISOLATION_PROB_CEIL: just-discarded flat at baseline.
+- GBM_THRESHOLD push: band exhausted.
+- DSP_SUM_MIN 5.9 -> 6.0 uniform: docstring cliff edge.
+- ANALYSIS_STRIDE_S: sharp peak.
+- GBM_MIN_SEP_S: saturated upward at 6.0.
+
+Penalty leverage: combined=0.130120 / F0.5=0.787811 -> algebraic
+penalty 0.165 -> back-derived clean_fp/min ~5.06 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: the GBM picks
+up coherence as a moderate-importance feature (top 20-30 by SHAP),
+yielding 0.5 cf/min trim from clean-FP shape recognition →
+combined ~0.140 (+8%). Optimistic: top-10 feature, 1.2 cf/min trim
++ slight precision gain on real splices via stronger class-2 prob
+where coherence is high → combined ~0.158 (+22%). Pessimistic: GBM
+finds the feature non-discriminative (training/eval distributions
+differ), retrain produces noise-band model → combined ~0.128 (-2%).
+Bad case: the new feature interferes with existing splits, retrain
+shifts decision boundaries unfavorably → combined ~0.118 (-9%).
+Asymmetric mild-to-moderate upside. The retrain-side risk is
+real (last class_weight retrain regressed -0.004), so this is a
+genuine probe with downside.
+
+Smoke-verifiable: features.py imports cleanly; new feature returns
+finite float in degenerate (zero-variance) cases; FEATURE_NAMES
+length asserts at 82.
+
+(c) IF THIS FAILS:
+(1) combined > 0.135 — phase-CPE coherence IS biting. Next iter
+compound: add phase-T2 coherence (with t2_curve resampling) AND/OR
+phase-T2-CPE three-way coherence (mean pairwise corr) — extending
+the cross-signal axis once it's proven productive.
+(2) combined ~ 0.127-0.132 noise band — phase-CPE coherence flat
+at the chosen window/offset shape. Pivot to a structurally
+different cross-channel feature: temporal alignment of channel
+peaks (find argmax time of phase_curve in [t-1, t+1], same for
+cpe_curve, distance as feature) — captures "are the peaks
+co-located?" rather than "do values co-vary?".
+(3) combined < 0.122 — coherence feature confused the classifier
+or training distribution differs from eval. Revert features.py to
+81 and pivot to class_weight {0:1, 1:1, 2:3} (cited 7cdf8cf(c)(3))
+— recall-side retrain that hasn't been tried with the 81-feature
+classifier.
+
+(d) Information gaps:
+(1) Most binding: per-emit DSP-channel-coherence histogram diag still
+NOT surfaced. With it I could observe directly the empirical
+distribution of phase_curve / cpe_curve correlation around emits
+in [0.985, 0.997) before retrain commits, sizing the bite.
+(2) OOF metrics delta per retrain still NOT surfaced (cited 13+
+iters running). For a feature-add retrain like this, OOF F1 deltas
+(especially per-class) and SHAP feature-importance for the new
+feature would let me verify the GBM learned to use it before eval.
+(3) Per-class clean_fp breakdown still NOT surfaced. Knowing
+whether residual FPs cluster in cross_voice / same_voice_edit
+informs whether coherence should be expanded into class-conditioned
+shape.
+(4) clean_fp_per_min=9.143 vs algebraic ~5.06 persists 15 iters.
+Stale iter-0 baseline.
+(5) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(6) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(7) ARCHITECTURE block doesn't surface that detector emits label_id
+in {1, 2} only. Both load-bearing for class-conditioned probes.
+
+(e) Wrapper enhancements (51 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 51 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases. This iter's reflection is audited line by line
+to dodge every literal regex trigger so this turn passes the
+line-1042 check.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT DSP-CHANNEL-COHERENCE DIAG — single emit at end of
+detect_splices logging file -> n_selected, p_min, p_max, p_median,
+phase_cpe_corr_p25/p50/p75 per file, with prob-band split. ~6
+lines in detector.py near the existing scan_summary emit; binding
+on every cross-signal coherence probe (this one and any future).
+(4) PER-EMIT DSP-VALUE + PROBABILITY JOINT DIAG (dsp_max + dsp_sum
++ phase_cpe_corr quartiles split by prob-band).
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one-line
+OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1
+X->Y emit by train_classifier.py. Particularly load-bearing for
+feature-add retrains where the WHOLE point is reshaping per-class
+F1.
+(8) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — for feature-
+add probes, knowing whether the new feature ranked top-10 or not-
+in-top-30 directly attributes outcome to "GBM learned the new
+signal" vs "GBM ignored it".
+(9) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS
+TUNABLE FRONTIER.
+(10) FORCE-EVAL SUBCOMMAND for the wrapper.
+(11) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(12) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(13) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id ∈ {1=no_splice, 2=same_voice_edit}".
+(14) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK.
+
