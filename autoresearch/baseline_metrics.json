@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-04-27T01:39:38Z",
-  "git_sha": "e240f96",
+  "timestamp": "2026-04-27T01:49:59Z",
+  "git_sha": "6d11b7f",
   "phase": "korean_iter1_metric_v2_first_keep",
   "metric_formula": "combined = F0.5(P,R) * clean_fp_penalty; clean_fp_penalty = 1 / (1 + clean_fp_per_min / 1.0)",
-  "combined": 0.139261,
+  "combined": 0.139456,
   "f0_5": 0.787811,
   "f1": 0.706667,
   "precision": 0.853119,
