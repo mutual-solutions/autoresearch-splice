@@ -8410,3 +8410,227 @@ PROMPT ARCHITECTURE BLOCK.
 (18) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
 ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift.
 
+## 2026-04-27T23:58:56+09:00 — 7672de0 (discard, combined=0.143699)
+subject: ISOLATION_DIST_S_SPARSE_INTERIOR=7.0 (surgical sparse-only-interior gate, splitting the just-failed global 8->7 push)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_DIST_S_SPARSE_INTERIOR=7.0 (surgical sparse-only-interior gate, splitting the just-failed global 8->7 push)
+
+(a) HYPOTHESIS: add ISOLATION_DIST_S_SPARSE_INTERIOR=7.0 in
+splice/detector.py and split the existing `is_edge OR is_sparse_cluster`
+branch in the dist_thresh selection (detector.py:481-490) into two
+separate branches:
+```
+elif is_sparse_cluster:               # sparse interior (NEW)
+    dist_thresh = ISOLATION_DIST_S_SPARSE_INTERIOR  # 7.0
+elif is_edge:                         # edge only (was OR-merged)
+    dist_thresh = ISOLATION_DIST_S_LOW              # 8.0 unchanged
+```
+Net effect: cluster_size in {1, 2, 3, 4} AND not at file edge — the
+sparse-interior subset of the `is_edge OR is_sparse_cluster` tier —
+moves from LOW=8.0 to a tighter 7.0 gate. Edge-only emits, short-file
+emits, very-marginal-default emits, and the edge+sparse intersection
+all unchanged. Pure detector primary tunable; no retrain; no FE; 1 new
+module-level constant + 1 OR-branch refactored into 2 elifs. All other
+tunables byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5,
+ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 9 consecutive discards. The just-failed
+fa1f2a3 ISOLATION_DIST_S_LOW 8->7 GLOBAL push regressed -0.008. The
+global push affected ALL FOUR routed populations simultaneously:
+(i) edge XOR sparse_cluster, (ii) is_short_file, (iii) very-marginal
+in long file, (iv) singleton/sparse fallback. Recall fragility in
+ANY one of those tiers explains the regression.
+
+This iter is the SURGICAL version of the just-failed global push:
+keep 8.0 for the recall-fragile populations (edge-only, short-file,
+very-marginal-default), apply 7.0 only to sparse-interior. The
+sparse-interior subset is the fluke-densest of the OR-branch
+populations:
+- cluster_size in {1, 2, 3, 4} = sparse support shape, fluke-biased
+  (real splices typically span 5+ adjacent strides through the +/-2s
+  feature window).
+- not at edge = no encoder-priming / fade-in/out fluke confound
+  (those are already routed to LOW=8 via is_edge tier).
+- not in short_file = full-duration files where short-file recall
+  fragility doesn't apply.
+- not very-marginal = upper-marginal probability where real-splice
+  content density is moderate, not the cluster-3-or-4-in-short-file
+  pattern that 94b6b42 / 687205d showed contains real splices.
+
+Mechanically distinct from all 27 prior probes:
+- Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+  probability bands.
+- Time-graded (86d35ab): file DURATION.
+- Class-conditioned (cbe9793, 5211495, 435aebc): emit class label.
+- Density-aware file-level (75ac490): wrong granularity.
+- Edge-aware (a2ce01c, 0ee8e52, 3584d76): per-emit time POSITION.
+- Cluster-size global (faf4f67, 3785e80, e240f96, 6d11b7f): single
+  shared THR_N applied uniformly.
+- Per-tier intersection edge+sparse VERY_TIGHT (f7e5205, kept +0.003):
+  conjunctive tighter gate at the conjunction.
+- Per-tier intersection sparse+short_file (94b6b42 -0.020,
+  687205d -0.012): conjunctive at sparse+short — failed.
+- Per-tier intersection edge with broader cluster (f53e71e -0.003):
+  branch-specific cluster threshold.
+- Per-tier intersection marginal+sparse (f67afba -0.002): probability
+  prior + sparse.
+- Gate-distance LOW push uniform (75150c4, 59b6b1b, 035b8d0 keeps;
+  fa1f2a3 -0.008 just-failed): single shared gate applied across 4
+  routed populations.
+- Per-tier sparse-interior NON-conjunctive narrowing (this iter):
+  the same sparse predicate the conjunctive intersection branch uses,
+  applied as a SUB-TIER refinement of the existing OR branch — NOT
+  combined with a second predicate. First per-tier refinement that
+  ISOLATES one of the OR-branch predicates with a tighter gate
+  without combining it with a second predicate.
+
+WHY 7.0 not 7.5 or 6.5:
+- 7.0 matches the just-failed global push value verbatim. Cleanly
+  discriminates "the push value is wrong" vs "the push tier-mix is
+  wrong" — testing the latter on the most fluke-biased subset.
+- 7.5 quarter-step likely noise band given ~1s gate granularity.
+- 6.5 half-step toward GBM_MIN_SEP_S=6 cliff; only 0.5s above the
+  unconditional-drop floor; even sparse-interior subset has some
+  real same_voice_edits at the cluster-3-4 boundary that need full
+  +/-2s feature support — risks crossing into the recall-fragile
+  zone (94b6b42 evidence at sparse+short).
+
+WHY OVER ALTERNATIVES:
+- ISOLATION_DIST_S 30 -> 22 (cited fa1f2a3(c)(3) reserve): same axis
+  just-flat at 30->25 (00a9b0a); pushing further into thin 4th-tier
+  population is high-risk-low-reward.
+- Chunk-local probability percentile gate (cited fa1f2a3(c)(2)
+  decisive pivot): structurally novel but requires non-trivial
+  detector restructuring AND analysis revealed a fundamental flaw —
+  high local emit density indicates fluke region but ALSO catches
+  real splices that fire within fluke regions. Density-aware
+  file-level (75ac490) had zero bite for similar reason. Reserve as
+  next pivot only after surgical sub-tier exhausted.
+- 5th FE attempt (per-band spec_contrast peak time / chunk-relative
+  spec_flux ratio): retrain ~3-8min; 4 recent FE failures (4c25c09,
+  efe38ee, da02a01, 553b40a) suggest GBM saturated on existing 81-
+  feature set; reserve as last-resort.
+- ISOLATION_DIST_S_SPARSE_INTERIOR=6.0 (match VERY_TIGHT): ~50% of
+  sparse-interior population converts to unconditional-drop; too
+  aggressive on first probe of new sub-tier.
+- Symmetric refactor with edge-only also tightened: would dilute
+  attribution; this iter cleanly tests "is sparse-interior the
+  fluke-densest sub-tier of the OR branch" before composing further.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: c35ba8e just-discarded at 60.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed.
+- class_weight {0:2, 1:1, 2:2}: just-discarded {0:1.5} -0.007.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated 5+ iters.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21. With ~7x F0.5
+sensitivity per unit. Plausible: 0.15 cf/min trim from solitary
+sparse-interior emits with neighbor in [7, 8)s yields combined
+~0.156 (+3%). Optimistic: 0.4 cf/min trim plus precision lift to
+0.87 yields combined ~0.166 (+10%). Pessimistic: recall 0.60 ->
+0.59 from losing 1 real same_voice_edit firing cluster_size 3-4
+in long-file interior with neighbor at 7-8s spacing (rare since
+real same_voice_edits typically have cluster_size 5+ AND pair
+spacing rarely lands in narrow 7-8s band), cf flat -> F0.5 ~0.781,
+combined ~0.150 (-1%). Bad case: recall 0.55, cf flat -> combined
+~0.135 (-11%). Asymmetric mild upside, moderate-bounded downside.
+Population is structurally narrow (cluster_size < 5 AND not edge AND
+not short_file ~10-20% of survivors per file; subset with neighbor
+in [7, 8)s ~5-10% of those). Even null result cleanly attributes
+"the sparse-interior sub-tier of the OR branch is not fluke-denser
+than edge-only at the gate-distance axis" — bounds the per-tier
+non-conjunctive refinement approach class.
+
+Smoke-verifiable: detector.py imports cleanly with one new constant;
+isolation block elif chain refactored from 1 OR branch to 2 elifs.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — sparse-interior IS fluke-denser at gate
+distance. Next iter compound: split further with sparse-interior
+cluster<3 (very sparse) at 6.5 vs cluster in {3, 4} (moderate
+sparse) at 7.0. Or push sparse-interior 7 -> 6.5 globally.
+(2) combined ~ 0.148-0.153 noise band — sparse-interior bite at the
+gate-distance axis is empty. Pivot to chunk-local probability
+percentile gate (cited fa1f2a3(c)(2)) as a feature addition to
+features.py rather than a post-emit filter.
+(3) combined < 0.144 — sparse-interior at 7s catches real
+same_voice_edits with cluster 3-4 at long-file interior with
+neighbor at 7-8s spacing. Revert. Pivot to PER-BAND SPEC_CONTRAST
+PEAK TIME FE in features.py (cited cbc742d(c)(2) / c35ba8e(c)(2)
+reserve) using 7-band feat_contrast already in chunk_ctx.
+
+(d) Information gaps:
+(1) Most binding: per-emit nearest-neighbor distance distribution
+diag still NOT surfaced. Knowing the empirical histogram of
+nearest-neighbor distances for sparse-interior survivors across the
+60-file eval would directly size this iter's bite.
+(2) Per-emit cluster-size + edge + short-file JOINT distribution
+diag still NOT surfaced. Knowing the empirical count of survivors
+in each tier (edge+sparse, edge-only, sparse-only-interior,
+short-file-only, very-marginal-default,
+default-high-conf-interior) would directly size which tier holds
+the most fluke real estate.
+(3) SHAP feature-importance from current 81-feature classifier still
+NOT surfaced.
+(4) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss flat vs recall-
+crater vs precision-save patterns directly.
+(5) Per-class clean_fp breakdown still NOT surfaced.
+(6) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 37 iters. Stale iter-0 baseline never updates on keep.
+(7) Eval file duration / splice-position distribution unknown.
+(8) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+
+(e) Wrapper enhancements (74 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 74 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT NEAREST-NEIGHBOR DISTANCE DIAG — single emit at end
+of detect_splices logging file -> n_selected, nearest_dist_p25/
+p50/p75, n_in_neighbor_band([6,7)), n_in_neighbor_band([7,8)),
+n_in_neighbor_band([8,10)), n_in_neighbor_band([10,15)),
+n_in_neighbor_band([15,30)), n_in_neighbor_band([30,inf)).
+Binding for any DIST-axis probe.
+(4) PER-TIER POPULATION DIAG — at end of detect_splices, log file
+-> n_selected per dist_thresh tier (edge+sparse, edge-only,
+sparse-interior, short-file-only, very-marginal-default,
+default-high-conf-interior). Binding for any per-tier sub-gate
+probe; would directly answer "which tier holds the most fluke
+real estate".
+(5) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id).
+(6) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES.
+(7) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(8) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(9) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(10) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(11) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(12) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(13) FORCE-EVAL SUBCOMMAND for the wrapper.
+(14) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(15) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(16) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(17) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(18) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
+ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift.
+
