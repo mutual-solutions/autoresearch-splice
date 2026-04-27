@@ -127,6 +127,21 @@ ISOLATION_FILE_DUR_THR_S = 45.0
 # typically sharper.
 ISOLATION_EDGE_HEAD_S = 4.0
 ISOLATION_EDGE_TAIL_S = 3.0
+# Cluster-size-aware override: each survivor's pre-dedupe cluster size
+# (count of all_emits within GBM_MIN_SEP_S) acts as a fluke discriminator.
+# A real splice typically scores above all gates in 2-5 adjacent stride
+# positions — the +/-2s feature window overlaps the splice from multiple
+# stride centers. Greedy dedupe collapses that cluster to one survivor
+# but the cluster size records its support shape. cluster_size = 1
+# (singleton) means the survivor was the ONLY frame above all gates
+# within +/-6s — characteristic of single-frame fluke spikes (chord
+# transitions / phoneme boundaries / codec artifacts that scrape the
+# threshold at exactly one stride). Singletons lose the
+# ISOLATION_PROB_CEIL bypass and must satisfy the tight
+# ISOLATION_DIST_S_LOW neighbor gate regardless of probability or file
+# duration. THR_N=2 is the conservative first probe — only true
+# singletons (size=1) fire the new gate.
+ISOLATION_CLUSTER_THR_N = 2
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -413,6 +428,13 @@ def _gbm_detect_splices(
             selected.append(emit)
     selected.sort(key=lambda e: e[0])
 
+    # Cluster-size topology — count all_emits within GBM_MIN_SEP_S of each
+    # survivor (includes the survivor itself; size>=1).
+    cluster_sizes = [
+        sum(1 for e in all_emits if abs(e[0] - s[0]) < GBM_MIN_SEP_S)
+        for s in selected
+    ]
+
     # Post-emit isolation filter — see ISOLATION_PROB_CEIL / ISOLATION_DIST_S.
     if len(selected) >= 1:
         file_dur_s = len(audio) / sr
@@ -422,7 +444,9 @@ def _gbm_detect_splices(
         for i, emit in enumerate(selected):
             is_edge = (emit[0] < ISOLATION_EDGE_HEAD_S
                        or emit[0] > file_dur_s - ISOLATION_EDGE_TAIL_S)
-            if emit[2] >= ISOLATION_PROB_CEIL and not is_edge:
+            is_sparse_cluster = cluster_sizes[i] < ISOLATION_CLUSTER_THR_N
+            if (emit[2] >= ISOLATION_PROB_CEIL
+                    and not is_edge and not is_sparse_cluster):
                 kept.append(emit)
                 continue
             if len(times) == 1:
@@ -430,7 +454,7 @@ def _gbm_detect_splices(
             else:
                 nearest = min(abs(times[i] - times[j])
                               for j in range(len(times)) if j != i)
-            if is_edge:
+            if is_edge or is_sparse_cluster:
                 dist_thresh = ISOLATION_DIST_S_LOW
             elif is_short_file:
                 dist_thresh = ISOLATION_DIST_S_LOW
