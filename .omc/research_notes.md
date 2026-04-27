@@ -7595,3 +7595,224 @@ BLOCK.
 (18) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
 PROMPT ARCHITECTURE BLOCK.
 
+## 2026-04-27T22:21:35+09:00 — cbc742d (discard, combined=0.144290)
+subject: class_weight {0:1.5, 1:1.0, 2:2.0} — boost cross_voice training weight
+per-domain: (no per-domain data)
+
+# last_reflection — class_weight {0:1.5, 1:1.0, 2:2.0} — boost cross_voice training weight
+
+(a) HYPOTHESIS: edit splice/classifier/train_classifier.py:92 to change
+class_weight from {0:1.0, 1:1.0, 2:2.0} to {0:1.5, 1:1.0, 2:2.0}.
+Boost cross_voice (class 0, the LARGEST training class) loss weight by
+50%. Pure classifier hyperparam change; triggers automatic retrain via
+the wrapper. All other classifier hyperparams byte-identical (max_iter
+=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80). All detector tunables byte-identical
+(GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635,
+DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5,
+ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5,
+ISOLATION_DIST_S_VERY_TIGHT=6.0; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: 7 consecutive failures pin down
+saturation across small-knob axes:
+- 4 isolation/intersection variants (94b6b42 sparse+short cluster<5
+  cratered -0.020; f53e71e edge cluster<6 recall to 0.102;
+  687205d short+sparse cluster<3 -0.012; 00a9b0a DIST_S 30->25 flat).
+- 3 FE pivots all failed (efe38ee peak_align -0.006; f67afba
+  cluster_marginal=3 -0.002; da02a01 peak_height_diff -0.010).
+
+The 5+-on-isolation-axis structural-pivot trigger fired multiple
+iters back. Two recent FE attempts on phase/cpe-derived signals
+both failed (peak_align timing, peak_height_diff amplitude),
+suggesting GBM already extracts equivalent signal from existing
+dsp_phase_z + dsp_cpe_z + boundary_phase_coherence. The remaining
+high-leverage move is class_weight on the LARGEST class (cross_voice
+= class 0) which has NEVER been tried explicitly.
+
+Mechanism: detector emits when p_splice = (1 - p[cross_voice]) >
+GBM_THRESHOLD=0.985. Boosting cross_voice training weight 1.0 -> 1.5
+shifts the loss landscape so misclassifying a true cross_voice
+(non-splice) sample as either splice class costs 50% more during
+training. The decision boundary shifts: for ambiguous frames, model
+leans toward cross_voice. p[cross_voice] increases for borderline
+frames -> p_splice decreases -> fewer marginal frames cross 0.985
+-> fewer fluke FP emits. Real cross_voice TPs (i.e., real splices
+that the model correctly identifies as cross_voice — the actual
+TARGET DETECTIONS via the 1-p[cross_voice] gate) already score
+p[cross_voice] >> 0.5 since real splices produce strong spectral
+discontinuity; boosting class 0 weight strengthens this further,
+MAINTAINING recall on confident detections.
+
+The just-discarded 5211495 ({0:1, 1:2, 2:2} — boost no_splice
+= class 1) regressed -0.004, but the failure mechanism is OPPOSITE
+to this iter: boosting no_splice raised p[no_splice] at the expense
+of p[cross_voice], DECREASING p[cross_voice], INCREASING p_splice
+= 1 - p[cross_voice], producing MORE emits. This iter explicitly
+boosts the class on the OTHER side of the gate, with the opposite
+sign of effect. The 5211495 negative result is direct EVIDENCE that
+the class_weight axis has steep gradients on cross_voice — moving
+in the productive direction (boost class 0 not class 1) should
+yield the reverse-sign improvement.
+
+Mechanically distinct from all 26 prior probes:
+- All isolation/intersection/gate-distance/cluster probes: post-emit
+  filtering of GBM survivors.
+- All FE probes (4c25c09 phase-CPE coherence, efe38ee peak_align,
+  da02a01 peak_height_diff, dsp_phase_cpe_corr): adding new feature
+  dimensions for GBM to consume.
+- All classifier hyperparam probes (max_depth, max_leaf_nodes, lr,
+  l2, max_iter, min_samples_leaf): regularization knobs that change
+  capacity uniformly across classes.
+- class_weight {0:1, 1:2, 2:2} (5211495): boosted no_splice — wrong
+  direction (raises p[no_splice], lowers p[cross_voice], MORE emits).
+- class_weight {0:1.5, 1:1, 2:2} (this iter): boosts cross_voice —
+  the gate's negative class. First class_weight probe in the
+  correct direction for fluke reduction.
+
+WHY 1.5 not 1.25 or 2.0:
+- 1.5 is a half-step (50%) boost — moderate lift, consistent with
+  the +1.0 same_voice_edit boost already in place (1.0 -> 2.0).
+- 1.25 quarter-step likely noise band given the class_weight axis
+  decision boundary doesn't shift much for sub-50% changes.
+- 2.0 doubles the cross_voice weight matching same_voice_edit;
+  risks overshooting and producing a degenerate model that classifies
+  most frames as cross_voice — recall risk on real same_voice_edits.
+  Reserve as next push if 1.5 keeps.
+
+WHY OVER ALTERNATIVES:
+- Per-band spectral-flux peak time within +/-200ms (cited
+  efe38ee(c)(2) / da02a01(c)(2)/(c)(3) reserve): retrain ~3-8min;
+  recent FE failures suggest GBM saturated on existing 81-feature
+  set; risk of repeating peak_align/height_diff null pattern.
+- ISOLATION_DIST_S_LOW 8 -> 7: same axis 4th iter; trajectory
+  decelerating (+0.003 -> +0.004 -> +0.002); approaches GBM_MIN_SEP_S
+  =6 cliff; affects all 4 routed populations broader recall risk.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  thin-population probe (45-60s files non-edge non-sparse high-prob
+  emits with neighbor in [8, 30)s).
+- ISOLATION_PROB_CEIL 0.997 -> 0.996: encroaches dense-real-splice
+  survivor zone.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at
+  this exact value.
+- class_weight {0:1, 1:1, 2:3} (cited 7cdf8cf(c)(3)): retrain ~3-8min
+  recall-side move; pushes splice recall HIGHER while penalty drag
+  dominates (wrong direction).
+- class_weight {0:2, 1:1, 2:2} (cited a2a9b76 reserve): full doubling
+  of cross_voice; same direction as this iter but full-step rather
+  than half-step. Reserve as next push if 1.5 keeps.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated 5+ iters.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: GBM training
+shifts decision boundary, p[cross_voice] rises ~0.01 for borderline
+frames, enough fluke emits drop below 0.985 to trim 0.6 cf/min,
+combined ~0.162 (+7%). Optimistic: 1.2 cf/min trim plus precision
+~0.88, combined ~0.172 (+14%). Pessimistic: borderline real
+same_voice_edits get re-classified as cross_voice (correct in
+metric terms, raising recall slightly) but model becomes overly
+confident producing dense narrow plateaus on real splices that
+dedupe to fewer survivors, recall drops to 0.55, combined ~0.140
+(-7%). Bad case: model overshoots and classifies many real
+same_voice_edits as cross_voice with high confidence, real same_voice
+cases lost from per-class recall, combined ~0.130 (-14%).
+Asymmetric mild upside, moderate-bounded downside. Even null result
+cleanly attributes "class_weight cross_voice boost has flat decision-
+boundary response at half-step" — bounds the class_weight direction
+in the productive sign cleanly distinct from 5211495's wrong-sign
+failure.
+
+Smoke-verifiable: train_classifier.py make_pipeline returns a valid
+sklearn Pipeline with class_weight={0:1.5, 1:1.0, 2:2.0}. Wrapper
+auto-retrains on train_classifier.py change.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — cross_voice boost IS productive. Next iter
+compound: push 1.5 -> 2.0 (full doubling, matching same_voice_edit
+weight) OR introduce sample-weight schedule that escalates cross_voice
+emphasis on samples close to the decision boundary (focal-loss style).
+(2) combined ~ 0.148-0.153 noise band — class_weight axis flat at
+50% boost. Pivot to per-band spectral-flux peak time FE in features.py
+(uses raw STFT spectral flux not phase/cpe z-scores; mechanistically
+distinct from the 4 prior phase/cpe FE failures).
+(3) combined < 0.144 — cross_voice boost overshoots, real
+same_voice_edits get reclassified, recall craters. Revert to {0:1, 1:1,
+2:2}. Pivot to ISOLATION_FILE_DUR_THR_S 45 -> 60 (untouched-direction
+single-knob isolation push) OR per-band spectral-flux FE.
+
+(d) Information gaps:
+(1) Most binding: SHAP feature-importance from current 81-feature
+classifier still NOT surfaced. Knowing whether dsp_phase_z /
+dsp_cpe_z are top-5 SHAP would inform whether the recent FE failures
+were redundancy or weak feature.
+(2) OOF metrics delta per RETRAIN iter still NOT surfaced. For this
+class_weight retrain, knowing how cross_voice precision/recall and
+same_voice_edit precision/recall shift would be decisive for next
+iter direction.
+(3) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss flat vs recall-crater
+vs precision-save patterns.
+(4) Per-class clean_fp breakdown still NOT surfaced.
+(5) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 33 iters. Stale iter-0 baseline never updates on keep.
+(6) Eval file duration / splice-position distribution unknown.
+(7) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(8) per-emit nearest-neighbor distance distribution still NOT
+surfaced.
+(9) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+
+(e) Wrapper enhancements (70 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 70 iters.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+recent discards correctly reverted.
+(3) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id) — single
+emit at end of detect_splices logging file -> n_selected, file_dur_s,
+n_intersection_edge_sparse, n_singletons, n_doublets, n_triplets,
+n_quadruplets, n_dense, n_in_first_4s, n_in_last_3s,
+nearest_dist_p25/p50/p75. ~12 lines in detector.py.
+(4) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT
+FAILED HYPOTHESES — extend each line to include precision, recall,
+clean_fp_per_min so I can distinguish near-miss vs recall-crater
+vs precision-save patterns directly.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — for
+class_weight / FE / classifier hyperparam retrains, surfacing the
+per-class precision/recall delta from the prior keep would be
+decisive for next-iter direction. Currently only `combined` is
+visible.
+(8) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-5 SHAP
+features and their delta vs prior keep would let me decide whether
+to add complementary FE or pivot.
+(9) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER.
+(10) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+(11) FORCE-EVAL SUBCOMMAND for the wrapper.
+(12) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(13) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep or
+remove the stale value entirely.
+(14) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — explicit note that detector emits label_id in {1, 2} only,
+class 0 = cross_voice is the gate's negative class.
+(15) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — alphabetical ordering: 0=cross_voice, 1=no_splice,
+2=same_voice_edit.
+(16) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+(17) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
+ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift
+in the prompt-builder so the classifier surface matches reality.
+
