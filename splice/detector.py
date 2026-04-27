@@ -145,8 +145,12 @@ ISOLATION_EDGE_TAIL_S = 3.0
 # artifact spanning ~0.13s, phoneme transition with extended formant
 # trail, chord transition where energy peak slopes across two strides)
 # vs real splices which typically span 3-5 adjacent strides at the
-# 0.0635s stride / +/-2s feature window geometry.
-ISOLATION_CLUSTER_THR_N = 3
+# 0.0635s stride / +/-2s feature window geometry. THR_N=4 widens
+# further to also include triplets (cluster_size=3) — three adjacent
+# strides span ~0.19s, characteristic of moderate-support flukes
+# (extended chord transitions, multi-frame codec artifacts) while
+# strong-support real splices typically span 4+ strides.
+ISOLATION_CLUSTER_THR_N = 4
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
