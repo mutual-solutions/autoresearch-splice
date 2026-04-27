@@ -8730,3 +8730,82 @@ diagnose: no-traceback
 tsv: RESULTS_TSV: combined=<REDACTED> f0_5=0.041265 f1=0.016925 precision=1.000000 recall=0.008535 clean_fp_per_min=0.041750 clean_fp_penalty=0.959923 n_files=60 cross_voice_f1=0.000000 same_voice_edit_f1=0.000000 unknown_label_count=6
 note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
 
+## 2026-04-28T07:58:49+09:00 — 03d4d50 (verify-fail, combined=0.039612)
+subject: add spec_contrast_band_peak_time_std_1s FE — cross-band timing coherence over +/-1s window
+per-domain: (no per-domain data)
+
+# last_reflection — PER-BAND SPEC_CONTRAST PEAK-TIME STD FE: spec_contrast_band_peak_time_std_1s
+
+(a) HYPOTHESIS: add a new feature `spec_contrast_band_peak_time_std_1s`
+to splice/features.py. For each candidate at t_sec, slice the 7-band
+spec_contrast array (shape [7, n_frames]) over [t-1, t+1], take per-band
+absolute first-differences, find argmax time per band, and return std
+of those 7 per-band peak times. Mechanism: real cross-source splices
+disrupt all bands simultaneously -> all 7 peak times cluster within
+1-3 strides (std ~0.01-0.05s). Chord/phoneme/codec flukes excite
+different bands at different times (std ~0.2-0.5s). Adds 1 new block
++ 1 entry in FEATURE_NAMES + count assert 81 -> 82. Wrapper auto-
+retrains. All other tunables byte-identical.
+
+(b) WHY OVER RECENT FAILURES: 11 consecutive discards. Just-failed
+f32d5a0 CLASS_EVIDENCE_MIN=0.5 cratered to 0.039 (recall=0.008,
+precision=1.0) — decisive evidence max(p[cv], p[sve]) is consistently
+< 0.5 even for real splices, so the model assigns diffuse non-cv mass.
+4 phase/cpe-derived FE all failed. 6 isolation/intersection variants
+all flat or cratered. The "per-band spec_contrast peak time spread"
+direction has been the cited (c)(2) reserve in c35ba8e, 7672de0,
+f32d5a0 across 3+ recent reflections — never tried. Mechanistically
+distinct from all 27+ prior probes:
+- voiced_spec_contrast_cosine_dist: pre/post comparison (windowed-
+  mean cosine), not band-time relationship.
+- stationarity_centroid_cv_1s: single-channel windowed CV.
+- onset_cv_2s (failed): single-channel windowed CV on a different
+  signal — same shape as centroid_cv_1s.
+- phase/cpe peak_align (failed): pairwise channel timing.
+- phase/cpe peak_height_diff (failed): pairwise channel amplitude.
+- spec_contrast_delta: pre/post mean delta.
+This iter measures CROSS-BAND TIMING COHERENCE on a fresh signal
+(spec_contrast bands not phase/cpe fused channels) — first FE that
+queries the SPATIAL/SPECTRAL coherence of the splice signature
+across frequency bands rather than across DSP channels.
+
+(c) IF FAILS:
+(1) >0.155 keep: compound with per-band spec_contrast peak HEIGHT std.
+(2) 0.148-0.153 noise: pivot to chunk-relative spec_flux ratio
+(boundary_spec_flux_peak / chunk_median_onset).
+(3) <0.144 crater: revert; pivot to a SMALL CLASS_EVIDENCE_MIN
+threshold like 0.05 (since 0.5 cratered, only the most diffuse
+emits — those with p[same_voice_edit] < 0.05 — would be filtered at
+0.05; needs empirical distribution surfacing first).
+
+(d) Information gaps: (1) most binding — empirical distribution of
+max(p[0], p[2]) for emits never surfaced; the 0.5 crater proves the
+distribution is far below 0.5 but I can't safely pick a lower
+threshold without seeing it. (2) per-band spec_contrast peak-time-std
+empirical distribution unknown. (3) SHAP feature-importance still NOT
+surfaced after 11 iters of FE/classifier probes. (4) per-class
+clean_fp breakdown still NOT surfaced. (5) clean_fp_per_min=9.143 in
+CURRENT STATE vs algebraic ~4.21 persists 39 iters. (6)
+ARCHITECTURE block names GradientBoostingClassifier but actual is
+HistGBC.
+
+(e) Wrapper enhancements (76 consecutive iters):
+(1) PER-EMIT CLASS-PROBABILITY DIAG (max(p[0],p[2]) percentiles) —
+binding for ANY class-evidence threshold probe given the 0.5 crater.
+(2) PER-EMIT SPEC_CONTRAST BAND-PEAK-TIME-STD DIAG.
+(3) FAILED-HYPOTHESIS RECALL/PRECISION/CF DECOMPOSITION in
+RECENT FAILED HYPOTHESES.
+(4) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(6) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA.
+(7) PRODUCTIVE-AXIS TRAJECTORY BLOCK in prompt.
+(8) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL
+IS HistGradientBoostingClassifier.
+
+
+---
+## [auto-diagnosis]
+diagnose: no-traceback
+tsv: RESULTS_TSV: combined=<REDACTED> f0_5=0.041265 f1=0.016925 precision=1.000000 recall=0.008535 clean_fp_per_min=0.041750 clean_fp_penalty=0.959923 n_files=60 cross_voice_f1=0.000000 same_voice_edit_f1=0.000000 unknown_label_count=6
+note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
+
