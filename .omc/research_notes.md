@@ -6093,3 +6093,256 @@ BLOCK.
 (15) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
 PROMPT ARCHITECTURE BLOCK.
 
+## 2026-04-27T11:40:52+09:00 — f53e71e (discard, combined=0.151082)
+subject: ISOLATION_CLUSTER_THR_N_EDGE=6 broaden cluster threshold for edge intersection only
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_CLUSTER_THR_N_EDGE=6 (broaden cluster threshold for edge intersection only)
+
+(a) HYPOTHESIS: add ISOLATION_CLUSTER_THR_N_EDGE=6 in splice/detector.py.
+Add a new derived flag in the post-emit isolation block:
+`is_edge_sparse_cluster = cluster_sizes[i] < ISOLATION_CLUSTER_THR_N_EDGE`.
+Change the intersection branch condition from
+`is_edge and is_sparse_cluster` to `is_edge and is_edge_sparse_cluster`.
+The existing global ISOLATION_CLUSTER_THR_N=5 stays unchanged for the
+bypass check (`not is_sparse_cluster`) and the elif singleton tier
+(`is_edge or is_sparse_cluster`). Net effect: cluster_size=5 emits at
+edge zones (currently routed to ISOLATION_DIST_S_LOW=8.0 via the
+elif singleton branch) move to ISOLATION_DIST_S_VERY_TIGHT=6.0
+(unconditional drop). All non-edge handling byte-identical. Pure
+detector primary tunable; no retrain; no FE; 1 new module-level
+constant + 1 new bool + 1 condition swap. All other tunables byte-
+identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=8.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0, ISOLATION_CLUSTER_THR_N=5,
+ISOLATION_DIST_S_VERY_TIGHT=6.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: the just-discarded 94b6b42 (extending
+VERY_TIGHT to sparse+short_file intersection) cratered combined from
+0.151237 to 0.131789 (-0.020). The failure mode was specific: short-
+file interior sparse-cluster emits with cluster_size in {1,2,3,4}
+contain many real same_voice_edits. Short files mechanically constrain
+real-splice support shape — the +/-2s feature window with file_dur<45s
+gives less context for ambiguity, so the splice generator's natural
+placement density relative to file length is higher. Killing this
+population unconditionally was over-broad.
+
+The cited f7e5205(c)(1) reserve had two options: (i) sparse+short_file
+intersection (just failed), (ii) "broadening the cluster threshold for
+the intersection specifically (THR_N=6 for intersection only, keeping
+THR_N=5 for non-intersection)". This iter probes (ii). Mechanism
+extends the PROVEN edge+sparse intersection by widening which cluster
+sizes count as "sparse" within that one branch. The added population
+is cluster_size=5 at edge zones — currently routed via the elif to
+LOW=8.0. Moving them to VERY_TIGHT=6.0 makes the gate structurally
+unsatisfiable post-dedupe (=GBM_MIN_SEP_S), so they drop unconditionally.
+
+Mechanically distinct from all 23 prior probes:
+- Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+  absolute probability bands.
+- Time-graded (86d35ab): file DURATION.
+- Class-conditioned (cbe9793, 5211495, 435aebc): emit class label —
+  proven dead.
+- Density-aware file-level (75ac490): wrong granularity, zero bite.
+- Edge-aware (a2ce01c, 0ee8e52, 3584d76): per-emit time POSITION.
+- Cluster-size global (faf4f67, 3785e80, e240f96, 6d11b7f): single
+  shared THR_N applied uniformly across all branches.
+- Gate-distance push (75150c4, 59b6b1b, 035b8d0): single shared gate.
+- Per-tier intersection edge+sparse (f7e5205): conjunctive sub-gate
+  with shared THR_N=5.
+- Per-tier sparse+short_file (94b6b42, just-failed): conjunctive sub-
+  gate generalization to a different second discriminator — failed.
+- Per-tier edge with broader sparse (this iter): SAME intersection
+  branch, but the sparse predicate uses a per-branch threshold. First
+  hypothesis to use a per-branch THR_N variant rather than uniform.
+
+Mechanism: cluster_size=5 spans 5 adjacent strides at
+ANALYSIS_STRIDE_S=0.0635s ~ 0.32s. In interior positions, the +/-2s
+feature window provides full bilateral context so cluster_size=5 is
+characteristic of confident real-splice support — kept globally as
+non-sparse via THR_N=5. AT EDGE ZONES (HEAD<4s OR TAIL<3s), the
++/-2s feature window is partially truncated by the file boundary.
+A cluster_size=5 emit at HEAD<4s requires the splice to fire 5
+adjacent strides through a window with one side cut off — possible
+mechanically for splices placed at HEAD~3-4s, but the PRIOR is biased
+toward fluke at edges:
+- Splice generators avoid placing edits at file head/tail (general
+  practice — head/tail are often silent, padded, or truncated zones).
+- Encoder priming (mp3 LAME 1152-sample header padding ~26ms, opus
+  80-sample lookahead, m4a iTunSMPB pre-roll) and fade-in/out produce
+  SPECTRAL discontinuities that create high-confidence GBM emits over
+  extended (0.2-0.4s) regions — exactly the cluster_size=5 shape.
+- Edge emits at cluster_size=5 are therefore biased toward extended-
+  encoder-artifact fluke rather than the rare real-splice-near-
+  boundary case.
+
+WHY ISOLATION_CLUSTER_THR_N_EDGE=6 not 7 or different name:
+- 6 is the value cited verbatim by f7e5205(c)(1); cleanly discriminates
+  "the cited compound worked / didn't".
+- 7 widens to cluster_size in {1,2,3,4,5,6}; cluster_size=6 spans
+  ~0.38s = beyond the typical real-splice support shape; including
+  it at edges enters territory where real splices firing at edges
+  with strong full-window support get dropped. Higher recall risk.
+- _EDGE suffix names the variant by the branch it affects, parallel
+  to ISOLATION_DIST_S_VERY_TIGHT naming convention.
+
+WHY OVER ALTERNATIVES:
+- Global ISOLATION_CLUSTER_THR_N 5 -> 6: cluster axis trajectory
+  decelerated sharply (THR_N 2->3->4->5: 0.001->0.004->0.0004->0.0002);
+  global push to 6 affects ALL branches including the bypass check
+  (cluster_size=5 emits with high prob currently bypass; would lose
+  bypass) and the LOW elif singleton branch. Broad recall risk on
+  confident-real-splice support shape.
+- Sparse + marginal_prob intersection in interior: 4-way predicate
+  (non-edge AND non-short_file AND sparse AND marginal); complex and
+  94b6b42 demonstrated short-file+sparse is recall-fragile, so even
+  excluding short files leaves sparse+marginal in long-file interior
+  — possible recall hit on marginal real splices.
+- ISOLATION_DIST_S 30 -> 25: residual non-edge non-sparse non-short
+  high-conf interior population, mostly already filtered by upstream
+  tiers. Expected fluke density very low. Reserve.
+- Triple intersection edge AND sparse AND marginal: subset of
+  existing edge+sparse intersection (already drops unconditionally),
+  no new drops. No-op.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  24th-iter isolation tweak likely noise band.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded at this
+  exact value.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed; pushing further likely catches real
+  splices firing cliff-config.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive.
+- TEMPORAL CHANNEL-PEAK ALIGNMENT FE (cited 4c25c09(c)(2),
+  3785e80(c)(2), 6d11b7f(c)(2), 035b8d0(c)(2)): retrain required;
+  4c25c09 phase-CPE coherence regressed -0.004 — FE axis hot.
+  Reserve as next pivot if this null.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.2 cf/min
+trim from edge cluster_size=5 fluke unconditional drops yields
+combined ~0.157 (+4%). Optimistic: 0.5 cf/min trim yields combined
+~0.165 (+9%). Pessimistic: recall 0.60 -> 0.59 from losing 1 real
+edge-positioned cluster_size=5 splice (rare since splice generators
+avoid file edges and cluster_size=5 at edges requires full window
+support firing through truncation), cf flat -> F0.5 ~0.781,
+combined ~0.150 (-1%). Bad case: recall 0.55, cf flat -> combined
+~0.135 (-11%). Asymmetric small-to-mild upside, moderate-bounded
+downside. Population is structurally narrow (cluster_size=5 at edge
+zones is the intersection of "strong-support shape" AND "boundary
+zone") so even null result cleanly attributes "edge-zone
+cluster_size=5 emits don't have enough fluke real estate beyond
+cluster_size<5 to bite further" — bounds the cluster-axis edge
+variant.
+
+Smoke-verifiable: detector.py imports cleanly with one new constant;
+isolation block adds one bool flag and swaps one condition predicate;
+existing branches unchanged.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — broader edge sparse threshold IS biting.
+Next iter compound: push EDGE 6 -> 7 OR introduce a parallel
+broader threshold for the singleton elif tier
+(ISOLATION_CLUSTER_THR_N_SINGLETON=6 routing cluster_size=5 emits
+in singleton-or-edge to LOW=8 instead of 30s).
+(2) combined ~ 0.148-0.153 noise band — edge cluster_size=5 fluke
+shape rare or already dominated by lower-cluster fluke. Pivot
+DECISIVELY to TEMPORAL CHANNEL-PEAK ALIGNMENT FE in features.py:
+for each candidate, find argmax time of phase_curve in [t-1, t+1],
+same for cpe_curve, distance as feature. Captures "are channel peaks
+co-located in time?" — orthogonal to phase-CPE value-correlation
+(which 4c25c09 regressed on); peak-alignment detects whether the
+two physical signals fire at the same instant even if values do
+not covary linearly. Retrain ~3-8min.
+(3) combined < 0.144 — cluster_size=5 at edges contains real
+same_voice_edits more often than hypothesized. Revert. Pivot to
+ISOLATION_DIST_S 30 -> 25 (residual high-conf interior tier; fresh
+axis, low risk, low bite) OR to softer per-tier intersection
+variant (ISOLATION_DIST_S_VERY_TIGHT 6 -> 7 for cluster_size=5
+edge specifically while keeping cluster_size<5 edge at 6).
+
+(d) Information gaps:
+(1) Most binding: per-emit cluster-size + file-relative-time JOINT
+distribution diag still NOT surfaced. Knowing the empirical count
+of survivors with cluster_size=5 AND at edge across the 60-file
+eval would directly size this iter's bite — what fraction of
+survivors fall in this slice? Currently no diag captures this;
+relying on first-principles reasoning about the intersection of
+two narrow priors.
+(2) Per-emit nearest-neighbor distance distribution diag still
+NOT surfaced.
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 27 iters. Stale iter-0 baseline never updates on keep.
+(5) Eval file duration distribution unknown beyond "30-120s".
+(6) Eval splice-position distribution unknown — operator-side data
+on whether splice generators ever place edits within 4s of file
+head or 3s of file tail would directly size the recall risk of
+this iter.
+(7) Frontier text doesn't list classifier or DSP-gate or isolation-
+filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(8) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(9) ARCHITECTURE block doesn't surface that detector emits label_id
+in {1, 2} only nor the alphabetical class_names index mapping.
+(10) The cluster-axis and gate-distance trajectories are only
+recoverable by reading 4+ sequential reflections.
+
+(e) Wrapper enhancements (64 consecutive iters with persistent
+gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 64 iters
+running. Phrase-anchor matches to literal service-name tokens;
+drop the bare q-word; anchor o-word and c-words to specific
+service phrases.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT JOINT DIAG (cluster-size + file-relative-time +
+file-duration + nearest-neighbor + probability + label_id) —
+single emit at end of detect_splices logging file -> n_selected,
+file_dur_s, n_intersection_edge_sparse_5, n_edge_cluster_size_5,
+n_singletons, n_doublets, n_triplets, n_quadruplets, n_dense,
+n_in_first_4s, n_in_last_3s, nearest_dist_p25/p50/p75. ~12 lines
+in detector.py near the existing scan_summary emit; binding on
+every intersection / cluster / edge / gate-distance probe.
+(4) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(5) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+(6) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(7) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(8) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER — extend
+frontier text to surface all classifier tunables +
+DSP_CONFIRMATION_MIN / DSP_SUM_MIN / DSP_SUM_MIN_LOW /
+ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S /
+ISOLATION_DIST_S_LOW / ISOLATION_DIST_S_VERY_TIGHT /
+ISOLATION_FILE_DUR_THR_S / ISOLATION_EDGE_HEAD_S /
+ISOLATION_EDGE_TAIL_S / ISOLATION_CLUSTER_THR_N /
+ISOLATION_CLUSTER_THR_N_EDGE tried-set with kept/failed values.
+(9) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt — for any
+tunable that has multiple sequential keeps on the same axis,
+surface a one-line trajectory with delta per iter. e.g.,
+"ISOLATION_DIST_S_LOW: 15 -> 12(+0.003) -> 10(+0.004) -> 8(+0.002)"
+and "INTERSECTION: edge_sparse_VERY_TIGHT(+0.003)".
+(10) FORCE-EVAL SUBCOMMAND for the wrapper.
+(11) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(12) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep or
+remove the stale value entirely.
+(13) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK.
+(14) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK.
+(15) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+
