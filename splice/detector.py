@@ -113,6 +113,15 @@ ISOLATION_DIST_S_LOW = 15.0
 # another marginal emit within ~half the file's duration to survive.
 # Long files keep the existing probability-graded behavior.
 ISOLATION_FILE_DUR_THR_S = 45.0
+# Edge-aware override: emits whose file-relative time sits within
+# ISOLATION_EDGE_DIST_S of either file boundary lose the
+# ISOLATION_PROB_CEIL bypass and must satisfy a tight neighbor gate
+# at ISOLATION_DIST_S_LOW regardless of probability. Targets
+# encoder-priming, fade-in/out, and pre/post-roll silence boundaries
+# that produce high-confidence GBM emits from spectral discontinuity
+# alone (no actual cross-source splice). Real splices placed near
+# file boundaries with another emit within 15s still survive.
+ISOLATION_EDGE_DIST_S = 2.0
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -406,7 +415,9 @@ def _gbm_detect_splices(
         times = [e[0] for e in selected]
         kept: list[tuple[float, int, float, list[float]]] = []
         for i, emit in enumerate(selected):
-            if emit[2] >= ISOLATION_PROB_CEIL:
+            is_edge = (emit[0] < ISOLATION_EDGE_DIST_S
+                       or emit[0] > file_dur_s - ISOLATION_EDGE_DIST_S)
+            if emit[2] >= ISOLATION_PROB_CEIL and not is_edge:
                 kept.append(emit)
                 continue
             if len(times) == 1:
@@ -414,7 +425,9 @@ def _gbm_detect_splices(
             else:
                 nearest = min(abs(times[i] - times[j])
                               for j in range(len(times)) if j != i)
-            if is_short_file:
+            if is_edge:
+                dist_thresh = ISOLATION_DIST_S_LOW
+            elif is_short_file:
                 dist_thresh = ISOLATION_DIST_S_LOW
             else:
                 dist_thresh = (ISOLATION_DIST_S_LOW
