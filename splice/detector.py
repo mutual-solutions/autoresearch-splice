@@ -150,7 +150,7 @@ ISOLATION_EDGE_TAIL_S = 3.0
 # strides span ~0.19s, characteristic of moderate-support flukes
 # (extended chord transitions, multi-frame codec artifacts) while
 # strong-support real splices typically span 4+ strides.
-ISOLATION_CLUSTER_THR_N = 4
+ISOLATION_CLUSTER_THR_N = 5
 
 _GBM_MODEL_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
