@@ -4811,3 +4811,234 @@ BLOCK — "classifier classes (alphabetical): 0=cross_voice,
 PROMPT ARCHITECTURE BLOCK.
 [auto] (no SHAP data for either 3584d76 or faf4f67)
 
+## 2026-04-27T10:32:20+09:00 — 3785e80 (keep, combined=0.138866)
+subject: ISOLATION_CLUSTER_THR_N 2 -> 3 (push the just-kept cluster axis)
+per-domain: (no per-domain data)
+
+# last_reflection — ISOLATION_CLUSTER_THR_N 2 -> 3 (push the just-kept cluster axis)
+
+(a) HYPOTHESIS: edit splice/detector.py:144 to raise
+ISOLATION_CLUSTER_THR_N from 2 to 3. Pure detector primary tunable;
+no retrain; no FE; no new constants; no structural change. The
+cluster-size-aware override (faf4f67) currently strips the
+ISOLATION_PROB_CEIL bypass from singleton clusters (cluster_size=1,
+i.e., cluster_size < 2) and forces them through the tight 15s
+neighbor gate. Raising THR_N to 3 widens the population to
+cluster_size in {1, 2} — doublets also lose the bypass. All other
+tunables byte-identical (GBM_THRESHOLD=0.985, GBM_MIN_SEP_S=6.0,
+ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=3.0, DSP_SUM_MIN=5.9,
+DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=0.997, ISOLATION_DIST_S=30.0,
+ISOLATION_PROB_LOW_CEIL=0.990, ISOLATION_DIST_S_LOW=15.0,
+ISOLATION_FILE_DUR_THR_S=45.0, ISOLATION_EDGE_HEAD_S=4.0,
+ISOLATION_EDGE_TAIL_S=3.0; classifier {0:1.0,1:1.0,2:2.0},
+max_iter=500, max_depth=6, max_leaf_nodes=32, lr=0.07, l2=2.0,
+min_samples_leaf=80; FEATURE_NAMES at 81).
+
+(b) WHY OVER RECENT FAILURES: faf4f67 (cluster-size-aware isolation
+at THR_N=2, singletons only) yielded +0.000987 to combined=0.134675.
+The 18-iter ledger shows the productive-axis-push pattern:
+a2ce01c edge override at 2.0s (+0.001956), 0ee8e52 edge 2.0->3.0
+(+0.001413), 3584d76 edge HEAD=4.0 (+0.000199), faf4f67 cluster
+THR_N=2 (+0.000987) — all top-5 single-iter gains are on
+edge/cluster axes. The cited faf4f67(c)(1) compound names this
+hypothesis verbatim: "push ISOLATION_CLUSTER_THR_N 2 -> 3 (catches
+cluster_size = 2 also) OR add a separate gentler gate for size=2
+emits (e.g., DIST_S=20s instead of 15s)". Single-knob push is the
+cleanest first probe — the tiered alternative (separate DIST_S=20s
+for doublets) introduces a new constant and new branch and would
+confound attribution between "doublets-need-tightening" and
+"specific-tier-cut-works".
+
+Mechanically distinct from all 18 prior probes:
+- Probability-graded (ea37815, 9656f1e, fbc85d1, 59f3f2b): per-emit
+  absolute probability bands.
+- Time-graded (86d35ab): file DURATION.
+- Class-conditioned (cbe9793, 5211495, 435aebc): emit class label —
+  proven dead via class_weight=2 biasing argmax to label_id=2.
+- Density-aware file-level (75ac490): wrong granularity, zero bite.
+- Edge-aware (a2ce01c, 0ee8e52, 3584d76): per-emit time POSITION —
+  productive but saturating.
+- Cluster-size at THR_N=2 (faf4f67): singletons only — kept,
+  +0.000987.
+- Cluster-size at THR_N=3 (this iter): widens to doublets too —
+  same axis just kept, push the productive direction.
+
+Mechanism: doublets (cluster_size=2) are emits where exactly two
+adjacent strides above all gates were collapsed to one survivor by
+greedy dedupe. Two adjacent strides arise either from (i) real
+splice with feature-window misalignment (the splice center falls
+between two stride centers, so two adjacent strides see partial
+splice signal — but real splices typically span 3-5 strides at
+ANALYSIS_STRIDE_S=0.0635 because the +/-2s feature window overlaps
+the splice from many stride positions), or (ii) fluke spikes that
+happen to fire two adjacent strides — a brief codec artifact
+spanning 0.13s, a phoneme transition with extended formant trail,
+a chord transition where the energy peak slopes across two strides.
+Doublets are still strong fluke candidates relative to dense
+clusters (cluster_size >=3), and forcing them through the 15s
+neighbor gate drops solitary doublets while preserving doublets
+that have another emit within 15s — the geometry under which a
+real-splice doublet would persist anyway (real same_voice_edits
+typically come paired or near boundary turn-changes).
+
+WHY THR_N=3 not 4 or 2.5:
+- 3 is the value cited verbatim by faf4f67(c)(1). Cleanly
+  discriminates "the cited compound worked / didn't".
+- 4 widens to triplets (cluster_size in {1, 2, 3}), entering
+  territory where real splice support shape begins to dominate.
+  The +/-2s feature window with 0.0635s stride means real splices
+  fire ~3-4 adjacent strides typical, so triplets are likely real.
+- 2.5 is non-integer; cluster_size is integer-valued so the
+  threshold has no fractional effect.
+
+WHY OVER ALTERNATIVES:
+- Tiered cluster gate (DIST_S=20s for doublets, 15s for singletons):
+  multi-line; introduces a new constant; muddies attribution.
+  Reserve as next-iter compound IF this push is null but
+  doublet-tiered shape might still bite.
+- ISOLATION_EDGE_HEAD_S 4.0 -> 5.0 / symmetric 4/4: same edge axis
+  pushed 3 iters running; just-kept gain only +0.000199; further
+  push likely noise band.
+- ISOLATION_FILE_DUR_THR_S 45 -> 60: same axis +0.0006 marginal;
+  18th-iter isolation tweak likely noise band.
+- ISOLATION_DIST_S_LOW 15 -> 10: pushes axis at 15s into untested
+  territory; recall risk on real splice pairs spaced 10-15s in
+  30s eval files.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.994: 59f3f2b discarded at
+  0.992; encroaches upper-marginal real-splice zone.
+- DSP_SUM_MIN_LOW 6.5 -> 7.0 / DSP_CONFIRMATION_MIN_LOW 3.3 -> 3.5:
+  same axes recently probed; pushing further likely catches real
+  splices firing cliff-config.
+- class_weight {0:1, 1:1, 2:3}: retrain ~3-8min recall-side move;
+  5211495 (1:2) regressed -0.004 — class_weight axis sensitive.
+- 4th feature add (phase-T2 coherence, temporal channel-peak
+  alignment): retrain required; 4c25c09 phase-CPE coherence
+  regressed -0.004 — FE axis still hot.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr / l2 /
+  max_iter: classifier hyperparam axes flagged saturated.
+- DSP_CHANNEL_MIN per-channel hard gate: regressed -0.005 (7cdf8cf).
+- GBM_THRESHOLD push uniform: band exhausted.
+- Density-aware file-level ISOLATION_PROB_CEIL: 75ac490 flat zero
+  bite (wrong granularity; cluster-size is per-emit local — the
+  productive variant).
+
+Penalty leverage: combined=0.134675 / F0.5=0.787811 -> algebraic
+penalty 0.171 -> back-derived clean_fp/min ~4.85 (vs reported stale
+9.143). With ~7x F0.5 sensitivity per unit. Plausible: 0.3 cf/min
+trim from doublet-fluke drops yields combined ~0.142 (+5%).
+Optimistic: 0.7 cf/min trim yields combined ~0.151 (+12%).
+Pessimistic: recall 0.60 -> 0.59 from losing 1 doublet-real-splice
+in [low-prob, low-DSP-sum] sub-band, cf flat -> F0.5 ~0.781,
+combined ~0.133 (-1%). Bad case: recall 0.55, cf flat -> combined
+~0.119 (-12%). Asymmetric mild upside, moderate-bounded downside.
+Structurally narrow (only widens cluster-size population from {1}
+to {1, 2}; doublet emits are a thin slice between singletons and
+true clusters) so even null result cleanly attributes "doublet
+fluke shape is rare or already filtered" — bounds the cluster-
+size-aware approach class as singleton-only-productive.
+
+Smoke-verifiable: detector.py imports cleanly with one constant
+value change; isolation block unchanged in shape.
+
+(c) IF THIS FAILS:
+(1) combined > 0.137 — doublet inclusion IS biting further. Next
+iter compound: push THR_N 3 -> 4 (catches triplets) OR add a
+gentler tier for doublets (DIST_S=20s) while keeping singletons
+at 15s — the tiered shape preserves more recall on real-splice
+doublets while still attacking solitary fluke doublets.
+(2) combined ~ 0.132-0.135 noise band — doublet population is
+empty or already filtered by DSP/edge gates. Pivot DECISIVELY to
+TEMPORAL CHANNEL-PEAK ALIGNMENT feature in features.py (cited
+4c25c09(c)(2)): for each candidate, find argmax time of phase_curve
+in [t-1, t+1], same for cpe_curve, distance as feature. Captures
+"are the channel peaks co-located?" — orthogonal to phase-CPE
+value-correlation (which 4c25c09 regressed on); peak-alignment
+detects whether the two physical signals fire at the same instant
+even if their values don't covary linearly. Retrain ~3-8min;
+mechanistically distinct from 18 recent probes and from prior FE
+adds (which were single-channel or pre/post-contrast).
+(3) combined < 0.128 — doublets contain more real splices than
+hypothesized. Revert THR_N to 2 and pivot to the tiered cluster
+gate variant: separate DIST_S=20s for doublets (gentler than
+tight 15s but tighter than the 30s default), preserving recall
+while still attacking solitary fluke doublets.
+
+(d) Information gaps:
+(1) Most binding: per-emit cluster-size distribution diag still
+NOT surfaced. Knowing the empirical histogram of cluster_sizes
+across the 60-file eval would directly size this iter's bite —
+what fraction are doublets (size=2) vs singletons (size=1) vs
+dense (>=3)? Currently no diag captures this; relying on first-
+principles reasoning about the +/-2s feature window.
+(2) Per-emit FILE-RELATIVE-TIME distribution diag still NOT
+surfaced (cited 18 iters running).
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.85
+persists 19 iters. Stale iter-0 baseline never updates on keep.
+(5) Eval file duration distribution unknown beyond "30-120s".
+(6) Eval splice-position distribution unknown.
+(7) The diag.gbm.scan_summary event logs emit_total without per-
+file dedupe-cluster topology.
+(8) Frontier text doesn't list classifier or DSP-gate or
+isolation-filter tunables — only PRIMARY (GBM/STRIDE/DSP).
+(9) ARCHITECTURE block names subsample under
+GradientBoostingClassifier hyperparams, but actual classifier is
+HistGradientBoostingClassifier — documentation drift.
+(10) ARCHITECTURE block doesn't surface that detector emits
+label_id in {1, 2} only nor the alphabetical class_names index
+mapping.
+
+(e) Wrapper enhancements (56 consecutive iters with persistent gaps):
+(1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 56 iters
+running. Phrase-anchor matches to literal service-name tokens; drop
+the bare q-word; anchor o-word and c-words to specific service
+phrases.
+(2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD —
+historical drift bug; recent discards correctly reverted.
+(3) PER-EMIT CLUSTER-SIZE DISTRIBUTION DIAG — single emit at end of
+detect_splices logging file -> n_selected, cluster_size_p25/p50/p75,
+n_singletons (size=1), n_doublets (size=2), n_dense (>=3). ~5 lines
+in detector.py near the existing scan_summary emit; binding on
+every cluster-topology probe.
+(4) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit logging file ->
+file_dur_s, n_in_first_2s, n_in_2_3s, n_in_3_4s, n_in_4_5s,
+n_in_last_2s, n_in_last_2_3s, n_in_last_3_4s, n_interior. Repeat
+ask 18+ iters running.
+(5) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE-
+TIME + CLUSTER-SIZE JOINT DIAG — combined per-emit metadata logged
+once per file, filterable downstream by any axis.
+(6) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in
+splice/evaluate.py compute_clean_fps_per_file.
+(7) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE
+— wrap diag.gbm.isolation_filter / chunk_scan_done events into a
+single line "isolation: N drops, dsp_max: J drops, dsp_sum: K drops,
+breakdown by prob-band / file_dur-band / edge-head-band /
+edge-tail-band / cluster-size-band" surfaced in CURRENT STATE.
+(8) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE.
+(9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+(10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE +
+CLUSTER-AWARE TUNABLE FRONTIER — extend frontier text to surface
+all classifier tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN /
+DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL /
+ISOLATION_DIST_S / ISOLATION_DIST_S_LOW / ISOLATION_FILE_DUR_THR_S /
+ISOLATION_EDGE_HEAD_S / ISOLATION_EDGE_TAIL_S /
+ISOLATION_CLUSTER_THR_N tried-set with kept/failed values, mirror
+of PRIMARY frontier.
+(11) FORCE-EVAL SUBCOMMAND for the wrapper —
+`./run_autoresearch.sh force_eval` reads HEAD, runs preflight +
+retrain (sha gate) + evaluate.py exactly once.
+(12) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+(13) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.85. Auto-recompute on keep or
+remove the stale value entirely.
+(14) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE
+BLOCK — "detector emits label_id in {1=no_splice,
+2=same_voice_edit}; class 0=cross_voice EXCLUDED at
+detector.py:391 splice_cols = (1, 2)".
+(15) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE
+BLOCK — "classifier classes (alphabetical): 0=cross_voice,
+1=no_splice, 2=same_voice_edit".
+(16) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in
+PROMPT ARCHITECTURE BLOCK.
+[auto] (no SHAP data for either faf4f67 or 3785e80)
+
