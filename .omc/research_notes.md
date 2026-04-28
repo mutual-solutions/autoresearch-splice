@@ -6725,3 +6725,226 @@ diagnose: no-traceback
 tsv: RESULTS_TSV: combined=<REDACTED> f0_5=0.041265 f1=0.016925 precision=1.000000 recall=0.008535 clean_fp_per_min=0.041750 clean_fp_penalty=0.959923 n_files=60 cross_voice_f1=0.000000 same_voice_edit_f1=0.000000 unknown_label_count=6
 note: eval log has no Python traceback; likely a normal discard. If combined collapsed below 0.05, check wrapper log for PIPELINE_FAILURE lines.
 
+## 2026-04-29T00:45:35+09:00 — 7025a18 (discard, combined=0.143652)
+subject: add boundary_onset_chunk_relative_ratio FE — first chunk-level normalization (local peak in +/-0.2s vs whole-chunk median onset; targets dominant clean_fp drag where local peak meaning depends on chunk activity baseline; 12 consecutive failures across 8 isolation/intersection variants and 4 phase/cpe/onset-CV local-window FE saturated existing 81-feature local-window ensemble; cited 03d4d50(c)(2) reserve verbatim 'chunk-relative spec_flux ratio (boundary_spec_flux_peak / chunk_median_onset)'; mechanism real splice in clean turn chunk_median onset LOW ~0.5 local peak HIGH ~5.0 ratio ~10 distinctive vs fluke chord transition in continuous singing chunk_median HIGH ~3.0 local peak similar ~4.0 ratio ~1.3 indistinct vs fluke phoneme boundary chunk_median ~2.0 local peak ~3.0 ratio ~1.5 indistinct vs codec micro-artifact in clean audio chunk_median ~0.3 peak ~1.0 ratio ~3 vs real same_voice_edit in continuous speech chunk_median ~2.0 peak ~5.0 ratio ~2.5; mechanically distinct from boundary_spec_flux_peak local peak only no normalization spec_flux_delta pre/post comparison stationarity_centroid_cv_1s local CV stationarity_onset_cv_2s failed -0.004 local CV on onset NOT chunk-normalized voiced/unvoiced asymmetry pre/post pairwise phase/cpe pairwise channel relationships; ratio over difference because clean chunks median 0.1-0.5 continuous speech 1-3 dense singing 3-5 a difference of 4.0 means very different things ratio normalizes naturally; +/-0.2s window matches existing boundary_spec_flux_peak; clamp to [0, 100] to bound StandardScaler input; chosen over per-band spec_contrast peak HEIGHT std 03d4d50(c)(1) contaminated by verify-fail crash over CLASS_EVIDENCE_MIN=0.05 03d4d50(c)(3) tiny threshold unlikely to bite over ISOLATION_DIST_S 30->22 thin population over ISOLATION_PROB_LOW_CEIL 0.990->0.992 59f3f2b discarded over ISOLATION_FILE_DUR_THR_S 60->75 c35ba8e discarded at 60 over class_weight {0:2,1:1,2:2} cbc742d {0:1.5} -0.007 same direction over min_samples_leaf/max_depth/lr/l2/max_iter classifier saturated over GBM_THRESHOLD push band exhausted; penalty leverage combined=0.151 F0.5=0.788 algebraic clean_fp/min ~4.21 with ~7x F0.5 sensitivity per unit plausible 0.5 cf trim combined +9% optimistic 1.2 trim +20% pessimistic redundant -3% bad case sentinel zero on silence chunks -6% asymmetric mild-to-moderate upside moderate downside; 1 new block _block_chunk_relative_onset 1 entry FEATURE_NAMES 1 update len assert 81->82; smoke-verified extract_features returns 82 finite features with chunk_relative_ratio=1.36 on noise; all detector tunables byte-identical GBM_THRESHOLD=0.985 GBM_MIN_SEP_S=6.0 ANALYSIS_STRIDE_S=0.0635 DSP_CONFIRMATION_MIN=3.0 DSP_SUM_MIN=5.9 DSP_SUM_MIN_LOW=6.5 ISOLATION_PROB_CEIL=0.997 ISOLATION_DIST_S=30.0 ISOLATION_PROB_LOW_CEIL=0.990 ISOLATION_DIST_S_LOW=8.0 ISOLATION_FILE_DUR_THR_S=45.0 ISOLATION_EDGE_HEAD_S=4.0 ISOLATION_EDGE_TAIL_S=3.0 ISOLATION_CLUSTER_THR_N=5 ISOLATION_DIST_S_VERY_TIGHT=6.0 classifier {0:1.0,1:1.0,2:2.0} max_iter=500 max_depth=6 max_leaf_nodes=32 lr=0.07 l2=2.0 min_samples_leaf=80
+per-domain: (no per-domain data)
+
+# last_reflection — CHUNK-RELATIVE ONSET PEAK RATIO FE: boundary_onset_chunk_relative_ratio
+
+(a) HYPOTHESIS: add a new feature `boundary_onset_chunk_relative_ratio`
+to splice/features.py. For each candidate at t_sec, compute the local
+onset peak in [t-0.2, t+0.2] (same window as existing
+boundary_spec_flux_peak) divided by the WHOLE-CHUNK median of
+feat_onset. ALL 81 existing features are LOCAL (windowed around
+t_sec — boundary_spec_flux_peak ±0.2s, spec_flux_delta pre/post
+±2s, stationarity_centroid_cv_1s ±1s); NONE normalize against the
+chunk's typical activity baseline. This is the FIRST feature using
+chunk-level statistics as a normalization reference. Adds 1 new
+block (`_block_chunk_relative_onset`), 1 entry in FEATURE_NAMES,
+1 update to len assert (81 -> 82). Triggers wrapper auto-retrain.
+All other tunables byte-identical (GBM_THRESHOLD=0.985,
+GBM_MIN_SEP_S=6.0, ANALYSIS_STRIDE_S=0.0635, DSP_CONFIRMATION_MIN=
+3.0, DSP_SUM_MIN=5.9, DSP_SUM_MIN_LOW=6.5, ISOLATION_PROB_CEIL=
+0.997, ISOLATION_DIST_S=30.0, ISOLATION_PROB_LOW_CEIL=0.990,
+ISOLATION_DIST_S_LOW=8.0, ISOLATION_FILE_DUR_THR_S=45.0,
+ISOLATION_EDGE_HEAD_S=4.0, ISOLATION_EDGE_TAIL_S=3.0,
+ISOLATION_CLUSTER_THR_N=5, ISOLATION_DIST_S_VERY_TIGHT=6.0;
+classifier {0:1.0,1:1.0,2:2.0}, max_iter=500, max_depth=6,
+max_leaf_nodes=32, lr=0.07, l2=2.0, min_samples_leaf=80).
+
+(b) WHY OVER RECENT FAILURES: 12 consecutive discards/verify-fails:
+- 8 isolation/intersection variants (94b6b42 sparse+short cluster<5
+  cratered; f53e71e edge cluster<6 recall to 0.102; 687205d short+
+  sparse cluster<3 -0.012; 00a9b0a DIST_S 30->25 flat; c35ba8e
+  FILE_DUR_THR_S 45->60 flat; f67afba marginal+sparse cluster<3
+  -0.002; fa1f2a3 DIST_S_LOW 8->7 -0.008; 7672de0
+  DIST_S_SPARSE_INTERIOR=7 -0.008).
+- 4 phase/cpe-derived FE all failed (4c25c09 phase-CPE coherence
+  -0.004; efe38ee peak_align timing -0.006; da02a01 peak_height_
+  diff amplitude -0.010; 553b40a stationarity_onset_cv_2s -0.004).
+- 1 class_weight (cbc742d cross_voice 1.5 -0.007).
+- 1 CLASS_EVIDENCE_MIN=0.5 cratered 0.151 -> 0.040 (recall=0.008,
+  precision=1.0 — decisive evidence max(p[cv], p[sve]) is
+  consistently <0.5 even for real splices).
+- 1 spec_contrast_band_peak_time_std_1s VERIFY-FAIL at 0.040 —
+  identical TSV to f32d5a0 suggests pipeline crash, FE was reverted.
+
+The 03d4d50(c)(2) directs verbatim: "pivot to chunk-relative
+spec_flux ratio (boundary_spec_flux_peak / chunk_median_onset)".
+This iter probes that exact reserve.
+
+The metric definition pins down the dominant failure mode:
+"spraying spurious detections inside continuous single-speaker
+stretches" = clean_fp_penalty drag. The 4 FE failures share a
+shape (LOCAL pairwise channel relationships and single-channel CV
+over ±1-2s windows). They likely failed because GBM saturated on
+existing 81-feature local-window ensemble. THIS iter introduces a
+genuinely new feature SHAPE: chunk-level normalization. The local
+peak is meaningless without context — a 5.0 onset peak in a chunk
+where median onset is 0.5 (clean turn) is mechanistically a real
+splice; the same 5.0 peak in a chunk where median is 4.0
+(continuous speech with phoneme onsets) is just a typical
+phoneme onset.
+
+Mechanism:
+- Real cross-source splice in clean turn audio: chunk_median_onset
+  is LOW (~0.5, low-activity baseline), local peak HIGH (~5.0,
+  splice spike) → ratio ~10. Distinctive.
+- Fluke chord transition in continuous singing: chunk_median is
+  HIGH (~3.0, lots of beat onsets), local peak similar (~4.0,
+  modest beat onset) → ratio ~1.3. Indistinct.
+- Fluke phoneme boundary in continuous speech: chunk_median HIGH
+  (~2.0, phonemes), local peak similar (~3.0) → ratio ~1.5.
+  Indistinct.
+- Fluke codec micro-artifact: spectrally narrow event in clean
+  audio chunk_median is LOW (~0.3), local peak moderate (~1.0)
+  → ratio ~3. Smaller than real splice (~10).
+- Real same_voice_edit splice in continuous speech: chunk_median
+  HIGH (~2.0), local peak (~5.0, edit causes onset spike) →
+  ratio ~2.5. GBM can split on ratio AND existing onset features
+  jointly to pick this up.
+
+Mechanically distinct from all 81 existing features:
+- boundary_spec_flux_peak: max in ±0.2s — LOCAL peak only, no
+  normalization.
+- spec_flux_delta: pre vs post mean — LOCAL pre/post comparison.
+- stationarity_centroid_cv_1s: CV in ±1s — LOCAL window CV.
+- stationarity_onset_cv_2s (failed -0.004): CV in ±2s — LOCAL
+  window CV on onset, but NOT chunk-normalized.
+- All voiced/unvoiced asymmetry features: LOCAL pre/post pairwise.
+- All phase/cpe features: LOCAL pairwise channel relationships.
+- This iter: FIRST chunk-level normalization. Captures whether the
+  candidate is anomalous RELATIVE TO the surrounding chunk, not
+  just relative to its immediate ±0.2-2s neighborhood.
+
+WHY ratio not difference (peak - median) or z-score:
+- Ratio handles the dynamic range issue: clean chunks have median
+  ~0.1-0.5, continuous speech ~1-3, dense singing ~3-5. A
+  difference of 4.0 means very different things in each. Ratio
+  normalizes naturally.
+- Z-score (peak - mean) / std would be similar in spirit but std
+  is dominated by phoneme onsets in continuous speech, deflating
+  z-scores on real splices in continuous speech vs clean. Median
+  is more robust.
+- Clamp ratio to [0, 100] to bound StandardScaler input.
+
+WHY ±0.2s window for local peak (matching boundary_spec_flux_peak):
+- ±0.2s is the existing boundary window — consistent with how the
+  detector already characterizes the local peak.
+- Wider (±1s) would dilute the splice-instant signal with nearby
+  phoneme onsets, reducing discrimination.
+- Narrower (±0.05s) might miss the actual peak frame at hop=512/sr
+  granularity (~12ms per frame; ±0.2s = ~17 frames).
+
+WHY OVER ALTERNATIVES:
+- Per-band spec_contrast peak HEIGHT std (cited 03d4d50(c)(1)):
+  03d4d50 verify-failed; the per-band spec_contrast direction is
+  contaminated by the verify-fail crash and not the right
+  follow-up.
+- CLASS_EVIDENCE_MIN=0.05 (cited 03d4d50(c)(3)): tiny threshold
+  unlikely to bite; the 0.5 crater proved most emits have
+  max<<0.5; at 0.05 only the most extreme 1-5% would be filtered.
+- ISOLATION_DIST_S 30 -> 22: 00a9b0a 30->25 flat; population thin.
+- ISOLATION_PROB_LOW_CEIL 0.990 -> 0.992: 59f3f2b discarded
+  exactly there.
+- ISOLATION_FILE_DUR_THR_S 60 -> 75: c35ba8e just-discarded at 60.
+- class_weight {0:2, 1:1, 2:2}: cbc742d {0:1.5} -0.007 in same
+  direction.
+- min_samples_leaf 80 -> 120 / max_depth / max_leaf_nodes / lr /
+  l2 / max_iter: classifier hyperparam axes flagged saturated.
+- GBM_THRESHOLD push: band exhausted.
+
+Penalty leverage: combined=0.151237 / F0.5=0.787811 -> algebraic
+penalty 0.192 -> back-derived clean_fp/min ~4.21. With ~7x F0.5
+sensitivity per unit. Plausible: GBM picks up chunk-relative ratio
+as a moderate-importance fluke discriminator (likely top-15 SHAP
+given the orthogonal axis), lifts F0.5 by 0.008 and trims 0.5
+cf/min, combined ~0.165 (+9%). Optimistic: top-5 SHAP, F0.5 +0.020
+and 1.2 cf/min trim, combined ~0.182 (+20%). Pessimistic: GBM
+already extracts equivalent signal from boundary_spec_flux_peak +
+spec_flux_delta + onset-derived stationarity_centroid_cv_1s,
+chunk-normalization is redundant, combined ~0.146 (-3%). Bad case:
+chunk_median sentinel zero in all-silence chunks creates ratio=0.0
+sentinels that GBM keys on for splice prediction (silent chunks
+have no real splices, so this is benign — sentinel signal is
+neutral). combined ~0.142 (-6%).
+
+Asymmetric mild-to-moderate upside, moderate-bounded downside.
+Even null result cleanly attributes "chunk-relative normalization
+adds no information beyond local-window features" — bounds the
+chunk-relative FE class.
+
+Smoke-verifiable: features.py imports cleanly with new block; new
+feature name appears in FEATURE_NAMES; len assert 81 -> 82.
+Wrapper auto-retrains on features.py change.
+
+(c) IF THIS FAILS:
+(1) combined > 0.155 — chunk-normalization IS productive. Next iter
+compound: add `boundary_energy_chunk_relative_ratio` (RMS peak vs
+chunk median RMS) and `boundary_centroid_chunk_relative_z` (z-score
+of local centroid vs chunk centroid distribution). Mini-block of
+chunk-relative features.
+(2) combined ~ 0.148-0.153 noise band — chunk-normalization
+redundant with local features. Pivot to a structurally-novel
+DETECTOR-side change: a SOFT post-emit gate using existing
+boundary_spec_flux_peak feature (e.g., drop emit if its
+boundary_spec_flux_peak is below a percentile of the file's emit
+distribution).
+(3) combined < 0.144 — chunk-relative ratio confuses GBM (e.g.,
+small-chunk numerical instability or all-silence chunks bias the
+median). Revert. Pivot to a CLASSIFIER hyperparam re-exploration:
+min_samples_leaf 80 -> 40 (let GBM find finer fluke/real splits)
+which has been deemed "saturated" by the agent's reflections but
+the evidence for that is shaky (1-2 old probes; the recent FE
+failures should free up classifier-side budget).
+
+(d) Information gaps:
+(1) Most binding: SHAP feature-importance from current 81-feature
+classifier still NOT surfaced. After 12 iters of FE/classifier
+probes, knowing whether boundary_spec_flux_peak / spec_flux_delta
+/ stationarity_centroid_cv_1s are top-10 SHAP would directly
+inform whether chunk-relative normalization is additive vs
+redundant.
+(2) Empirical distribution of feat_onset chunk-medians across the
+60 eval files unknown. Knowing the typical chunk_median_onset for
+clean-turn vs continuous-speech vs dense-singing chunks would
+let me predict the bite size precisely.
+(3) Per-class clean_fp breakdown still NOT surfaced.
+(4) clean_fp_per_min=9.143 in CURRENT STATE vs algebraic ~4.21
+persists 40 iters.
+(5) Eval file duration / splice-position distribution unknown.
+(6) ARCHITECTURE block names GradientBoostingClassifier but
+actual is HistGradientBoostingClassifier — documentation drift.
+(7) The verify-fail of 03d4d50 happened with TSV identical to
+f32d5a0 (precision=1.0, recall=0.008, n_files=60,
+unknown_label_count=6). This suggests a SHARED failure mode
+(maybe pipeline state corruption from CLASS_EVIDENCE_MIN's filter
++ a subsequent FE crash) but no diagnostic surfaces this.
+
+(e) Wrapper enhancements (77 consecutive iters with persistent
+gaps):
+(1) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — top-10 SHAP
+features and their delta vs prior keep. Binding for ALL FE
+decisions; 12 iters of FE probes without this signal is
+inefficient.
+(2) PER-EMIT CHUNK-ONSET-MEDIAN DIAG — log per-survivor chunk_
+onset_median + boundary_onset_chunk_relative_ratio percentiles.
+Binding for chunk-relative-axis probes.
+(3) PER-EMIT CLASS-PROBABILITY DIAG (max(p[0],p[2]) percentiles)
+— binding for ANY class-evidence threshold probe given the 0.5
+crater.
+(4) FAILED-HYPOTHESIS RECALL/PRECISION/CF DECOMPOSITION in
+RECENT FAILED HYPOTHESES — extend each line to include precision,
+recall, clean_fp_per_min so I can distinguish near-miss flat vs
+recall-crater vs precision-save patterns.
+(5) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE.
+(6) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA —
+CURRENT STATE 9.143 vs algebra ~4.21. Auto-recompute on keep.
+(7) PRODUCTIVE-AXIS TRAJECTORY BLOCK in prompt.
+(8) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT
+ACTUAL IS HistGradientBoostingClassifier.
+(9) VERIFY-FAIL DIAGNOSTIC SUMMARY in PROMPT — for verify-fail
+iters, surface the verify-stage failure reason (metric mismatch?
+diff audit fail? anomaly trigger?) rather than just the reported
+combined number.
+
