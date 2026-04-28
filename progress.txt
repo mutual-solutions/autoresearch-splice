@@ -17,3 +17,7 @@ tmux session: autoresearch
 - Iterations: 0 (just started; results.tsv not yet created)
 - 24h deadline: 2026-04-26T16:20:13Z
 
+
+## Heartbeat log (2026-04-25T16:33:28Z init)
+[2026-04-25T16:33:28Z] tmux=alive  iters=1 (k=0/d=1/v=0)  baseline=0.436441  cc=0  remaining_h=23
+[2026-04-25T16:33:25Z] tmux=alive  iters=1 (k=0/d=0/v=0)  baseline=0.436441  cc=0  last_iter=2026-04-25T16:31:07  remaining_h=23

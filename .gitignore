@@ -157,3 +157,25 @@ data/eval/korean_iter1/
 .omc/finalize-pid.txt
 .omc/train-classifier.log
 .omc/train-pid.txt
+
+# Per-iteration detector snapshots (wrapper-managed; v1-v31 tracked historically,
+# v32+ excluded — they're regenerable from train_classifier.py and high-churn).
+.omc/classifier/detector_v*.py
+
+# Runtime session state — PIDs, hud caches, deep-interview state, session-scoped sentinels
+.omc/state/
+
+# Context-clear archive bundles — transient research_notes/last_reflection/shap_rollup
+# snapshots written when the agent compacts context (apr15-snapshot/ stays tracked).
+.omc/archive/context-clear-*/
+
+# Heartbeat/watcher/web-UI logs at .omc/ root (last_eval.log + classifier/*.log already covered)
+.omc/ralph-heartbeat.log
+.omc/ralph-watcher.log
+.omc/web-ui.log
+
+# Held-out test-set gate outputs — oracle-sensitive metrics (mirrors the
+# rationale for encrypting data/test.tar.gz.enc and gitignoring last_eval.log).
+# The gate code (scripts/test_eval.py) is tracked; its outputs are not.
+autoresearch/test_baseline.json
+autoresearch/test_history.jsonl
