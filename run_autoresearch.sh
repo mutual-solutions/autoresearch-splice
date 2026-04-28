@@ -896,7 +896,7 @@ for dom in sorted(per):
 
 ==== METRIC DEFINITION (what 'combined' measures) =========================
 splice/evaluate.py runs boundary-F1 on a deterministic random.sample(60)
-of data/eval/korean_iter1/eval/. SINGLE dataset only — no per-domain GM.
+of data/eval/korean_iter1/. SINGLE dataset only — no per-domain GM.
 Greedy 1-to-1 matching with 250 ms collar gives precision (P) and recall (R).
 
   combined         = F0.5(P, R) × clean_fp_penalty

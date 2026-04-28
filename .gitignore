@@ -150,7 +150,10 @@ reports/
 # Reproducible deterministically via:
 #   ./scripts/finalize_korean_iter1_pivot.sh
 # (extracts tarball, runs regenerate_korean_iter1.py with file-hash seeds).
+# Layout flattened 2026-04-29: splits live at data/{eval,train,test}/korean_iter1/.
 data/eval/korean_iter1/
+data/train/korean_iter1/
+data/test/korean_iter1/
 
 # Finalize-runbook run-local logs + pid file
 .omc/finalize-fulllog.txt

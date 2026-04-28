@@ -90,9 +90,9 @@ DATASETS: list[Dataset] = [
     # Active: Korean naturalistic long-form corpus, iter1 same-source splicing.
     Dataset(
         id="korean_iter1",
-        eval_path=_eval_path(_DATA / "eval" / "korean_iter1" / "eval", "korean_iter1"),
-        train_path=_DATA / "train" / "korean_iter1" / "train",
-        test_path=_DATA / "test" / "korean_iter1" / "test",
+        eval_path=_eval_path(_DATA / "eval" / "korean_iter1", "korean_iter1"),
+        train_path=_DATA / "train" / "korean_iter1",
+        test_path=_DATA / "test" / "korean_iter1",
         eval_weight=1.0,
         train_weight=1.0,
     ),

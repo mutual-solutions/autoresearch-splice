@@ -5,7 +5,7 @@ Reads /Volumes/HIKSEMI/korean-iter-1-delivery.tar, assigns conversations to
 train/eval/test by voice-pair holdout, injects same-voice word-cuts at
 silence-bounded positions, applies a deterministic augmentation chain
 (synthetic RIR + pink noise + Opus 32k roundtrip), and writes per-conversation
-audio + ground-truth JSON under data/eval/korean_iter1/{train,eval,test}/.
+audio + ground-truth JSON under data/{train,eval,test}/korean_iter1/.
 
 Usage:
     PYTHONPATH=$PWD uv run python scripts/regenerate_korean_iter1.py --verify-source
@@ -63,7 +63,13 @@ from autoresearch.logger import get_logger
 log = get_logger("regen")
 
 _DEFAULT_TARBALL = Path("/Volumes/HIKSEMI/korean-iter-1-delivery.tar")
-_DEFAULT_OUTPUT_ROOT = Path("data/eval/korean_iter1")
+_DEFAULT_OUTPUT_ROOT = Path("data")
+_DATASET_ID = "korean_iter1"
+
+
+def _split_dir(output_root: Path, split: str) -> Path:
+    """data/<split>/korean_iter1/ — flat layout matching dataset_registry.py."""
+    return output_root / split / _DATASET_ID
 # test = M middle-aged gyeongsang + F young seoul (max acoustic diversity)
 # eval = M middle-aged seoul + M young seoul (kept from spec; eval gender-balanced via train mix)
 # train = remaining 7 voices: 4 M (Minwoo, Donghyun, Minho, Ondo) + 3 F (ChloeCha, DangchanYeo, Eunha)
@@ -846,7 +852,7 @@ def _process_one(
     speakers = file_entry.get("speakers", []) or []
     voice_names = [s.get("voice_name", "") for s in speakers]
     split = assign_split(voice_names, voices_test, voices_eval)
-    split_dir = output_root / split
+    split_dir = _split_dir(output_root, split)
 
     file_seed = _file_seed(conv_id, seed_base)
     rng = np.random.default_rng(file_seed)
@@ -1145,7 +1151,7 @@ def _run_pipeline(
         for fe in file_entries:
             voice_names = [s.get("voice_name", "") for s in fe.get("speakers", [])]
             split = assign_split(voice_names, voices_test, voices_eval)
-            split_dir = output_root / split
+            split_dir = _split_dir(output_root, split)
             if split not in per_split_rows:
                 per_split_rows[split] = _existing_manifest_rows(split_dir)
             if _is_complete(fe["id"], split_dir, per_split_rows[split]):
@@ -1237,7 +1243,7 @@ def _run_pipeline(
 
     # Synthesize per-split ground_truth.json for every split that received files.
     for split in sorted(splits_seen):
-        synthesize_corpus_ground_truth(output_root / split)
+        synthesize_corpus_ground_truth(_split_dir(output_root, split))
 
     summary = {
         "total_processed": total,
@@ -1318,7 +1324,7 @@ def _cmd_smoke(args: argparse.Namespace) -> int:
     # Smoke: clear previous output for a clean re-run of the gate
     if output_root.exists():
         for split in ("train", "eval", "test"):
-            split_dir = output_root / split
+            split_dir = _split_dir(output_root, split)
             if split_dir.exists():
                 for f in split_dir.iterdir():
                     if f.is_file():
@@ -1399,7 +1405,7 @@ def _cmd_verify_determinism(args: argparse.Namespace) -> int:
     # Collect on-disk conv_ids with their split
     on_disk: list[tuple[str, str]] = []  # (conv_id, split)
     for split in ("train", "eval", "test"):
-        sd = output_root / split
+        sd = _split_dir(output_root, split)
         if not sd.exists():
             continue
         for op in sd.glob("*.opus"):
@@ -1432,7 +1438,7 @@ def _cmd_verify_determinism(args: argparse.Namespace) -> int:
         result_bytes = _regenerate_in_memory(
             by_id[conv_id], tarball, voices_test, voices_eval, seed_base
         )
-        on_disk_bytes = (output_root / split / f"{conv_id}.opus").read_bytes()
+        on_disk_bytes = (_split_dir(output_root, split) / f"{conv_id}.opus").read_bytes()
         on_disk_sha = hashlib.sha256(on_disk_bytes).hexdigest()
         regen_sha = hashlib.sha256(result_bytes).hexdigest()
         ok = on_disk_sha == regen_sha

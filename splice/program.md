@@ -9,7 +9,7 @@ The evaluation oracle prints multiple metrics. The LAST line is always:
 - `combined: 0.XXX` — THIS is the metric to optimize. Use it for keep/discard decisions.
 
 `combined` equals `boundary_f1`: boundary-level F1 with a **250 ms collar** tolerance,
-evaluated on `data/eval/korean_iter1/eval/`. The detector returns a list of
+evaluated on `data/eval/korean_iter1/`. The detector returns a list of
 `(time_s, label)` pairs; a predicted boundary matches a ground-truth boundary if it
 falls within ±250 ms and the label is correct.
 
@@ -59,7 +59,7 @@ Allowed techniques (non-exhaustive):
 ## Files
 
 - **`splice/evaluate.py`** — evaluation oracle (protected). Runs `splice/detector.py`
-  on `data/eval/korean_iter1/eval/`, computes boundary-F1 with 250 ms collar vs ground
+  on `data/eval/korean_iter1/`, computes boundary-F1 with 250 ms collar vs ground
   truth, prints metrics. **Do NOT modify** (only the human edits this).
 - **`splice/detector.py`** — splice detector. Returns `list[(time_s, label)]` where
   `label ∈ {"cross_voice", "same_voice_edit", "unknown"}`. Default label is `"unknown"`;
@@ -68,7 +68,7 @@ Allowed techniques (non-exhaustive):
 - **`splice/features.py`** — feature extractor feeding the GBM. Extending `FEATURE_NAMES`
   requires retraining via `splice/classifier/train_classifier.py`.
 - **`splice/classifier/train_classifier.py`** — 3-class HistGradientBoosting (multinomial)
-  trainer. Training data sourced from `data/eval/korean_iter1/train/`. `make_pipeline()`
+  trainer. Training data sourced from `data/train/korean_iter1/`. `make_pipeline()`
   is the GBM hyperparameter knob (`n_estimators`, `max_depth`, `learning_rate`,
   `subsample`). Retrain with `uv run python splice/classifier/train_classifier.py`.
 - **`splice/program.md`** — instructions for the agent (this file). Only the human edits this.
@@ -77,7 +77,7 @@ Allowed techniques (non-exhaustive):
 
 1. Branch: `autoresearch/korean-iter1` (checked out from `apr15-final-2026-04-25`).
 2. Read `README.md`, `splice/evaluate.py`, and `splice/detector.py` in full.
-3. Verify `data/eval/korean_iter1/{train,eval,test}/` each contain per-conversation
+3. Verify `data/{eval,train,test}/korean_iter1/` each contain per-conversation
    `.opus` + `.json` files and a per-split `ground_truth.json`.
 4. Initialize `results.tsv` with just the header row.
 5. Confirm `autoresearch/baseline_metrics.json` exists with the korean-iter1 schema

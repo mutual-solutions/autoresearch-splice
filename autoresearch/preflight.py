@@ -43,11 +43,11 @@ def _resolve_data_dir(manifest_dataset: str) -> Path:
     OMC_EVAL_DATA_ROOT, rewrite `data/eval/<id>` → `<tmp>/<id>` so preflight
     checks the live tree instead of the (missing) plaintext path.
 
-    Korean-iter1 fallback (2026-04-26): the new corpus lives in the working
-    tree at `data/eval/korean_iter1/eval/` and is NOT encrypted. The wrapper
-    still decrypts the legacy apr15-era eval.tar.gz.enc blob, but that blob
-    has no korean_iter1 subdir. When the override path doesn't exist, fall
-    through to the repo-tree path so preflight finds the unencrypted corpus.
+    Korean-iter1 layout (post 2026-04-29 flatten): splits live at
+    data/{eval,train,test}/korean_iter1/ — manifest's `dataset` field is
+    `data/eval/korean_iter1` (no inner eval/). When the override path
+    doesn't exist, fall through to the repo-tree path so preflight finds
+    the corpus regardless of encryption state.
     """
     # Post-US-516: preflight.py lives at `autoresearch/preflight.py`, ONE
     # level below the repo root. Previously at `.omc/coordination/preflight.py`

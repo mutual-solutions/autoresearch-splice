@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Held-out test-set eval (overfitting detector for the autoresearch loop).
 
-Runs `splice.evaluate.evaluate()` against `data/eval/korean_iter1/test/`
+Runs `splice.evaluate.evaluate()` against `data/test/korean_iter1/`
 (4278 conversations, voice-pair holdout = {DaeBuHo, Kanna}, never touched
 by the optimization loop) using a different RANDOM_SEED than the eval
 sample. Compares the resulting `combined` to the current eval-set
@@ -43,7 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # BEFORE the late import so the lazy import resolves. Mirrors the same
 # workaround in scripts/web_ui.py.
 sys.path.insert(0, str(REPO_ROOT / "splice"))
-DEFAULT_TEST_DIR = REPO_ROOT / "data" / "eval" / "korean_iter1" / "test"
+DEFAULT_TEST_DIR = REPO_ROOT / "data" / "test" / "korean_iter1"
 BASELINE_PATH = REPO_ROOT / "autoresearch" / "baseline_metrics.json"
 TEST_BASELINE_PATH = REPO_ROOT / "autoresearch" / "test_baseline.json"
 TEST_HISTORY_PATH = REPO_ROOT / "autoresearch" / "test_history.jsonl"

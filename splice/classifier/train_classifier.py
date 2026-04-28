@@ -1,6 +1,6 @@
 """3-class GBM trained on korean-iter1 per-conversation boundaries.
 
-Training data: ``data/eval/korean_iter1/train/``
+Training data: ``data/train/korean_iter1/``
   - Per-conversation audio: ``{conv_id}.opus``
   - Per-conversation boundaries: ``{conv_id}.json``  (``{"boundaries": [...]}``
     where each boundary is ``{"time_s": float, "label": "cross_voice"|"same_voice_edit"}``)
@@ -58,7 +58,7 @@ LABEL_CROSS_VOICE: int = int(_LE.transform(["cross_voice"])[0])    # 0
 LABEL_NO_SPLICE: int = int(_LE.transform(["no_splice"])[0])        # 1
 LABEL_SAME_VOICE_EDIT: int = int(_LE.transform(["same_voice_edit"])[0])  # 2
 
-TRAIN_DIR = _ROOT / "data" / "eval" / "korean_iter1" / "train"
+TRAIN_DIR = _ROOT / "data" / "train" / "korean_iter1"
 
 # Feature-window half-width centred on each boundary (seconds of audio)
 WINDOW_HALF_S = 30.0  # 60s total window — matches existing CHUNK_S

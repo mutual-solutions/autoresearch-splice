@@ -8,7 +8,7 @@ korean-iter1 boundary-F1 contract per
 
 New contract (korean-iter1)
 ---------------------------
-- Single dataset root: `data/eval/korean_iter1/eval/` containing
+- Single dataset root: `data/eval/korean_iter1/` containing
   `<conv_id>.opus` audio files and `ground_truth.json` with schema:
       { "<conv_id>": [{"time_s": float, "label": str}, ...], ... }
   Labels in {"cross_voice", "same_voice_edit"}.
@@ -98,7 +98,7 @@ CLEAN_FP_ISO_MULT = 2.0
 
 DEFAULT_DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "data", "eval", "korean_iter1", "eval",
+    "data", "eval", "korean_iter1",
 )
 
 
@@ -307,7 +307,7 @@ def load_ground_truth(data_dir: str) -> dict[str, list[tuple[float, str]]]:
 
 
 # ---------------------------------------------------------------------------
-# Eval loop (single dataset: data/eval/korean_iter1/eval/)
+# Eval loop (single dataset: data/eval/korean_iter1/)
 # ---------------------------------------------------------------------------
 
 def evaluate(data_dir: str) -> dict:

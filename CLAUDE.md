@@ -26,29 +26,35 @@ This performs 4 checks: metric re-run, git diff audit, anomaly detection, and pr
 - `splice/evaluate.py` and `splice/program.md` are protected -- only the human modifies them. The autoresearch agent must never modify them.
 - `splice/detector.py` (GBM thresholds + sliding window geometry), `splice/features.py` (feature set), and `splice/classifier/train_classifier.py` (GBM hyperparameters) are edited for experiments. After features.py or hyperparameter edits, retrain with `PYTHONPATH=$PWD uv run python splice/classifier/train_classifier.py`.
 
-## Data layout (post-unification)
+## Data layout (post 2026-04-29 flatten)
 
 ```
 data/
-├── eval/{singing,korean,english}/    # primary metric — evaluate.py iterates these
-├── train/{singing,korean,english}/   # train_classifier.py consumes these; disjoint sources
-├── test/{singing,korean,english}/    # held-out, longer duration envelope, 20-min budget
-└── sources/                          # raw audio pools (not consumed at eval time)
-    ├── singing_wav/                  # 101 WAV files
-    ├── zeroth-korean/                # 115 speakers
-    └── LibriSpeech/dev-clean/        # 40 speakers
+├── eval/korean_iter1/                # active dataset for the loop's primary metric
+├── train/korean_iter1/                # train_classifier.py consumes this
+├── test/korean_iter1/                 # held-out (Touch-ID-gated); test_eval.py
+└── sources/                           # raw audio pools (not consumed at eval time)
+    ├── singing_wav/                   # 101 WAV files
+    ├── zeroth-korean/                 # 115 speakers
+    └── LibriSpeech/dev-clean/         # 40 speakers
 ```
 
-All splits share the same 20 tier1 + 20 tier2 + 20 clean layout and identical
-encoding mix (WAV / FLAC / Opus / MP3-128). Duration envelope varies: eval /
-train use 30-120s files, test uses 60-300s files. Source audio is split
-deterministically across train / eval / test pools with **zero overlap** at
-the file (singing) or speaker (korean, english) level.
+Each `<split>/korean_iter1/` directory holds `<conv_id>.opus` audio files,
+matching `<conv_id>.json` boundary annotations, a per-split
+`ground_truth.json`, and `_manifest.jsonl`. Voice-pair holdout: test uses
+{DaeBuHo, Kanna}; eval uses {Sunwoo, Joon}; train uses the remaining 7 voices.
+Augmentation chain (synthetic RIR + pink noise + Opus 32kbps) is baked into
+the corpus on disk via `scripts/regenerate_korean_iter1.py`.
+
+`splice/dataset_registry.py` also defines three dormant datasets
+(`singing`, `korean`, `english`) using the same `data/{eval,train,test}/<id>/`
+pattern with `eval_weight=0` — codepaths preserved for future same-source
+corpus swaps. Currently only `korean_iter1` is active.
 
 ## Protected Files
 
 The verification system guards these from modification:
-`splice/evaluate.py`, `splice/program.md`, `data/eval/**/*`, `data/test/**/*`, `autoresearch/manifest.json`, `autoresearch/preflight.py`
+`splice/evaluate.py`, `splice/program.md`, `data/eval/**/*`, `data/train/**/*`, `data/test/**/*`, `autoresearch/manifest.json`, `autoresearch/preflight.py`
 
 ## Preflight
 

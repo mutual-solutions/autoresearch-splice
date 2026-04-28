@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "dataset": "data/eval/korean_iter1/eval",
+  "dataset": "data/eval/korean_iter1",
   "expected_counts": {
     "_train_files": 2052,
     "_eval_files": 1030,
@@ -30,9 +30,10 @@
     "splice/evaluate.py",
     "splice/program.md",
     "data/eval/korean_iter1/**",
+    "data/train/korean_iter1/**",
     "data/test/korean_iter1/**",
     "autoresearch/manifest.json",
     "autoresearch/preflight.py"
   ],
-  "notes": "korean-iter1 pivot. _*_files counts are approximate cross-split totals \u2014 run `find data/eval/korean_iter1/{train,eval,test}/ -maxdepth 1 -type f ! -name .DS_Store | wc -l` per split after regen completes and update. GT hash is first 12 chars of sha256 of data/eval/korean_iter1/eval/ground_truth.json."
+  "notes": "korean-iter1 pivot, layout flattened 2026-04-29 to match the dormant-dataset pattern. Splits live at data/{eval,train,test}/korean_iter1/. _*_files counts are approximate cross-split totals — run `find data/{eval,train,test}/korean_iter1/ -maxdepth 1 -type f ! -name .DS_Store | wc -l` per split after regen completes and update. GT hash is first 12 chars of sha256 of data/eval/korean_iter1/ground_truth.json."
 }
