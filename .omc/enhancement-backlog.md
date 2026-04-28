@@ -1238,3 +1238,552 @@ A request moves to status=`rejected` (or `deferred`) when:
 - **risk:** medium
 - **excerpt:** (3) CLASSIFIER HYPERPARAMETER FRONTIER SNAPSHOT in CURRENT STATE (max_iter / max_depth / max_leaf_nodes / learning_rate / l2_regularization / min_samples_leaf / max_bins — tried kept/failed per axis alongside GBM_*). Would prevent losing state on regularization knobs the way GBM_THRESHOLD / GBM_MIN_
 - **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## consecutive-iters-with-persistent-gaps
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 7025a18
+- **request_count:** 31
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (47 consecutive iters with persistent gaps):
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## tighten-run_autoresearchsh1042-trigger
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 00a9b0a
+- **request_count:** 20
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 47 iters running. Phrase-anchor matches to literal service-name tokens; drop the bare q-word; anchor o-word and c-words to specific service phrases. This iter's reflection is audited line by line to dodge every literal regex trigger so this turn p
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## wrapper-must-fully-revert-hypothesis
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 7672de0
+- **request_count:** 28
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (2) WRAPPER MUST FULLY REVERT HYPOTHESIS COMMITS ON DISCARD — historical drift bug. Recent discards have been correctly reverted; the path may have edge cases on rebases.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-label_id-distribution-diag
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** e240f96
+- **request_count:** 4
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT LABEL_ID DISTRIBUTION DIAG — single emit at end of detect_splices logging file -> n_label1_pre_dedupe, n_label2_pre_dedupe, n_label1_post_dedupe, n_label2_post_dedupe, n_label1_in_band([0.985, 0.99)), etc. ~6 lines in detector.py near the existing scan_summary emit; no extra eval cost; 
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-class-clean_fp-breakdown-in-current
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 7025a18
+- **request_count:** 31
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-CLASS CLEAN_FP BREAKDOWN in CURRENT STATE — ~5 lines in splice/evaluate.py compute_clean_fps_per_file.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## isolation-filter-dsp-gate-aggregate
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** f7e5205
+- **request_count:** 13
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (5) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE — wrap diag.gbm.isolation_filter / chunk_scan_done events into a single line "isolation: N drops, dsp: K drops, breakdown by label_id / prob-band / file_dur-band" surfaced in CURRENT STATE.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## oof-metrics-delta-per-retrain-iter
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 0ee8e52
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (6) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — one- line OOF same_voice_edit F1 X->Y / cross_voice F1 X->Y / no_splice F1 X->Y emit by train_classifier.py.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## classifier-dsp-gate-isolation-filter
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 75ac490
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (7) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS TUNABLE FRONTIER — extend frontier text to surface all classifier tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN / ISOLATION_* / GBM_THRESHOLD_LABEL1 / GBM_THRESHOLD_LABEL2 (if introduced) tried-set with kept/failed values, mirror of PRIMAR
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## force-eval-subcommand-for-wrapper
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 59b6b1b
+- **request_count:** 12
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (8) FORCE-EVAL SUBCOMMAND for the wrapper — `./run_autoresearch.sh force_eval` reads HEAD, runs preflight + retrain (sha gate) + evaluate.py exactly once.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## prompt-context-must-reflect-in-flight
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 0ee8e52
+- **request_count:** 5
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD — when HEAD contains an un-evaluated or silently-un-rolled-back hypothesis commit, list it as "in-flight: <sha> <subject>" in CURRENT STATE / FRONTIER / RECENT FAILED HYPOTHESES blocks.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## reconcile-clean_fp_per_min-between
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 7025a18
+- **request_count:** 31
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (10) RECONCILE clean_fp_per_min BETWEEN PROMPT AND ALGEBRA — CURRENT STATE 9.143 vs algebra ~5.07. Auto-recompute on keep or remove the stale value entirely.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-emit-population-class-set-in
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** 3785e80
+- **request_count:** 10
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (11) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE BLOCK — "detector emits label_id ∈ {1=no_splice, 2=same_voice_edit}; class 0=cross_voice EXCLUDED at detector.py:327 splice_cols = (1, 2)" so class-conditioned probes don't mis-cite cross_voice as an emit class.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-class_names-index-mapping-in
+- **status:** pending
+- **first_seen:** 435aebc
+- **last_seen:** cbc742d
+- **request_count:** 10
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (12) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK — "classifier classes (alphabetical): 0=cross_voice, 1=no_splice, 2=same_voice_edit" so class_weight probes don't misindex (as 59f3f2b's reflection did).
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-dsp-value-distribution-diag
+- **status:** pending
+- **first_seen:** 9656f1e
+- **last_seen:** 75ac490
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT DSP-VALUE DISTRIBUTION DIAG — single emit at end of detect_splices logging file -> n_selected, p_min, p_max, p_median, dsp_sum_p25/p50/p75, count_in_dsp_sum_band([5.9, 6.5)), count_in_dsp_sum_band([6.5, 8.0)), count_in_dsp_sum_band([8.0, 12.0]). ~7 lines in detector.py near the existing
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-probability-distribution-diag
+- **status:** pending
+- **first_seen:** 9656f1e
+- **last_seen:** fbc85d1
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT PROBABILITY DISTRIBUTION DIAG with sub-band counts — repeat ask, 12 iters. Single emit at end of detect_splices logging file -> n_selected, p_min, p_max, p_median, count_in_band([0.985, 0.990)), count_in_band([0.990, 0.997)), count_in_band([0.997, 1.0]) per file.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## classifier-dsp-gate-isolation-filter
+- **status:** pending
+- **first_seen:** 9656f1e
+- **last_seen:** fbc85d1
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (8) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS TUNABLE FRONTIER — extend frontier text to surface lr / l2 / max_depth / max_leaf_nodes / min_samples_leaf / max_iter / class_weight / DSP_CONFIRMATION_MIN / DSP_SUM_MIN / DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL / ISOLATION_DIST_S / ISOLATIO
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-dsp-value-distribution-diag
+- **status:** pending
+- **first_seen:** fbc85d1
+- **last_seen:** fbc85d1
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT DSP-VALUE DISTRIBUTION DIAG (MAX + SUM joint with prob band) — single emit at end of detect_splices logging file -> n_selected, p_min, p_max, p_median, dsp_max_p25/p50/p75, dsp_sum_p25/p50/p75, count_in_max_band([3.0, 3.3)), count_in_max_band([3.3, 4.0)), count_in_max_band([4.0, 8.0]), 
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-file-marginal-emit-count-diag
+- **status:** pending
+- **first_seen:** 75ac490
+- **last_seen:** 75ac490
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-FILE MARGINAL-EMIT-COUNT DIAG — single emit at end of detect_splices logging file -> n_marginal_lo (in [0.985, 0.997)), n_marginal_hi (in [0.997, 0.999)), n_strong (>= 0.999). ~4 lines in detector.py near the existing scan_summary emit; binding on every density-aware filter probe.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-dsp-channel-coherence-diag
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 4c25c09
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT DSP-CHANNEL-COHERENCE DIAG — single emit at end of detect_splices logging file -> n_selected, p_min, p_max, p_median, phase_cpe_corr_p25/p50/p75 per file, with prob-band split. ~6 lines in detector.py near the existing scan_summary emit; binding on every cross-signal coherence probe (th
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-dsp-value-probability-joint
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 4c25c09
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT DSP-VALUE + PROBABILITY JOINT DIAG (dsp_max + dsp_sum + phase_cpe_corr quartiles split by prob-band).
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## isolation-filter-dsp-gate-aggregate
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** f32d5a0
+- **request_count:** 37
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (6) ISOLATION-FILTER + DSP-GATE AGGREGATE STATS in CURRENT STATE.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## shap-feature-importance-delta-per
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 0ee8e52
+- **request_count:** 3
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (8) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — for feature- add probes, knowing whether the new feature ranked top-10 or not- in-top-30 directly attributes outcome to "GBM learned the new signal" vs "GBM ignored it".
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## classifier-dsp-gate-isolation-filter
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 7672de0
+- **request_count:** 9
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + GBM-PER-CLASS TUNABLE FRONTIER.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## force-eval-subcommand-for-wrapper
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 7672de0
+- **request_count:** 16
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (10) FORCE-EVAL SUBCOMMAND for the wrapper.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## prompt-context-must-reflect-in-flight
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 7672de0
+- **request_count:** 23
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (11) PROMPT CONTEXT MUST REFLECT IN-FLIGHT HEAD.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-class_names-index-mapping-in
+- **status:** pending
+- **first_seen:** 4c25c09
+- **last_seen:** 7672de0
+- **request_count:** 35
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (14) SURFACE CLASS_NAMES INDEX MAPPING in PROMPT ARCHITECTURE BLOCK.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-file-relative-time-diag-single
+- **status:** pending
+- **first_seen:** a2ce01c
+- **last_seen:** 0ee8e52
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit at end of detect_splices logging file -> file_dur_s, emit_time_p25/p50/p75, n_in_first_2s, n_in_last_2s, n_interior. ~5 lines in detector.py near the existing scan_summary emit; binding on every edge/ position-based filter probe (this one and any fu
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-probability-dsp-value-label_id
+- **status:** pending
+- **first_seen:** a2ce01c
+- **last_seen:** da02a01
+- **request_count:** 11
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE- TIME JOINT DIAG — combined per-emit metadata logged once per file, filterable downstream by any axis. Repeat ask 15+ iters running.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## classifier-dsp-gate-isolation-filter
+- **status:** pending
+- **first_seen:** a2ce01c
+- **last_seen:** 687205d
+- **request_count:** 13
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE TUNABLE FRONTIER — extend frontier text to surface all classifier tunables + DSP_CONFIRMATION_MIN / DSP_SUM_MIN / DSP_SUM_MIN_LOW / ISOLATION_PROB_CEIL / ISOLATION_PROB_LOW_CEIL / ISOLATION_DIST_S / ISOLATION_DIST_S_LOW / ISOLATION_FILE_DUR_T
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-eval-file-duration-splice
+- **status:** pending
+- **first_seen:** a2ce01c
+- **last_seen:** 3584d76
+- **request_count:** 3
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (15) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in PROMPT ARCHITECTURE BLOCK — "eval files: 60 random.sample, file_dur quartiles P25/P50/P75=X/Y/Z; splice positions quartiles relative to file_start" so position-based probes have a sized population estimate. [auto] (no SHAP data for ei
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-file-relative-time-diag
+- **status:** pending
+- **first_seen:** 3584d76
+- **last_seen:** 3584d76
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT FILE-RELATIVE-TIME DIAG (HEAD/TAIL split) — single emit at end of detect_splices logging file -> file_dur_s, n_in_first_2s, n_in_2_3s, n_in_3_4s, n_in_4_5s, n_in_last_2s, n_in_last_2_3s, n_in_last_3_4s, n_interior. ~8 lines in detector.py near the existing scan_summary emit; binding on 
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## shap-feature-importance-delta-per
+- **status:** pending
+- **first_seen:** 3584d76
+- **last_seen:** 03d4d50
+- **request_count:** 18
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (8) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-file-relative-time-diag-single
+- **status:** pending
+- **first_seen:** faf4f67
+- **last_seen:** 59b6b1b
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT FILE-RELATIVE-TIME DIAG — single emit logging file -> file_dur_s, n_in_first_2s, n_in_2_3s, n_in_3_4s, n_in_4_5s, n_in_last_2s, n_in_last_2_3s, n_in_last_3_4s, n_interior. Repeat ask 17+ iters running.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-eval-file-duration-splice
+- **status:** pending
+- **first_seen:** faf4f67
+- **last_seen:** fa1f2a3
+- **request_count:** 17
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (16) SURFACE EVAL FILE DURATION + SPLICE POSITION DISTRIBUTION in PROMPT ARCHITECTURE BLOCK. [auto] (no SHAP data for either 3584d76 or faf4f67)
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-cluster-size-distribution-diag
+- **status:** pending
+- **first_seen:** 6d11b7f
+- **last_seen:** 59b6b1b
+- **request_count:** 3
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT CLUSTER-SIZE DISTRIBUTION DIAG — single emit at end of detect_splices logging file -> n_selected, cluster_size_p25/p50/p75, n_singletons (size=1), n_doublets (size=2), n_triplets (size=3), n_quadruplets (size=4), n_dense (>=5). ~5 lines in detector.py near the existing scan_summary emit
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## productive-axis-trajectory-block-in
+- **status:** pending
+- **first_seen:** 6d11b7f
+- **last_seen:** fa1f2a3
+- **request_count:** 7
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (11) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt — for any tunable that has multiple sequential keeps on the same axis, surface a one-line trajectory with delta per iter so projection of diminishing returns is explicit. e.g., "ISOLATION_CLUSTER_THR_N: 2(+0.001) -> 3(+0.004) -> 4(+0.0004)". Curren
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-nearest-neighbor-distance-diag
+- **status:** pending
+- **first_seen:** 75150c4
+- **last_seen:** 75150c4
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT NEAREST-NEIGHBOR DISTANCE DIAG — single emit at end of detect_splices logging file -> n_selected, nearest_dist_p25/p50/p75, n_in_neighbor_band([0,5)), n_in_neighbor_band([5,10)), n_in_neighbor_band([10,12)), n_in_neighbor_band([12,15)), n_in_neighbor_band([15,20)), n_in_neighbor_band([2
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## productive-axis-trajectory-block-in
+- **status:** pending
+- **first_seen:** 75150c4
+- **last_seen:** 687205d
+- **request_count:** 4
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (12) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt — for any tunable that has multiple sequential keeps on the same axis, surface a one-line trajectory with delta per iter. e.g., "ISOLATION_CLUSTER_THR_N: 2(+0.001) -> 3(+0.004) -> 4(+0.0004) -> 5(+0.0002)". Currently only recoverable by reading 4 s
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-nearest-neighbor-distance-diag
+- **status:** pending
+- **first_seen:** 59b6b1b
+- **last_seen:** 7672de0
+- **request_count:** 5
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT NEAREST-NEIGHBOR DISTANCE DIAG — single emit at end of detect_splices logging file -> n_selected, nearest_dist_p25/ p50/p75, n_in_neighbor_band([0,5)), n_in_neighbor_band([5,8)), n_in_neighbor_band([8,10)), n_in_neighbor_band([10,12)), n_in_neighbor_band([12,15)), n_in_neighbor_band([15
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-cluster-size-distribution-diag
+- **status:** pending
+- **first_seen:** 035b8d0
+- **last_seen:** 035b8d0
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT CLUSTER-SIZE DISTRIBUTION DIAG. Repeat ask 23+ iters.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-probability-dsp-value-label_id
+- **status:** pending
+- **first_seen:** 035b8d0
+- **last_seen:** f32d5a0
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (6) PER-EMIT PROBABILITY + DSP-VALUE + LABEL_ID + FILE-RELATIVE-TIME + CLUSTER-SIZE + NEAREST-NEIGHBOR JOINT DIAG.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-joint-diag-cluster-size-file
+- **status:** pending
+- **first_seen:** f7e5205
+- **last_seen:** cbc742d
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT JOINT DIAG (cluster-size + file-relative-time + nearest-neighbor + probability + label_id) — single emit at end of detect_splices logging file -> n_selected, n_intersection (cluster_size<5 AND edge), n_singletons, n_doublets, n_triplets, n_quadruplets, n_dense, n_in_first_4s, n_in_last_
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## failed-hypothesis-recallprecision
+- **status:** pending
+- **first_seen:** 687205d
+- **last_seen:** 7025a18
+- **request_count:** 8
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT FAILED HYPOTHESES — extend each line to include precision, recall, clean_fp_per_min so I can distinguish near-miss vs recall-crater vs precision-save patterns directly. Currently only "combined=X" is shown; the full decomposition is in l
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-joint-diag-cluster-size-file
+- **status:** pending
+- **first_seen:** 00a9b0a
+- **last_seen:** 00a9b0a
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-EMIT JOINT DIAG (cluster-size + file-relative-time + file-duration + nearest-neighbor + probability + label_id) — single emit at end of detect_splices logging file -> n_selected, file_dur_s, n_intersection_edge_sparse, n_4th_tier (high-prob, interior, dense-cluster, long-file), n_singletons,
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## classifier-dsp-gate-isolation-filter
+- **status:** pending
+- **first_seen:** 00a9b0a
+- **last_seen:** f67afba
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (10) CLASSIFIER + DSP-GATE + ISOLATION-FILTER + EDGE-AWARE + CLUSTER-AWARE + INTERSECTION-AWARE TUNABLE FRONTIER — extend frontier text to surface ISOLATION_DIST_S / ISOLATION_DIST_S_LOW / ISOLATION_DIST_S_VERY_TIGHT / ISOLATION_FILE_DUR_THR_S / ISOLATION_EDGE_HEAD_S / ISOLATION_EDGE_TAIL_S / ISOLAT
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## tighten-run_autoresearchsh1042-trigger
+- **status:** pending
+- **first_seen:** efe38ee
+- **last_seen:** 7672de0
+- **request_count:** 8
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (1) TIGHTEN run_autoresearch.sh:1042 trigger regex — 67 iters.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-dsp-channel-peak-alignment
+- **status:** pending
+- **first_seen:** efe38ee
+- **last_seen:** da02a01
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT DSP CHANNEL-PEAK ALIGNMENT DIAG — single emit at end of detect_splices logging file -> n_selected, peak_align_p25/p50/p75 where peak_align = |argmax_t phase - argmax_t cpe| in [t-1, t+1] for each survivor. Binding for any DSP-temporal FE probe.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## shap-feature-importance-delta-per
+- **status:** pending
+- **first_seen:** efe38ee
+- **last_seen:** 7025a18
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) SHAP FEATURE-IMPORTANCE DELTA per RETRAIN ITER — Top-5 SHAP features and their delta vs prior keep would let me decide whether to add complementary FE or pivot.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## productive-axis-trajectory-block-in
+- **status:** pending
+- **first_seen:** efe38ee
+- **last_seen:** 7025a18
+- **request_count:** 9
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (11) PRODUCTIVE-AXIS TRAJECTORY BLOCK in the prompt.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## failed-fe-shap-rank-diag-for-failed
+- **status:** pending
+- **first_seen:** f67afba
+- **last_seen:** 553b40a
+- **request_count:** 3
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) FAILED-FE SHAP RANK DIAG — for failed features.py iters, surface the new feature's SHAP rank and importance value alongside combined in RECENT FAILED HYPOTHESES.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## oof-metrics-delta-per-retrain-iter
+- **status:** pending
+- **first_seen:** cbc742d
+- **last_seen:** cbc742d
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (7) OOF METRICS DELTA per RETRAIN ITER in CURRENT STATE — for class_weight / FE / classifier hyperparam retrains, surfacing the per-class precision/recall delta from the prior keep would be decisive for next-iter direction. Currently only `combined` is visible.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## surface-emit-population-class-set-in
+- **status:** pending
+- **first_seen:** cbc742d
+- **last_seen:** cbc742d
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (14) SURFACE EMIT-POPULATION CLASS SET in PROMPT ARCHITECTURE BLOCK — explicit note that detector emits label_id in {1, 2} only, class 0 = cross_voice is the gate's negative class.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## architecture-block-says
+- **status:** pending
+- **first_seen:** cbc742d
+- **last_seen:** 7025a18
+- **request_count:** 6
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (17) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL IS HistGradientBoostingClassifier — fix the docstring drift in the prompt-builder so the classifier surface matches reality.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-file-duration-histogram-in-prompt
+- **status:** pending
+- **first_seen:** c35ba8e
+- **last_seen:** c35ba8e
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-FILE DURATION HISTOGRAM in PROMPT ARCHITECTURE BLOCK — add a one-line summary of eval file duration distribution (p10/p25/p50/p75/p90 across the 60 sampled files, plus count in [<45)s, [45-60)s, [60-90)s, [90-120]s bins). Binding for any file_dur-axis probe. ~5 lines in evaluate.py + ~3 line
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-stationarity-diag-single-emit
+- **status:** pending
+- **first_seen:** 553b40a
+- **last_seen:** 553b40a
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (3) PER-EMIT STATIONARITY DIAG — single emit at end of detect_splices logging file -> n_selected, onset_cv_2s_p25/p50/p75, centroid_cv_1s_p25/p50/p75 for each survivor.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## failed-hypothesis-recallprecision
+- **status:** pending
+- **first_seen:** 553b40a
+- **last_seen:** 03d4d50
+- **request_count:** 5
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (6) FAILED-HYPOTHESIS RECALL/PRECISION DECOMPOSITION in RECENT FAILED HYPOTHESES.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-tier-population-diag-at-end-of
+- **status:** pending
+- **first_seen:** 7672de0
+- **last_seen:** 7672de0
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (4) PER-TIER POPULATION DIAG — at end of detect_splices, log file -> n_selected per dist_thresh tier (edge+sparse, edge-only, sparse-interior, short-file-only, very-marginal-default, default-high-conf-interior). Binding for any per-tier sub-gate probe; would directly answer "which tier holds the mos
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-class-probability-distribution
+- **status:** pending
+- **first_seen:** f32d5a0
+- **last_seen:** 7025a18
+- **request_count:** 4
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (1) PER-EMIT CLASS-PROBABILITY DISTRIBUTION DIAG — log per-survivor max(p[0], p[2]) percentiles. Binding for any class-evidence-axis probe.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## architecture-block-says
+- **status:** pending
+- **first_seen:** f32d5a0
+- **last_seen:** 03d4d50
+- **request_count:** 2
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) ARCHITECTURE BLOCK SAYS GradientBoostingClassifier BUT ACTUAL IS HistGradientBoostingClassifier. --- ## [auto-diagnosis] diagnose: no-traceback tsv: RESULTS_TSV: combined=<REDACTED> f0_5=0.041265 f1=0.016925 precision=1.000000 recall=0.008535 clean_fp_per_min=0.041750 clean_fp_penalty=0.959923 n
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## per-emit-spec_contrast-band-peak-time
+- **status:** pending
+- **first_seen:** 03d4d50
+- **last_seen:** 03d4d50
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (2) PER-EMIT SPEC_CONTRAST BAND-PEAK-TIME-STD DIAG.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.
+## verify-fail-diagnostic-summary-in
+- **status:** pending
+- **first_seen:** 7025a18
+- **last_seen:** 7025a18
+- **request_count:** 1
+- **category:** observability
+- **risk:** medium
+- **excerpt:** (9) VERIFY-FAIL DIAGNOSTIC SUMMARY in PROMPT — for verify-fail iters, surface the verify-stage failure reason (metric mismatch? diff audit fail? anomaly trigger?) rather than just the reported combined number.
+- **notes:** Auto-triaged by supervisor_agent.py --maintain. Needs human review.

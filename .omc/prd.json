@@ -1,594 +1,95 @@
 {
   "project": "autoresearch-splice",
-  "created": "2026-04-17",
-  "goal": "korean-iter1 framework operational stability test \u2014 24h continuous autoresearch uptime starting 2026-04-26. Iter-0 baseline combined=0.436441 (boundary-F1, 250 ms collar, 60 sampled eval files). Real research metric improvements are the agent's responsibility; this PRD only tracks framework health.",
+  "created": "2026-04-29",
+  "supersedes": "the prior US-700 24h-uptime PRD (2026-04-26 to 2026-04-27 deadline expired ~2 days ago without continuous uptime). This Ralph run pivots focus to a coherence + public-release task; the previous PRD is preserved in git history.",
+  "goal": "Refactor data layout so it stops being confusing (data/eval/korean_iter1/eval/ double-nesting → match dormant-dataset pattern data/{eval,train,test}/korean_iter1/), re-encrypt eval + test blobs against the new layout (eval same-user keychain, test Touch-ID-gated per existing crypto scheme), execute the Light cleanup approved in .omc/specs/deep-interview-mutual-solutions-public-push.md (README rewrite + LICENSE + DATA.md + scrub /Users/yejunjang path leaks), push 5 branches to a fresh public mutual-solutions/autoresearch-splice repo, and share the GitHub URL with Alex via kakaocli.",
   "stories": [
     {
-      "id": "US-700",
-      "title": "24h continuous autoresearch uptime on korean-iter1 framework (ralph monitor)",
+      "id": "US-800",
+      "title": "Data layout refactor — flatten korean_iter1 to match dormant-dataset pattern",
       "priority": 0,
       "passes": false,
-      "scope": "ralph-monitor-run-2026-04-26",
+      "scope": "ralph-data-refactor-2026-04-29",
+      "blockedBy": "autoresearch loop must be fully stopped (graceful, no force-kill) before any data move or path-constant edit",
       "acceptanceCriteria": [
-        "tmux session 'autoresearch' alive at every 30-min checkpoint across the 24h window",
-        "No 'wrapper.loop.ended' event in .omc/logs/autoresearch.jsonl with reason != stop_signal during the window",
-        "No 'classifier.retrain.failed' event in .omc/logs/autoresearch.jsonl during the window",
-        ".omc/supervisor-crash-counter.txt remains < 3 throughout the window",
-        "Each completed iteration takes < 600 s wall-clock (claude + retrain + eval + verify combined)",
-        "splice/evaluate.py invocations stay within the 240 s budget on every iteration",
-        "results.tsv accumulates iteration rows monotonically (one per iteration: keep | discard | verify-fail)",
-        "Any failure detected during the window triggers the trace+fix+resume protocol from the original ralph args; the 24h timer resets from the resume moment, not from the original start"
-      ],
-      "note": "Autoresearch loop started 2026-04-26 from HEAD f3d0868 on autoresearch/korean-iter1, iter-0 baseline combined=0.436441. Success criterion is OPERATIONAL stability, NOT research-output quality. Hypothesis discards are EXPECTED. Failure remediation: graceful stop -> /trace -> surgical fix -> resume; reset 24h timer from resume."
+        "Loop is stopped: `tmux has-session -t autoresearch` returns non-zero",
+        "data/eval/korean_iter1/ contains tier1/, tier2/, clean/, ground_truth.json DIRECTLY (no inner eval/ subdir)",
+        "data/train/korean_iter1/ exists and holds what was at data/eval/korean_iter1/train/ before the move",
+        "data/test/korean_iter1/ exists and holds what was at data/eval/korean_iter1/test/ before the move",
+        "splice/dataset_registry.py korean_iter1 entry uses single-level paths: eval=_DATA/eval/korean_iter1, train=_DATA/train/korean_iter1, test=_DATA/test/korean_iter1",
+        "splice/evaluate.py DEFAULT_DATA_DIR resolves to data/eval/korean_iter1 (no second eval/ component)",
+        "splice/classifier/train_classifier.py TRAIN_DIR = _ROOT/data/train/korean_iter1",
+        "scripts/test_eval.py DEFAULT_TEST_DIR = REPO_ROOT/data/test/korean_iter1",
+        "scripts/regenerate_korean_iter1.py _DEFAULT_OUTPUT_ROOT logic places splits at the 3 new parent dirs (data/eval/korean_iter1, data/train/korean_iter1, data/test/korean_iter1)",
+        "autoresearch/manifest.json: dataset path + protected_paths reference the new layout",
+        "autoresearch/preflight.py comments + logic match the new paths",
+        "splice/program.md docstrings reference the new paths",
+        "CLAUDE.md Data layout section updated to describe the new reality",
+        "All 3 affected unit tests pass: splice/tests/test_evaluate_korean_iter1.py, test_train_classifier_korean_iter1.py, test_regenerate_korean_iter1.py",
+        "Smoke import succeeds: `PYTHONPATH=$PWD uv run python -c 'import splice.dataset_registry; import splice.evaluate; import splice.classifier.train_classifier; print(\"ok\")'`"
+      ]
     },
     {
-      "id": "US-010",
-      "title": "CQT + Hotelling T\u00b2 crossfade detector",
+      "id": "US-801",
+      "title": "Re-encrypt eval + test blobs against the new layout",
       "priority": 1,
-      "passes": true,
-      "note": "Legacy \u2014 achieved earlier."
+      "passes": false,
+      "blockedBy": "US-800",
+      "acceptanceCriteria": [
+        "Stale data/eval.tar.gz.enc (Apr 18, pre-pivot 3-domain content) is removed before the new setup",
+        "Stale data/test.tar.gz.enc is removed before the new setup",
+        "`PYTHONPATH=$PWD uv run python scripts/eval_crypto.py setup` rebuilds data/eval.tar.gz.enc from the new data/eval/ layout (no biometric prompt, same-user keychain reuse)",
+        "`PYTHONPATH=$PWD uv run python scripts/test_crypto.py setup` rebuilds data/test.tar.gz.enc (Touch-ID prompt fires once)",
+        "Plaintext data/eval/ and data/test/ are shredded post-setup (verified by `ls data/eval data/test 2>&1` showing absent or non-readable)",
+        "`scripts/eval_crypto.py status` reports blob PRESENT and keychain entry REGISTERED",
+        "`scripts/eval_crypto.py decrypt --keep` extracts to /tmp and the layout matches data/eval/korean_iter1/{tier1,tier2,clean,ground_truth.json} — no nested eval/ inside"
+      ]
     },
     {
-      "id": "US-011",
-      "title": "Combine phase + crossfade detectors",
+      "id": "US-802",
+      "title": "Light public-repo cleanup per deep-interview spec",
       "priority": 2,
-      "passes": true,
-      "note": "Legacy \u2014 achieved earlier."
+      "passes": false,
+      "specRef": ".omc/specs/deep-interview-mutual-solutions-public-push.md",
+      "acceptanceCriteria": [
+        "LICENSE exists at repo root: MIT text, copyright `2026 Yejun Jang`",
+        "README.md rewritten to describe the audio-splice work; references the upstream fork relationship; links README-upstream.md",
+        "README-upstream.md preserves the original Karpathy nanochat-flavored README content verbatim",
+        "DATA.md exists at repo root: documents source-pool acquisition (zeroth-korean / LibriSpeech / singing), the regenerate_korean_iter1.py flow, what the encrypted blobs are for, and decrypt/skip-gate options for outsiders",
+        "Zero `/Users/yejunjang` strings remain in tracked text files: `git ls-files | xargs grep -l '/Users/yejunjang'` returns empty",
+        "Changes committed in a coherent commit (or small commit series) with `Co-Authored-By: Claude` trailer"
+      ]
     },
     {
-      "id": "US-012",
-      "title": "F1 improvement on crossfade files",
+      "id": "US-803",
+      "title": "Push to public mutual-solutions/autoresearch-splice",
       "priority": 3,
-      "passes": true,
-      "note": "Legacy \u2014 achieved earlier."
-    },
-    {
-      "id": "US-100",
-      "title": "Diagnostic infrastructure (DIAG emitter + _FitError)",
-      "priority": 10,
-      "passes": true,
-      "note": "Shipped in 77f9392."
-    },
-    {
-      "id": "US-101",
-      "title": "Remove GPD silent fallbacks; caller-side policy",
-      "priority": 11,
-      "passes": true,
-      "note": "Shipped in 77f9392."
-    },
-    {
-      "id": "US-102",
-      "title": "Remove non-GPD silent fallbacks",
-      "priority": 12,
-      "passes": true,
-      "note": "Shipped in 77f9392."
-    },
-    {
-      "id": "US-103",
-      "title": "Instrument ml_eval.py silent paths",
-      "priority": 13,
-      "passes": true,
-      "note": "Shipped in 77f9392."
-    },
-    {
-      "id": "US-104",
-      "title": "End-to-end transparency + regression",
-      "priority": 14,
-      "passes": true,
-      "note": "Shipped in 77f9392."
-    },
-    {
-      "id": "US-150",
-      "title": "Length-agnostic sliding-window detector",
-      "priority": 15,
-      "passes": true,
-      "note": "Shipped in 84cd656."
-    },
-    {
-      "id": "US-151",
-      "title": "ml_eval speech-loader generalized",
-      "priority": 16,
-      "passes": true,
-      "note": "Shipped in 21a5d43."
-    },
-    {
-      "id": "US-200",
-      "title": "dataset_registry.py with Dataset dataclass + DATASETS list",
-      "priority": 20,
-      "passes": true,
-      "acceptanceCriteria": [
-        "File dataset_registry.py exists at repo root",
-        "Exports Dataset dataclass (frozen) with fields: id (str), path (Path), eval_weight (float), train_weight (float)",
-        "Exports DATASETS: list[Dataset] with exactly 3 entries: singing (eval=1, train=0 since singing uses pregenerated patches), korean (eval=1, train=1), english (eval=1, train=1)",
-        "Paths resolve via `Path(__file__).resolve().parent` (project root) so the module is importable from any cwd",
-        "Sanity: `uv run python -c 'from dataset_registry import DATASETS; print([d.id for d in DATASETS])'` prints ['singing', 'korean', 'english']",
-        "Each dataset path exists (or points at an optional directory \u2014 import succeeds even if one is missing)"
-      ]
-    },
-    {
-      "id": "US-201",
-      "title": "ml_eval.py iterates DATASETS for classifier training patches",
-      "priority": 21,
-      "passes": true,
-      "acceptanceCriteria": [
-        "Hardcoded _KOREAN_SPLICE_DIR and _ENGLISH_SPLICE_DIR constants removed from ml_eval.py",
-        "ml_eval.py imports DATASETS from dataset_registry",
-        "Speech-patch loader iterates datasets with train_weight > 0, calls _load_speech_splice_patches(str(ds.path), ds.id) for each",
-        "Behavior preserved: full eval combined == 0.742 \u00b1 0.01",
-        "DIAG output still shows per-language labels (ml.korean, ml.english) \u2014 no regressions in observability"
-      ]
-    },
-    {
-      "id": "US-202",
-      "title": "aggregate_combined helper in dataset_registry.py",
-      "priority": 22,
-      "passes": true,
-      "acceptanceCriteria": [
-        "dataset_registry.py exports aggregate_combined(per_dataset: dict[str, float], method: str = 'geometric', floor: float = 0.01) -> dict",
-        "method supports: 'geometric', 'mean', 'min'",
-        "Returns dict with keys: combined, combined_mean, combined_min, per_dataset",
-        "Geometric mean uses max(v, floor) per value to avoid zero-collapse",
-        "Inline self-test in __main__: for input {'s': 0.738, 'k': 0.25, 'e': 0.05} with method='geometric' + floor=0.01, returned combined is within 0.001 of hand-computed value (\u2248 0.227)",
-        "Self-test also covers method='mean' and method='min'"
-      ]
-    },
-    {
-      "id": "US-203",
-      "title": "evaluate.py integration patch documented for user",
-      "priority": 23,
-      "passes": true,
-      "acceptanceCriteria": [
-        "File .omc/evaluate_integration.md documents the exact change-set for evaluate.py: (a) iterate DATASETS for per-dataset eval, (b) optional classifier pass per dataset, (c) call aggregate_combined and print combined_<id>, combined_mean, combined_min, combined at end",
-        "Document shows the replacement block for the current Korean-only secondary eval (lines ~519-532 in evaluate.py) with explicit before/after",
-        "Document includes proposed new .omc/coordination/baseline_metrics.json value with a brief rationale (metric semantics change)",
-        "Document is standalone readable \u2014 user can apply without agent context"
-      ]
-    },
-    {
-      "id": "US-300",
-      "title": "DSP single-position accessors \u2014 phase_z_at / t2_z_at / cpe_z_at",
-      "priority": 30,
-      "passes": true,
-      "acceptanceCriteria": [
-        "detector.py exposes `phase_z_at(chunk_ctx, t_sec) -> float`, `t2_z_at(chunk_ctx, t_sec) -> float`, `cpe_z_at(chunk_ctx, t_sec) -> float` that return the chunk-local z-score at a given time without re-running the full detection pipeline",
-        "A new `_build_chunk_context(chunk, sr) -> dict` precomputes phase/T2/CPE curves once per chunk so the per-t accessors are O(1) lookups",
-        "The existing detect_splices code path still works unchanged (accessors are additive; current API preserved)",
-        "Sanity: uv run python -c \"from detector import _build_chunk_context, phase_z_at, t2_z_at, cpe_z_at; import librosa; y,sr=librosa.load('data/spliced/tier1/splice_t1_001.wav', sr=None); ctx=_build_chunk_context(y[:60*sr], sr); print(phase_z_at(ctx, 30.0), t2_z_at(ctx, 30.0), cpe_z_at(ctx, 30.0))\" returns three floats without error"
-      ]
-    },
-    {
-      "id": "US-301",
-      "title": "15-cell metric aggregator + FP multiplier",
-      "priority": 31,
-      "passes": true,
-      "acceptanceCriteria": [
-        "dataset_registry.py adds `forensic_combined(per_cell: dict[str, float], clean_fp: int, max_allowed: int, floor: float = 0.01) -> dict` that computes geometric mean of the 15 cells (floored) \u00d7 (1 - clean_fp/max_allowed) clamped to [0, 1]",
-        "Cell names follow convention `<dataset>_t<tier>_<regime>` for 12 spliced cells and `<dataset>_clean_score` for 3 clean cells",
-        "Returns dict with keys: combined, combined_gm_cells, fp_multiplier, per_cell, n_cells_included",
-        "Inline __main__ test: for 15 synthetic cells all at 0.5 + 0 clean_fp, combined == 0.5. For one cell at 0.01 + others at 0.5, combined drops below 0.38 (demonstrating GM penalty). For 5 clean_fp / max_allowed=15, fp_multiplier == 0.667.",
-        "Does NOT replace the existing aggregate_combined \u2014 it sits alongside as the forensic-specific aggregator"
-      ]
-    },
-    {
-      "id": "US-302",
-      "title": "Regenerate singing dataset with boundary_energy regime split",
-      "priority": 32,
-      "passes": true,
-      "acceptanceCriteria": [
-        "corpora/data/generate_splices.py (singing, 44.1kHz) imports from splice_boundary and picks 10 random + 10 quiet_matched per tier (matching Korean/English structure)",
-        "Regenerated data/spliced/ground_truth.json has boundary_energy field on every tier1/tier2 entry; at least 10 entries per regime per tier",
-        "Measured boundary_rms_db_a / boundary_rms_db_b recorded per spliced file",
-        "Singing primary eval still runs without error after regeneration; combined_dsp differs no more than 0.1 from pre-regen baseline (i.e. new dataset is stylistically compatible)",
-        "Submodule corpora/ commit pins the new generator; parent repo updates corpora pointer"
-      ]
-    },
-    {
-      "id": "US-303",
-      "title": "Feature extraction module features.py (~75 dims per candidate)",
-      "priority": 33,
-      "passes": true,
-      "note": "Shipped: features.py 818 lines, 75 dims, 300ms/1000 calls, DIAG INFO for ENF absent + PCA self-fit exercised",
-      "acceptanceCriteria": [
-        "New features.py at repo root exports `extract_features(audio, sr, t_sec, chunk_ctx=None) -> dict[str, float]` returning ~75 named features",
-        "Feature categories covered: 4 DSP scores, 13 MFCC pre/post deltas, 6 spectral summary deltas, 6 noise-floor color features, 8 pitch/voicing, 6 energy/ZCR, 3 boundary-region, 20 mel-PCA-tail, 5 ENF (50/60Hz hum continuity), 4 codec-artifact (frame-alignment + quant-residual)",
-        "ENF block (5 dims): hum-band freq mean pre/post, freq delta, phase continuity across t, band SNR. Auto-detects 50Hz vs 60Hz from the stronger harmonic; if both absent, emits zeros + DIAG INFO (not an error).",
-        "Codec-artifact block (4 dims): frame-alignment offset consistency near t (MP3 576-sample / AAC 1024-sample grids), quantization-residual energy pre, post, double-compression quantization score. Graceful when source is WAV-only (values reduce to residual jitter; no crash).",
-        "Every feature has a documented name; `extract_features` also exports FEATURE_NAMES list for SHAP labeling",
-        "Idempotent: same (audio, sr, t) produces identical output vector",
-        "Performance: 1000 calls on a cached chunk_ctx complete in <2s on laptop CPU (budget for dense scanning)",
-        "Integration: ml_eval or a training script can call it to produce a feature matrix",
-        "Note: PCA fit for mel tail and ENF base-frequency estimate pre-loaded from training-time fit files if present; self-fit fallback if not"
-      ]
-    },
-    {
-      "id": "US-304",
-      "title": "Multi-class GBM training pipeline",
-      "priority": 34,
-      "passes": true,
-      "note": "Shipped: .omc/classifier/train_classifier.py trains 3-class GBM on 1320 rows across 210 files; OOF weighted F1 0.7045 (\u22650.70 target).",
-      "acceptanceCriteria": [
-        ".omc/classifier/train_classifier.py trains a 3-class GBM (not_splice / hard_cut / crossfade) using features.py output",
-        "Training data: for each spliced file, label positive candidates (within 1s of GT) by tier (1\u2192hard_cut, 2\u2192crossfade); label negatives sampled from both spliced (far from GT) and clean files as not_splice",
-        "GroupKFold by file_id preserved; OOF multi-class F1 reported (weighted and per-class)",
-        "Saved joblib artifact at .omc/classifier/fp_classifier.joblib works with `model.predict_proba([features_vector])` returning shape (1, 3)",
-        "Multi-class OOF F1 (weighted) \u2265 0.70 on training distribution (softer than binary 0.85 because 3-way is harder; ground-truth target)"
-      ]
-    },
-    {
-      "id": "US-305",
-      "title": "Detector refactor \u2014 GBM-first dense scan",
-      "priority": 35,
-      "passes": true,
-      "note": "Shipped: detect_splices dense-scans at 0.2s stride via GBM; DSP pipeline retained as fallback. Cache key keyed on (audio, model mtime).",
-      "acceptanceCriteria": [
-        "detector.py `detect_splices` replaces DSP-first logic with: slide chunks (W=60s, S=50s); for each chunk call `_build_chunk_context` then `gbm.predict_proba` at every candidate position (stride = ANALYSIS_STRIDE_S = 0.2s); emit (t, label, probability) when p_splice > THRESHOLD (default 0.5)",
-        "Labels are 'hard_cut' or 'crossfade' from argmax of the two non-not_splice classes",
-        "Memoization cache preserved (keyed by audio fingerprint + model hash so it invalidates when the classifier changes)",
-        "DIAG observability preserved \u2014 existing DIAG lines for GPD unfit / hotelling near-singular still emit; one new DIAG emits per chunk with (scan_count, emit_count)",
-        "Sliding window geometry (W=60, S=50) unchanged",
-        "Existing eval_by_regime.py works without modification (same API: `detect_splices(audio, sr) -> list[float]` with times in file coordinates)"
-      ]
-    },
-    {
-      "id": "US-306",
-      "title": "evaluate.py integration patch for new metric",
-      "priority": 36,
-      "passes": true,
-      "acceptanceCriteria": [
-        ".omc/evaluate_integration.md updated with the exact block to replace in evaluate.py \u2014 iterating DATASETS \u00d7 regimes \u00d7 tiers, computing forensic_combined, printing combined_<cell>, combined_mean, combined_min, combined (last)",
-        "Includes updated baseline_metrics.json proposal with new combined value pinned once current code runs end-to-end",
-        "Doc is standalone applyable by the user without agent assistance",
-        "Does NOT edit evaluate.py itself (protected)"
-      ]
-    },
-    {
-      "id": "US-307",
-      "title": "Forensic report sidecar (SHAP export per detection)",
-      "priority": 37,
-      "passes": true,
-      "note": "Shipped: .omc/classifier/shap_report.py writes one JSON per detection under reports/. DSP block always in top_features; importance_weighted_magnitude fallback when shap is absent.",
-      "acceptanceCriteria": [
-        "ml_eval.py (or a new report module) exports per-detection explanation JSON: {'time_sec': float, 'label': str, 'probability': float, 'top_features': [{'name': str, 'value': float, 'shap': float}, ...]}",
-        "Top-3 SHAP contributors computed from the saved GBM model (use sklearn's feature_importances_ if SHAP not installed; fall back with a DIAG note)",
-        "When evaluate.py runs with --with-classifier, a reports/ directory is populated with one JSON per detection",
-        "Report includes dsp-score values even when they're not the top-3 SHAP contributors (they're always forensically relevant)"
-      ]
-    },
-    {
-      "id": "US-308",
-      "title": "End-to-end regression: implementation-done gate",
-      "priority": 38,
-      "passes": true,
-      "note": "Shipped: evaluate.py --with-classifier runs end-to-end in 149s (<240s budget), exit 0, combined=0.785 recorded to baseline_metrics.json. dsp_clean_fp=3 (bound 15). Preflight manifest hash still reflects pre-US-302 singing set \u2014 human must refresh ground_truth_sha256_prefix.",
-      "acceptanceCriteria": [
-        "uv run evaluate.py --with-classifier completes in <240s, exit 0",
-        "verify_agent.py returns HIGH (or MEDIUM) confidence on the new combined value",
-        "DSP clean_fp bound respected (DSP layer still checkpointed)",
-        "DIAG tally post-run shows no silent crashes (no unexpected high-count WARN/ERROR components)",
-        "Current combined value (Phase 1 baseline) is RECORDED in baseline_metrics.json and .omc/progress.txt \u2014 this becomes the Phase 2 autoresearch starting point"
-      ]
-    },
-    {
-      "id": "US-204",
-      "title": "End-to-end regression after registry refactor",
-      "priority": 24,
-      "passes": true,
-      "acceptanceCriteria": [
-        "uv run evaluate.py --with-classifier completes in <240s, exit 0",
-        "combined (primary) == 0.742 \u00b1 0.01",
-        "dsp_clean_fp \u2264 15",
-        "verify_agent.py --agent-name registry-refactor --reported-combined <actual> exits 0 (HIGH or MEDIUM)",
-        "grep-audit confirms no new silent fallbacks: every stub-value return in dataset_registry.py and ml_eval.py is preceded by a _diag or is a policy return"
-      ]
-    },
-    {
-      "id": "US-500",
-      "title": "SHAP feature-importance rollup injected into autoresearch prompt",
-      "priority": 50,
-      "passes": true,
-      "note": "scripts/shap_rollup.py reads reports/<sha>/<domain>/*.json, sums |shap| per feature across last 5 keeps, writes .omc/shap_rollup.json. run_autoresearch.sh regenerates rollup per iteration and injects compact 'TOP PREDICTIVE FEATURES' block (top-6 per domain). Rollup runs in 0.07s. Empty-history and n<=0 edge cases handled.",
-      "acceptanceCriteria": [
-        "New script scripts/shap_rollup.py reads reports/<sha>/<group>/*.json across the last N (default 5) 'keep' commits from results.tsv and computes per-domain top-10 features by sum of |shap| across all detections in those commits",
-        "Rollup output is written deterministically to .omc/shap_rollup.json with keys: generated_at (ISO), keeps_considered (list of short shas), per_domain (dict of domain_id -> list of {name, sum_abs_shap, mean_value, n_detections, rank})",
-        "run_autoresearch.sh regenerates .omc/shap_rollup.json once per iteration (after keep/discard is logged, before next claude subprocess starts) and injects a 'TOP PREDICTIVE FEATURES (rolling sum_|shap| over last 5 keeps, per domain)' block into the claude prompt",
-        "Rollup script degrades gracefully: if fewer than N keeps exist in results.tsv, use what's available; if zero keeps, write empty per_domain={} and the wrapper's prompt block reads '(not enough history yet)'",
-        "Rollup script completes in <5s on the current reports/ tree (187 commits \u00d7 up to ~110 files each)",
-        "A unit-style sanity run `uv run python scripts/shap_rollup.py --keeps 3 --stdout` prints a JSON object matching the schema above to stdout without writing to disk"
-      ]
-    },
-    {
-      "id": "US-501",
-      "title": "Deep orphan detection: scan history, not just HEAD",
-      "priority": 51,
-      "passes": true,
-      "note": "_detect_deep_orphans() walks last 20 commits, flags hypothesis: with no paired baseline: and no results.tsv row. Pre-TSV-tracker commits filtered via awk cutoff on earliest tracked SHA. Warn-only (no auto-revert). Standalone-callable via `source run_autoresearch.sh`. False-positive guard is structural: only `hypothesis:` subjects match.",
-      "acceptanceCriteria": [
-        "run_autoresearch.sh's orphan-detection step looks back up to N=20 commits (not just HEAD) for any 'hypothesis: \u2026' commit that is NOT followed within 3 commits by a 'baseline: \u2026' commit on the same branch AND does NOT appear in results.tsv as discard/keep/verify-fail",
-        "When such an orphan is found, wrapper logs a structured '.omc/autoresearch.log' entry with the orphan SHA, subject, and the detection reason (no paired baseline, not in results.tsv)",
-        "Wrapper DOES NOT auto-revert deep orphans (too dangerous \u2014 could discard human-authored commits like baseline-restore). Instead it writes a warning and continues. Only HEAD-level orphans (existing behavior) still auto-revert.",
-        "Unit-ish check: a shell helper function _detect_deep_orphans() is extracted and callable standalone; `bash -c 'source run_autoresearch.sh; _detect_deep_orphans 20'` prints zero or more warning lines to stderr and returns 0",
-        "False-positive guard: commits whose subject is 'baseline-restore:' or 'chore:' or 'refactor:' or 'feat:' or 'fix:' or 'test:' or 'docs:' are NEVER flagged (they're human-authored maintenance, not autoresearch hypotheses)"
-      ]
-    },
-    {
-      "id": "US-502",
-      "title": "Rich status dashboard: one-shot operator summary",
-      "priority": 52,
-      "passes": true,
-      "note": "scripts/dashboard.py + `./run_autoresearch.sh dashboard` subcommand. 0.09s end-to-end, pure read-side (no evaluate.py, only results.tsv/baseline/rollup/versions + git log %cr for last-keep age). Missing artifacts handled: absent TSV\u2192'(no experiments yet)', absent baseline\u2192'(no baseline_metrics.json yet)', absent rollup\u2192'(no rollup yet)'. Also: decrypted eval tmp SIZE reported without leaking path (threat-model-consistent). Fixed TSV SHA inconsistency in wrapper's hypothesis_commit (was mixing full/short SHAs).",
-      "acceptanceCriteria": [
-        "`./run_autoresearch.sh dashboard` prints a compact multi-line summary: loop state (RUNNING/STOPPED), total experiments, keep/discard/verify-fail breakdown, current combined + per-domain combined + per-domain clean_fp from baseline_metrics.json, time since last keep (human-readable, e.g. '17m ago'), top-3 feature names from .omc/shap_rollup.json per domain, and loop-start eval decrypt tmp size if currently decrypted",
-        "Dashboard runs in <2s (no evaluate.py invocation, no expensive subprocesses). Use only filesystem reads + git for all data.",
-        "Dashboard gracefully handles missing artifacts: absent results.tsv \u2192 '(no experiments yet)'; absent baseline_metrics.json \u2192 '(no baseline yet)'; absent shap_rollup.json \u2192 '(no rollup yet)'; loop stopped \u2192 '(not running \u2014 use start to resume)'",
-        "Dashboard output is single-column, no ANSI colors, plain-text aligned \u2014 legible in tmux panes and CI captures alike",
-        "Adding dashboard does NOT introduce any new global state files; it's a pure read-side subcommand",
-        "`./run_autoresearch.sh` with no args / help mentions the new `dashboard` subcommand alongside start/stop/status/rollback"
-      ]
-    },
-    {
-      "id": "US-503",
-      "title": "Research notebook: wrapper-owned qualitative context inherited across iterations",
-      "priority": 53,
-      "passes": true,
-      "note": "Wrapper-owned .omc/research_notes.md. _append_note() appends timestamp/sha/status/combined/per-domain/reflection after keep|discard|verify-fail; commit lands AFTER git reset (discard) or baseline (keep) so notes persist. Last 10 entries injected into claude prompt. scripts/notebook_digest.py compacts oldest 20 entries when total > 50. .omc/last_reflection.md gitignored; truncated after wrapper consumes it. Prompt step 1 instructs claude to write (a) hypothesis, (b) why over recent failures, (c) next-try if this fails."
-    },
-    {
-      "id": "US-504",
-      "title": "Feature-extraction cache: bit-exact, invalidated by features.py sha",
-      "priority": 54,
-      "passes": true,
-      "note": "Bit-exact PASS: cold=0.468623 == warm=0.468623 on same HEAD (full RESULTS_TSV diff empty). Speed PASS: 258s cold \u2192 111s warm = 2.32x. Invalidation confirmed: features.py edit \u2192 new sha \u2192 new subdir coexists with old (252+251 .pkl blobs; no cross-write). Gated on OMC_FEATURE_CACHE_DIR + OMC_FEATURES_PY_SHA; claude subprocess has both stripped via `env -u`. Cache dir pruned on loop start (keeps only current-sha subdir to bound disk use ~1.5 GB/sha)."
-    },
-    {
-      "id": "US-505",
-      "title": "Classifier staleness gate: auto-retrain on features.py drift",
-      "priority": 55,
-      "passes": true,
-      "note": "train_classifier.py writes features_py_sha + training_timestamp into fp_classifier.meta.json. Wrapper checks before evaluate.py: if drift (or missing meta), auto-invokes train_classifier.py with 300s timeout, stages fresh joblib+meta via git commit --amend --no-edit, refreshes hypothesis_commit SHA. Claude prompt step 4 updated \u2014 'wrapper auto-retrains; you do NOT need to manually run train_classifier.py'."
-    },
-    {
-      "id": "US-506",
-      "title": "Per-tunable exploration frontier injected into claude prompt",
-      "priority": 56,
-      "passes": true,
-      "note": "scripts/tunable_frontier.py parses `hypothesis: <TUNABLE> <old>-><new>` from results.tsv (GBM_THRESHOLD / GBM_MIN_SEP_S / ANALYSIS_STRIDE_S) + status, emits per-tunable kept/failed/range/current. Runs in 0.055s. Wrapper injects PER-TUNABLE EXPLORATION FRONTIER block into claude prompt."
-    },
-    {
-      "id": "US-507",
-      "title": "SHAP shift sentinel: detect structural vs local keeps",
-      "priority": 57,
-      "passes": true,
-      "note": "scripts/shap_shift.py compares top-3 features per domain between last 2 keep commits. Jaccard < 0.5 on any domain \u2192 STRUCTURAL SHIFT, else LOCAL KEEP. Wrapper invokes immediately after VERIFIED KEEP, appends single-line verdict to .omc/last_reflection.md as [auto] header so it enters the next iteration's research note."
-    },
-    {
-      "id": "US-510",
-      "title": "Surface all pipeline failure points (maintainer pass)",
-      "priority": 60,
       "passes": false,
+      "blockedBy": "US-802",
       "acceptanceCriteria": [
-        "Root bug fixed: .omc/classifier/shap_report.py's fallback path no longer unconditionally touches `clf.feature_importances_` \u2014 guarded with try/except AttributeError, uniform-weights fallback when attribute missing. This was the cause of 4+ consecutive combined=0.010 discards (HistGBM produced singing=0.20/korean=0.31/english=0.60 but SHAP export crashed and evaluate.py zeroed per-domain scores).",
-        "verify_agent.py --diagnose handles non-crash logs: when no Python traceback but `combined_<domain>: ERROR (...)` lines exist, surface those + last 3 DIAG WARN/ERROR lines + the RESULTS_TSV into .omc/last_reflection.md. Previously emitted '(no-traceback)' stub \u2014 too terse.",
-        "run_autoresearch.sh's discard branch invokes `--diagnose` on CATASTROPHIC discards (combined \u2264 0.05), not just on crashes. Precise gate: normal drops (0.45 < 0.47) do NOT fire diagnose.",
-        "Silent `|| true` swallows on shap_rollup.py / tunable_frontier.py / notebook_digest.py / shap_shift.py replaced with `|| echo '<ts> PIPELINE_FAILURE: <tool> rc=$?'` \u2014 tools still non-blocking, failures no longer invisible.",
-        "Bash -n passes; verify_agent.py --self-test passes; scripts/phase_stats.py runs."
-      ],
-      "note": "DEFERRED \u2014 out of scope for ralph-monitor run starting 2026-04-26 (US-700). Real maintainer-tooling work that should resume after the 24h continuous-uptime milestone confirms framework operational stability."
+        "`gh repo create mutual-solutions/autoresearch-splice --public --source=. --remote=mutual` succeeds",
+        "Remote `mutual` is configured: `git remote -v` shows it pointing to github.com/mutual-solutions/autoresearch-splice",
+        "master branch pushed: `git push mutual master` succeeds",
+        "autoresearch/apr15 branch pushed: `git push mutual autoresearch/apr15` succeeds",
+        "autoresearch/korean-iter1 branch pushed: `git push -u mutual autoresearch/korean-iter1` succeeds",
+        "agenthub branch pushed (from origin's remote-tracking ref): `git push mutual refs/remotes/origin/agenthub:refs/heads/agenthub` succeeds",
+        "exp/H100/mar8 branch pushed (from origin's remote-tracking ref): `git push mutual refs/remotes/origin/exp/H100/mar8:refs/heads/exp/H100/mar8` succeeds",
+        "`gh repo view mutual-solutions/autoresearch-splice --json url,visibility,defaultBranchRef` confirms public + correct default + URL captured for sharing",
+        "Tracked secrets sanity check post-push: `git ls-files | xargs grep -lE 'sk-[a-zA-Z0-9]{20,}|ghp_[a-zA-Z0-9]{36,}|ngrok.*authtoken|AKIA[0-9A-Z]{16}'` returns empty"
+      ]
     },
     {
-      "id": "US-511",
-      "title": "Commit-level protected-file audit (prevent silent agent writes)",
-      "priority": 61,
+      "id": "US-804",
+      "title": "Share GitHub URL with Alex via kakaocli",
+      "priority": 4,
       "passes": false,
+      "blockedBy": "US-803",
       "acceptanceCriteria": [
-        "verify_agent.py's check_git_diff_audit() inspects THREE diff surfaces now: unstaged, staged, AND committed-since-OMC_HEAD_BEFORE. Catches protected-file edits committed inside the hypothesis commit that are invisible to the working-tree diff.",
-        "Wrapper exports OMC_HEAD_BEFORE=$head_before when invoking verify_agent for strict-improvement path.",
-        "Protected list unchanged: evaluate.py, program.md, data/eval/*, data/test/*, manifest.json, preflight.py.",
-        "Synthetic test: a commit touching evaluate.py causes audit to return FAIL. Clean iteration still returns PASS."
-      ],
-      "note": "DEFERRED \u2014 out of scope for ralph-monitor run starting 2026-04-26 (US-700). Real maintainer-tooling work that should resume after the 24h continuous-uptime milestone confirms framework operational stability."
-    },
-    {
-      "id": "US-512",
-      "title": "SHAP-DELTA block in autoresearch prompt",
-      "priority": 62,
-      "passes": false,
-      "note": "QUEUED \u2014 defer until after US-510 ships. Per-feature SHAP change between last 2 kept classifiers would surface 'feature got 0 SHAP after addition' signal (classifier ignored it). Moderate value; primary blocker (catastrophic-floor opacity) is US-510. DEFERRED \u2014 out of scope for ralph-monitor run starting 2026-04-26 (US-700). Real maintainer-tooling work that should resume after the 24h continuous-uptime milestone confirms framework operational stability."
-    },
-    {
-      "id": "US-513",
-      "title": "DEFERRED: sample_eval_misses (eval-oracle-isolation tension)",
-      "priority": 63,
-      "passes": false,
-      "note": "DEFERRED \u2014 NOT to implement as proposed. Tension with US-504 (eval corpus isolation is load-bearing). Train-audio proxy at same time-positions is wrong samples; extracting eval snippets leaks the oracle; numeric feature-value dumps add no info beyond existing SHAP. Redesign needed before any ship. DEFERRED \u2014 out of scope for ralph-monitor run starting 2026-04-26 (US-700). Real maintainer-tooling work that should resume after the 24h continuous-uptime milestone confirms framework operational stability."
-    },
-    {
-      "id": "US-518F",
-      "title": "Fix SIGPIPE (signal=141) at iteration.start \u2014 US-518 regression",
-      "priority": 70,
-      "passes": true,
-      "note": "Root cause: run_autoresearch.sh line 746 `awk | sort | cut | head -5` under `set -euo pipefail`. `head -5` closes stdin after 5 lines; upstream `cut` races with sort's buffered output, occasionally receives SIGPIPE; pipefail propagates exit 141; set -e triggers EXIT trap; loop.crash signal=141 emitted. Fix: wrap the pipeline in a subshell with `set +o pipefail` so head-based truncation can't propagate as an error. Same pattern applied defensively to two other latent sites (line 325 _detect_deep_orphans, line 1204 RESULTS_TSV parse). Repro probe confirms fixed pipeline exits 0 under set -euo pipefail. selftest 3/3, pytest 49/49, audit 0.",
-      "acceptanceCriteria": [
-        "Root cause identified: the exact shell pipeline in run_autoresearch.sh that produces SIGPIPE under `set -o pipefail` is located and the file:line is recorded in progress.txt",
-        "Fix applied: the identified pipeline is rewritten to either (a) tolerate SIGPIPE via `|| true` / explicit rc-check, (b) split into two-statement form avoiding the pipe, or (c) reorder so the consumer doesn't exit before the producer finishes",
-        "`./run_autoresearch.sh selftest` still passes 3/3",
-        "`bash -n run_autoresearch.sh` passes (no syntax regression)",
-        "`pytest autoresearch/tests/` still 49/49",
-        "Regression probe: shell reproduction of the exact original scenario (keep path \u2192 feature_cache prune \u2192 iteration.start \u2192 guard call) does NOT emit SIGPIPE and does NOT trigger ERR-trap"
+        "`kakaocli send Alex --dry-run \"<URL>\"` first to verify chat-name match",
+        "`kakaocli send Alex \"<URL>\"` returns success",
+        "stdout/stderr of the send call captured for confirmation"
       ]
-    },
-    {
-      "id": "US-518R",
-      "title": "Restart the loop + verify first iteration runs without SIGPIPE",
-      "priority": 71,
-      "passes": true,
-      "note": "Validated T+1h15min post-restart (2026-04-20T02:07:29Z T0 \u2192 03:22:49Z): 0 loop.crash, 0 signal=141, 3 complete iterations + 1 in-flight, feature_cache drifted to 14 GB due to separate discard-path prune gap (addressed in US-518B).",
-      "acceptanceCriteria": [
-        "Loop restarted via `./run_autoresearch.sh start`; tmux session `autoresearch` alive",
-        "First iteration post-restart produces `iteration.start` + `tunable.frontier.snapshot` + retrain + eval events without any new `loop.crash` event within the first 15 minutes",
-        "Wrapper.loop.started event is present in .omc/logs/autoresearch.jsonl after the restart moment",
-        "No `signal=141` or any `loop.crash` event emitted since the restart",
-        "feature_cache stays below 8 GB cap across the first post-restart iteration"
-      ]
-    },
-    {
-      "id": "US-518B",
-      "title": "Prune feature_cache on discard path \u2014 prevent runaway growth during discard streaks",
-      "priority": 72,
-      "passes": true,
-      "shipped_in": "7845270",
-      "note": "Discovered during the 24h-stability monitor: with 9 consecutive discards post-SIGPIPE-fix, feature_cache grew 8 GB \u2192 25 GB (disk 16 GB \u2192 4.2 GB, below preflight 5 GB floor). Root cause: existing _prune_feature_cache_gb only fires at loop-start + post-keep. Each discarded hypothesis that bumps features.py sha adds ~4 GB cache that never gets reclaimed until the next keep. Fix: invoke _prune_feature_cache_gb at top of while-loop (post-disk-check, pre-iteration.start), with OMC_FEATURES_PY_SHA unset so the guard uses post-reset (baseline) sha via git hash-object fallback. Idempotent no-op when cache \u2264 8 GB cap.",
-      "acceptanceCriteria": [
-        "run_autoresearch.sh has a _prune_feature_cache_gb invocation at the top of the run_loop while loop (between _check_disk_space soft and iteration.start)",
-        "The invocation unsets OMC_FEATURES_PY_SHA first so the guard uses the post-reset baseline sha (L48-50 git hash-object fallback), NOT the stale hypothesis sha from prior eval phase",
-        "`bash -n run_autoresearch.sh` passes (no syntax regression)",
-        "`./run_autoresearch.sh selftest` still passes 3/3 (prune correctness + preflight gate unchanged)",
-        "`PYTHONPATH=$PWD uv run python scripts/validate_logs.py --audit` reports 0 violations",
-        "After loop restart with 25 GB cache, first iteration observes cache \u2264 8 GB (prune fires at L692 loop-start, before any new sha work)",
-        "Over \u2265 3 consecutive discard iterations post-restart, feature_cache stays \u2264 10 GB (demonstrates the new top-of-loop prune reclaims discard-added shas)"
-      ]
-    },
-    {
-      "id": "US-600",
-      "title": "Acquire AMI + ICSI headset channels to external drive",
-      "priority": 100,
-      "passes": true,
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data.",
-      "acceptanceCriteria": [
-        "/Volumes/HIKSEMI/autoresearch-splice-sources/ami/ contains per-speaker headset WAVs for \u226580 AMI meetings (filename pattern: <meeting_id>.Headset-<n>.wav)",
-        "/Volumes/HIKSEMI/autoresearch-splice-sources/icsi/ contains per-speaker headset WAVs for \u226560 ICSI meetings",
-        "data/sources/ami and data/sources/icsi symlink to the external drive paths",
-        "Both corpora carry CC-BY-4.0 attribution documented in data/sources/ami/LICENSE + data/sources/icsi/LICENSE",
-        "soundfile can open a spot-check sample from each corpus without error"
-      ]
-    },
-    {
-      "id": "US-601",
-      "title": "Generator same-source splice mode (randomized windows, quiet_matched only)",
-      "priority": 101,
-      "passes": true,
-      "acceptanceCriteria": [
-        "scripts/regenerate_datasets.py accepts a `same_source=True` flag per domain in the spec-building code path",
-        "When same_source is True, the generator picks ONE source file and samples two non-overlapping windows of randomized lengths L1+L2=target_duration with L1,L2 \u2265 2s from within that source",
-        "Both windows are fed to find_splice_point(seg_a, seg_b, sr, mode='quiet_matched', ...) \u2014 boundary_energy is always quiet_matched (no 'random' regime)",
-        "Ground truth row carries source_a == source_b (same id) AND an explicit same_source: true field",
-        "`bash -n run_autoresearch.sh` + existing selftest + pytest autoresearch/tests/ all pass",
-        "Cross-source path code is preserved (commented or gated on flag) for future domain re-activation"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-602",
-      "title": "dataset_registry.py dormant-domain weights + English stays active",
-      "priority": 102,
-      "passes": true,
-      "acceptanceCriteria": [
-        "splice/dataset_registry.py retains Dataset entries for all 3 domain ids (singing, korean, english)",
-        "singing entry: eval_weight=0, train_weight=0",
-        "korean entry: eval_weight=0, train_weight=0",
-        "english entry: eval_weight=1, train_weight=1 (unchanged from current)",
-        "DATASETS list order preserves existing domain position so iteration order is stable",
-        "`uv run python -c 'from splice.dataset_registry import DATASETS; assert len(DATASETS) == 3' ` passes",
-        "train_classifier.py + evaluate.py iterate DATASETS with the existing `train_weight > 0` / `eval_weight > 0` filters and skip dormant domains gracefully without raising"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-603",
-      "title": "Regenerate English data as same-source splices",
-      "priority": 103,
-      "passes": true,
-      "acceptanceCriteria": [
-        "data/train/english/, data/eval/english/, data/test/english/ each contain tier1/ (20 spliced files) + tier2/ (20 spliced files) + clean/ (20 clean files) + ground_truth.json",
-        "All spliced entries in ground_truth.json have same_source=true, source_a==source_b, boundary_energy='quiet_matched'",
-        "Per-file duration envelopes honor existing schema: EVAL_TRAIN_DURATION_S for train+eval, TEST_DURATION_S for test",
-        "Spot-check 3 random spliced files per split: splice_time_sec lies within [0.30*duration, 0.70*duration], both halves audibly from the same speaker",
-        "Total plaintext size under 10 GB combined across the 3 english splits"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-604",
-      "title": "Archive old encrypted blobs + re-encrypt new English corpus",
-      "priority": 104,
-      "passes": true,
-      "acceptanceCriteria": [
-        "data/eval.tar.gz.enc.pre-samesource and data/test.tar.gz.enc.pre-samesource exist (renamed from originals)",
-        "New data/eval.tar.gz.enc produced via scripts/eval_crypto.py encrypt (session-keychain key, no biometric)",
-        "New data/test.tar.gz.enc produced via scripts/test_crypto.py encrypt (Touch ID prompt confirmed)",
-        "Plaintext data/eval/english, data/train/english, data/test/english trees shredded per encrypt lifecycle (scripts/eval_crypto.py encrypt handles this)",
-        "Decrypting the new eval blob via scripts/eval_crypto.py decrypt --keep and running preflight.py on it produces 0 integrity violations"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-605",
-      "title": "Retrain classifier on new English data",
-      "priority": 105,
-      "passes": true,
-      "acceptanceCriteria": [
-        "PYTHONPATH=$PWD uv run python splice/classifier/train_classifier.py runs to completion on new data without raising",
-        "splice/classifier/fp_classifier.joblib regenerated; timestamp newer than current",
-        "splice/classifier/fp_classifier.meta.json records features_py_sha AND train_classifier_py_sha (US-505b schema) + new training_timestamp",
-        "classification_report shows non-trivial precision/recall on hard_cut + crossfade classes (not both 0.0 \u2014 proves the task has learnable signal)"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-606",
-      "title": "Establish empirical baseline metric",
-      "priority": 106,
-      "passes": true,
-      "acceptanceCriteria": [
-        "autoresearch/baseline_metrics.json regenerated with the new English-only configuration (combined score, per-domain dict with only 'english' populated, clean_fp_total, splice_f1, training_timestamp, git_sha)",
-        "combined value is empirically measured on the new eval set \u2014 no precommitted target, whatever the value is becomes the baseline",
-        "baseline_metrics.json.pre-samesource archive of the OLD baseline is preserved for reference",
-        "The new baseline is committed as a standalone commit with subject 'baseline: combined=<value> after samesource-english rebuild' (matching existing baseline-commit conventions so autoresearch loop recognizes it)"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-607",
-      "title": "Clear agent state (logs / research notes / feature cache / results ledger)",
-      "priority": 107,
-      "passes": true,
-      "acceptanceCriteria": [
-        ".omc/logs/autoresearch.jsonl* all removed (rotated copies too)",
-        ".omc/research_notes.md, .omc/last_reflection.md, .omc/enhancement-backlog.md removed",
-        ".omc/feature_cache/ directory removed entirely",
-        "results.tsv archived to results.tsv.pre-samesource; a fresh empty results.tsv with header row in place",
-        ".omc/specs/archived-pre-samesource/ directory exists containing the old agent-drafted deep-interview specs (deep-interview-*.md files moved there)",
-        "autoresearch/baseline_metrics.json.pre-samesource preserved (from US-606) while the new active baseline is used",
-        ".omc/regime-samples/, .omc/fp-samples/ \u2014 cleanup/remove if present (operator debug artifacts)",
-        ".omc/supervisor-crash-counter.txt reset to 0"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-608",
-      "title": "PRD reset, loop restart, 24h monitor armed",
-      "priority": 108,
-      "passes": true,
-      "acceptanceCriteria": [
-        "prd.json stories referencing singing FPs / Korean FPs / cross-source behavior (existing US entries) stay as historical record with passes=true \u2014 NOT deleted",
-        "US-600..US-608 (this rebuild set) marked passes=true",
-        ".omc/autoresearch-stop sentinel removed",
-        "./run_autoresearch.sh start launches; tmux session 'autoresearch' alive; loop.started event appears in fresh .omc/logs/autoresearch.jsonl",
-        "First post-restart iteration produces iteration.start + claude phase + retrain (features.py sha may be unchanged on iter 1) + eval events within 30 min without loop.crash",
-        "24h monitor T0 set to the loop.started timestamp; wakeup chain scheduled at 1h cadence"
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
-    },
-    {
-      "id": "US-609",
-      "title": "Extensibility smoke test \u2014 dormant domain plugability",
-      "priority": 109,
-      "passes": true,
-      "acceptanceCriteria": [
-        "Temporarily add a dummy 4th dataset to DATASETS (eval_weight=0, train_weight=0, path='/tmp/nonexistent') \u2014 train_classifier.py and evaluate.py both run without raising",
-        "After verification, remove the dummy entry (rollback to the 3-domain state)",
-        "Documents in .omc/specs/deep-interview-same-source-rebuild.md that future domain re-activation requires only: (a) populate data/<split>/<domain>/, (b) bump weights to >0, (c) retrain."
-      ],
-      "note": "SUPERSEDED by korean-iter1 pivot (commits a7bbbe7 \u2192 46d2b43 on branch autoresearch/korean-iter1, finalized 2026-04-26). Same-voice splices are now synthesised from iter-1 word_alignment instead of waiting for AMI+ICSI same-source english data."
     }
-  ]
+  ],
+  "preserved_legacy": "Pre-2026-04-29 prd.json had 50 stories (US-010 through US-700; preserved in git via `git log --oneline -- .omc/prd.json`). US-510/US-511/US-512/US-513/US-700 were `passes: false` at the time of supersession; intentionally NOT carried over because they belong to a different mission cycle and would block this Ralph from terminating. Re-add as new IDs if/when their work resumes."
 }
