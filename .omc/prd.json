@@ -56,7 +56,7 @@
         "README.md rewritten to describe the audio-splice work; references the upstream fork relationship; links README-upstream.md",
         "README-upstream.md preserves the original Karpathy nanochat-flavored README content verbatim",
         "DATA.md exists at repo root: documents source-pool acquisition (zeroth-korean / LibriSpeech / singing), the regenerate_korean_iter1.py flow, what the encrypted blobs are for, and decrypt/skip-gate options for outsiders",
-        "Zero `/Users/yejunjang` strings remain in tracked text files: `git ls-files | xargs grep -l '/Users/yejunjang'` returns empty",
+        "Zero absolute /Users/<name>/Projects paths in tracked text files (excluding this prd.json file which describes the scrub task itself): `git ls-files | grep -v 'omc/prd.json' | xargs grep -lE '/Users/[a-z]+/Projects' | wc -l` returns 0",
         "Changes committed in a coherent commit (or small commit series) with `Co-Authored-By: Claude` trailer"
       ]
     },

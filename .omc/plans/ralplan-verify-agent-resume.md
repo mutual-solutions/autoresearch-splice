@@ -1,7 +1,7 @@
 # RALPLAN — US-508: `verify_agent --diagnose` (Phase 1) + session-resume (Phase 2, deferred)
 
 **Plan ID:** `ralplan-verify-agent-resume`
-**Source spec:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/specs/deep-interview-verify-agent-resume.md`
+**Source spec:** `.omc/specs/deep-interview-verify-agent-resume.md`
 **Date:** 2026-04-18 (revised after Architect ITERATE verdict)
 **Mode:** consensus (SHORT)
 **Status:** Phase 1 ready for Critic review; Phase 2 queued as follow-up US
@@ -156,7 +156,7 @@ hypothesis commit → evaluate.py → [exit 0 AND RESULTS_TSV ok] ──→ norm
 
 ### Step 2 — Add `verify_agent.py --diagnose` subcommand
 
-**Files:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/coordination/verify_agent.py`.
+**Files:** `.omc/coordination/verify_agent.py`.
 **Delta:** +90 / -5 lines (new `run_diagnose()` function, new argparse subcommand, small `main()` dispatch refactor, embedded `--self-test`).
 **Actions:**
 - Add `argparse` subparsers: default path stays as today (strict-improvement verify); new `--diagnose` subcommand takes no required args.
@@ -194,8 +194,8 @@ hypothesis commit → evaluate.py → [exit 0 AND RESULTS_TSV ok] ──→ norm
 ### Step 3 — Wire the three crash paths + ship success-metric script
 
 **Files:**
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/run_autoresearch.sh`
-- new `/Users/yejunjang/Projects/mutual/autoresearch-splice/scripts/diagnose_repeat_rate.py`
+- `run_autoresearch.sh`
+- new `scripts/diagnose_repeat_rate.py`
 
 **Delta:** wrapper +3 / -0; script +80 / -0.
 
@@ -334,13 +334,13 @@ Phase-split with a numeric gate respects both the user's intent (preservation pa
 ## File Reference (absolute paths)
 
 Phase 1 (this plan, ships now):
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/coordination/verify_agent.py` — add `--diagnose` subcommand + `--self-test` with Case A + Case B.
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/run_autoresearch.sh` — 3 one-line `--diagnose` invocations at existing crash sites (lines ~615, ~647-651, ~659-662 per current HEAD).
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/scripts/diagnose_repeat_rate.py` — new success-metric script; reads `results.tsv` + `.omc/research_notes.md`.
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/last_eval.log` — read-only input to `--diagnose`.
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/last_reflection.md` — write target of `--diagnose`; consumed by `_append_note` (unchanged).
+- `.omc/coordination/verify_agent.py` — add `--diagnose` subcommand + `--self-test` with Case A + Case B.
+- `run_autoresearch.sh` — 3 one-line `--diagnose` invocations at existing crash sites (lines ~615, ~647-651, ~659-662 per current HEAD).
+- `scripts/diagnose_repeat_rate.py` — new success-metric script; reads `results.tsv` + `.omc/research_notes.md`.
+- `.omc/last_eval.log` — read-only input to `--diagnose`.
+- `.omc/last_reflection.md` — write target of `--diagnose`; consumed by `_append_note` (unchanged).
 
 Phase 2 (deferred, conditional ship):
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/scripts/probe_claude_session.sh` — temporary probe.
-- `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/diagnose-log.jsonl` — append-only trail for 2nd-crash visibility (Architect ask #3).
+- `scripts/probe_claude_session.sh` — temporary probe.
+- `.omc/diagnose-log.jsonl` — append-only trail for 2nd-crash visibility (Architect ask #3).
 - Further `run_autoresearch.sh` edits (session-id capture, `_diagnose_and_resume` helper, `_rerun_eval_once` helper, `verify-fail-postfix` status).

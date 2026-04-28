@@ -114,7 +114,7 @@ B1. Add `normalize_audio(audio, sr, mode="peak")` helper in a new **`audio_io.py
 B2. Apply at three consumption points:
    - `evaluate.py: evaluate()` — before `detect_splices()`. **Single-line import + one-line call** (protected-file edit requires human sign-off per Protected-file policy).
    - `ml_eval.py: evaluate_with_classifier()` — before `extract_mel_patch()`.
-   - If the Downloads scanner (`scan_downloads.py` in splice-detector project) is re-run against the same pipeline, add there too. Note: `scan_downloads.py` lives in `/Users/yejunjang/Projects/mutual/mutual-website/splice-detector/scan_downloads.py`, not in this repo.
+   - If the Downloads scanner (`scan_downloads.py` in splice-detector project) is re-run against the same pipeline, add there too. Note: `scan_downloads.py` lives in `/path/to/mutual/mutual-website/splice-detector/scan_downloads.py`, not in this repo.
 
 B3. Adjust `_silence_mask` threshold from fixed `-45 dBFS` to `-45 dBFS relative to normalized peak`. Since post-normalization peak is ~0 dBFS, this is effectively the same as before on normalized inputs, but now robust to any input scale.
 

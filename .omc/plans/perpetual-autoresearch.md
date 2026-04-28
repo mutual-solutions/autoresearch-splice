@@ -36,7 +36,7 @@ The autoresearch-splice project runs a Karpathy-style autonomous research loop (
 
 ### Step 1: Create `run_autoresearch.sh`
 
-**File:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/run_autoresearch.sh`
+**File:** `run_autoresearch.sh`
 
 Shell script with 3 subcommands:
 
@@ -67,7 +67,7 @@ Shell script with 3 subcommands:
 
 ### Step 2: Update `program.md` — add verify-on-keep gate section
 
-**File:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/program.md`
+**File:** `program.md`
 
 Add a new section after the "Experiment loop" section (after step 10):
 

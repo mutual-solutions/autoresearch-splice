@@ -1,92 +1,180 @@
-# autoresearch
+# autoresearch-splice
 
-![teaser](progress.png)
+**Autonomous research for audio splice detection using classical signal
+processing.** A Korean-language same-source splice detector grown by an LLM
+agent through ~500 commits of hypothesis → train → eval → keep/discard
+iterations against a 250 ms collar boundary-F1 metric.
 
-*One day, frontier AI research used to be done by meat computers in between eating, sleeping, having other fun, and synchronizing once in a while using sound wave interconnect in the ritual of "group meeting". That era is long gone. Research is now entirely the domain of autonomous swarms of AI agents running across compute cluster megastructures in the skies. The agents claim that we are now in the 10,205th generation of the code base, in any case no one could tell if that's right or wrong as the "code" is now a self-modifying binary that has grown beyond human comprehension. This repo is the story of how it all began. -@karpathy, March 2026*.
+This repo is a fork of [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
+that pivoted off the nanochat LLM-training scaffold and used the same loop
+structure to drive a fundamentally different problem: detecting where
+spoken-audio recordings have been cut and re-stitched, with no neural
+networks and a CPU-only scipy/librosa/numpy stack so every detection is
+explainable.
 
-The idea: give an AI agent a small but real LLM training setup and let it experiment autonomously overnight. It modifies the code, trains for 5 minutes, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a better model. The training code here is a simplified single-GPU implementation of [nanochat](https://github.com/karpathy/nanochat). The core idea is that you're not touching any of the Python files like you normally would as a researcher. Instead, you are programming the `program.md` Markdown files that provide context to the AI agents and set up your autonomous research org. The default `program.md` in this repo is intentionally kept as a bare bones baseline, though it's obvious how one would iterate on it over time to find the "research org code" that achieves the fastest research progress, how you'd add more agents to the mix, etc. A bit more context on this project is here in this [tweet](https://x.com/karpathy/status/2029701092347630069) and [this tweet](https://x.com/karpathy/status/2031135152349524125).
+> The original `autoresearch` README — Karpathy's nanochat narrative — is
+> preserved verbatim at [`README-upstream.md`](./README-upstream.md). It
+> describes the agent-driven research scaffold this fork inherits.
+
+## What this project does
+
+Given an `<conv_id>.opus` recording of one or more Korean speakers, the
+detector returns `list[(time_s, label)]` where each entry is a predicted
+splice boundary with a 3-class label:
+
+- `cross_voice` — splice between two different speakers
+- `same_voice_edit` — same-speaker word-level cut
+- `unknown` — boundary suspected but class evidence is weak
+
+A boundary is correct if it lands within ±250 ms of a ground-truth boundary
+and the label matches. The agent optimizes a precision-weighted aggregate:
+
+```
+combined = F0.5(precision, recall) × clean_fp_penalty
+clean_fp_penalty = 1 / (1 + clean_fp_per_min / 1.0)
+```
+
+`clean_fp_per_min` counts unmatched predictions in clean (non-spliced)
+sections. The formulation pushes the loop toward a forensic-audit
+detector: high-precision, low false-alarm in clean speech.
 
 ## How it works
 
-The repo is deliberately kept small and only really has three files that matter:
+The loop is a thin bash wrapper around three modifiable Python files plus
+one immutable evaluator:
 
-- **`evaluate.py`** — fixed constants, one-time data prep (downloads training data, trains a BPE tokenizer), and runtime utilities (dataloader, evaluation). Not modified.
-- **`train.py`** — the single file the agent edits. Contains the full GPT model, optimizer (Muon + AdamW), and training loop. Everything is fair game: architecture, hyperparameters, optimizer, batch size, etc. **This file is edited and iterated on by the agent**.
-- **`program.md`** — baseline instructions for one agent. Point your agent here and let it go. **This file is edited and iterated on by the human**.
+- **`splice/evaluate.py`** *(protected — only the human edits this)* —
+  evaluation oracle. Reads the eval split, runs `splice/detector.py` on
+  each file, computes boundary-F1 with 250 ms collar + clean-FP penalty,
+  prints metrics. Wrapper greps the last `combined: <f>` line for the
+  keep/discard decision.
+- **`splice/program.md`** *(protected)* — the prompt context the agent
+  reads at the top of every iteration. Explains the metric, constraints
+  (no neural networks, CPU-only, every detection must be explainable),
+  and the file map.
+- **`splice/detector.py`** — the splice detector. Returns `list[(t, label)]`.
+  Edited freely by the agent for tunable thresholds (`GBM_THRESHOLD`,
+  `GBM_MIN_SEP_S`, isolation gates) and sliding-window geometry.
+- **`splice/features.py`** — feature extractor (~80 hand-crafted spectral
+  + DSP features) feeding the GBM. Edited to add new features; requires
+  retrain afterwards.
+- **`splice/classifier/train_classifier.py`** — 3-class HistGradientBoosting
+  trainer with paired negative sampling. Hyperparameters are agent-tunable;
+  retraining writes a fresh `fp_classifier.joblib`.
+- **`run_autoresearch.sh`** — the loop. Spawns the agent, applies its
+  hypothesis, retrains if needed, runs eval, decides keep / discard /
+  verify-fail, writes a journal commit (`hypothesis: …`, `note: discard …`,
+  `baseline: …`), repeats.
 
-By design, training runs for a **fixed 5-minute time budget** (wall clock, excluding startup/compilation), regardless of the details of your compute. The metric is **val_bpb** (validation bits per byte) — lower is better, and vocab-size-independent so architectural changes are fairly compared.
-
-If you are new to neural networks, this ["Dummy's Guide"](https://x.com/hooeem/status/2030720614752039185) looks pretty good for a lot more context.
+The interesting bit isn't the detector — it's that **no human wrote the
+detector**. The agent built it incrementally over ~500 commits, each one
+a single hypothesis (e.g., "raise GBM_MIN_SEP_S 5.5 → 6.0", "add
+boundary_onset_chunk_relative_ratio FE") with a paragraph of mechanism,
+risk, and prior-art reasoning. The git log IS the research narrative.
 
 ## Quick start
 
-**Requirements:** A single NVIDIA GPU (tested on H100), Python 3.10+, [uv](https://docs.astral.sh/uv/).
+**Requirements:** macOS or Linux, Python 3.10+, [uv](https://docs.astral.sh/uv/),
+~10 GB free disk for source pools + decrypted corpora, Touch ID for the
+held-out test gate (macOS only).
 
 ```bash
-
-# 1. Install uv project manager (if you don't already have it)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# 2. Install dependencies
+# 1. Install dependencies
 uv sync
 
-# 3. Download data and train tokenizer (one-time, ~2 min)
-uv run evaluate.py
+# 2. Get the data — read DATA.md for the full story.
+#    Short version: download zeroth-korean + LibriSpeech + singing source pools,
+#    then run the regen script to produce the splits.
+PYTHONPATH=$PWD uv run python scripts/regenerate_korean_iter1.py --regenerate
 
-# 4. Manually run a single training experiment (~5 min)
-uv run train.py
+# 3. (Optional) encrypt the eval and held-out test splits to mirror the
+#    isolation model the loop uses. Without encryption, the loop still
+#    works; the encryption is research-integrity hygiene to prevent the
+#    LLM subprocess from accidentally seeing oracle data.
+PYTHONPATH=$PWD uv run python scripts/eval_crypto.py setup
+PYTHONPATH=$PWD uv run python scripts/test_crypto.py setup    # Touch ID prompt
+
+# 4. Run the loop
+./run_autoresearch.sh start
+./run_autoresearch.sh status
+tmux attach -t autoresearch    # to watch
+./run_autoresearch.sh stop     # graceful — finishes current iteration first
 ```
 
-If the above commands all work ok, your setup is working and you can go into autonomous research mode.
-
-## Running the agent
-
-Simply spin up your Claude/Codex or whatever you want in this repo (and disable all permissions), then you can prompt something like:
-
-```
-Hi have a look at program.md and let's kick off a new experiment! let's do the setup first.
-```
-
-The `program.md` file is essentially a super lightweight "skill".
+Per-iteration commits land on the current branch. Successful keeps update
+`autoresearch/baseline_metrics.json`; discards become `note: …` commits
+that record the failed hypothesis. Browse `git log` to read the research.
 
 ## Project structure
 
 ```
-evaluate.py      — constants, data prep + runtime utilities (do not modify)
-train.py        — model, optimizer, training loop (agent modifies this)
-program.md      — agent instructions
-pyproject.toml  — dependencies
+autoresearch-splice/
+├── README.md                   ← this file
+├── README-upstream.md          ← Karpathy's original autoresearch README (preserved)
+├── DATA.md                     ← outsider data-acquisition guide
+├── LICENSE                     ← MIT (this fork) + upstream-MIT acknowledgement
+├── splice/                     ← the audio-splice application
+│   ├── evaluate.py             ← protected metric oracle
+│   ├── program.md              ← protected agent prompt
+│   ├── detector.py             ← agent edits this
+│   ├── features.py             ← agent edits this
+│   ├── classifier/             ← agent edits training hyperparams
+│   ├── dataset_registry.py     ← single source of truth for split paths
+│   └── tests/                  ← unit tests for the evaluator and trainer
+├── autoresearch/               ← reusable runtime harness (loop, logger, supervisor)
+│   ├── supervisor_agent.py     ← verifier + maintainer; runs after every iteration
+│   ├── logger.py               ← unified structured logging (US-515)
+│   ├── preflight.py            ← dataset integrity check
+│   └── manifest.json           ← protected dataset manifest
+├── scripts/                    ← operator tools: dashboard, regen, crypto, test_eval, …
+├── data/                       ← (gitignored) eval/train/test corpora, encrypted blobs
+├── run_autoresearch.sh         ← the loop wrapper
+└── pyproject.toml              ← uv-managed dependencies
 ```
 
-## Design choices
+`splice/` is the application; `autoresearch/` is reusable scaffolding —
+swapping `splice/` for a different domain detector should produce a
+working agent-driven research loop for that domain.
 
-- **Single file to modify.** The agent only touches `train.py`. This keeps the scope manageable and diffs reviewable.
-- **Fixed time budget.** Training always runs for exactly 5 minutes, regardless of your specific platform. This means you can expect approx 12 experiments/hour and approx 100 experiments while you sleep. There are two upsides of this design decision. First, this makes experiments directly comparable regardless of what the agent changes (model size, batch size, architecture, etc). Second, this means that autoresearch will find the most optimal model for your platform in that time budget. The downside is that your runs (and results) become not comparable to other people running on other compute platforms.
-- **Self-contained.** No external dependencies beyond PyTorch and a few small packages. No distributed training, no complex configs. One GPU, one file, one metric.
+## Constraints (non-negotiable)
 
-## Platform support
+- **No neural networks.** No torch / TF / sklearn MLPs. HistGradientBoosting
+  is the only allowed classifier. Detector code is hand-crafted DSP +
+  statistical tests.
+- **CPU only.** No GPU calls anywhere.
+- **Every detection must be explainable** — attributable to a specific
+  statistical test or spectral anomaly.
+- **240 s eval budget** on a laptop CPU; **1200 s held-out test budget**.
+- **Voice-pair holdout (fixed):** test = {DaeBuHo, Kanna}; eval = {Sunwoo,
+  Joon}; train = remaining 7 voices. The agent never sees test voices
+  during the optimization loop.
+- **`splice/evaluate.py` and `splice/program.md` are protected** — only
+  the human edits them. The verifier audits diffs and reverts agent
+  modifications to these files automatically.
 
-This code currently requires that you have a single NVIDIA GPU. In principle it is quite possible to support CPU, MPS and other platforms but this would also bloat the code. I'm not 100% sure that I want to take this on personally right now. People can reference (or have their agents reference) the full/parent nanochat repository that has wider platform support and shows the various solutions (e.g. a Flash Attention 3 kernels fallback implementation, generic device support, autodetection, etc.), feel free to create forks or discussions for other platforms and I'm happy to link to them here in the README in some new notable forks section or etc.
+## Research history
 
-Seeing as there seems to be a lot of interest in tinkering with autoresearch on much smaller compute platforms than an H100, a few extra words. If you're going to try running autoresearch on smaller computers (Macbooks etc.), I'd recommend one of the forks below. On top of this, here are some recommendations for how to tune the defaults for much smaller models for aspiring forks:
+Run `git log --oneline autoresearch/korean-iter1` for the full journal
+of ~500 hypothesis / discard / keep commits. Each `hypothesis:` commit
+contains a paragraph-long mechanism explanation; each `note: discard`
+records a failed iteration with a brief reason. The autoresearch
+notebook compaction also lives in `.omc/research_notes.md` as the
+agent's compressed memory across sessions.
 
-1. To get half-decent results I'd use a dataset with a lot less entropy, e.g. this [TinyStories dataset](https://huggingface.co/datasets/karpathy/tinystories-gpt4-clean). These are GPT-4 generated short stories. Because the data is a lot narrower in scope, you will see reasonable results with a lot smaller models (if you try to sample from them after training).
-2. You might experiment with decreasing `vocab_size`, e.g. from 8192 down to 4096, 2048, 1024, or even - simply byte-level tokenizer with 256 possibly bytes after utf-8 encoding.
-3. In `evaluate.py`, you'll want to lower `MAX_SEQ_LEN` a lot, depending on the computer even down to 256 etc. As you lower `MAX_SEQ_LEN`, you may want to experiment with increasing `DEVICE_BATCH_SIZE` in `train.py` slightly to compensate. The number of tokens per fwd/bwd pass is the product of these two.
-4. Also in `evaluate.py`, you'll want to decrease `EVAL_TOKENS` so that your validation loss is evaluated on a lot less data.
-5. In `train.py`, the primary single knob that controls model complexity is the `DEPTH` (default 8, here). A lot of variables are just functions of this, so e.g. lower it down to e.g. 4.
-6. You'll want to most likely use `WINDOW_PATTERN` of just "L", because "SSSL" uses alternating banded attention pattern that may be very inefficient for you. Try it.
-7. You'll want to lower `TOTAL_BATCH_SIZE` a lot, but keep it powers of 2, e.g. down to `2**14` (~16K) or so even, hard to tell.
+Current Korean-iter1 baseline: `combined = 0.151237` at SHA `c35ba8e`
+(metric-v2 first keep). See `autoresearch/baseline_metrics.json` for
+the full metric breakdown.
 
-I think these would be the reasonable hyperparameters to play with. Ask your favorite coding agent for help and copy paste them this guide, as well as the full source code.
+## Acknowledgements
 
-## Notable forks
-
-- [miolini/autoresearch-macos](https://github.com/miolini/autoresearch-macos) (MacOS)
-- [trevin-creator/autoresearch-mlx](https://github.com/trevin-creator/autoresearch-mlx) (MacOS)
-- [jsegov/autoresearch-win-rtx](https://github.com/jsegov/autoresearch-win-rtx) (Windows)
-- [andyluo7/autoresearch](https://github.com/andyluo7/autoresearch) (AMD)
+This repository is a fork of
+[karpathy/autoresearch](https://github.com/karpathy/autoresearch) — the
+loop structure, the `program.md` agent-prompt convention, and the keep /
+discard / verify-fail journal pattern are all upstream ideas applied
+here to a different problem. Karpathy's original README is at
+[`README-upstream.md`](./README-upstream.md). Thanks to Andrej for the
+scaffolding and the framing.
 
 ## License
 
-MIT
+MIT — see [`LICENSE`](./LICENSE). Compatible with the upstream MIT.

@@ -29,7 +29,7 @@ Current block at `evaluate.py:518-542` (roughly):
 
 ```python
 # Secondary eval: Korean speech (DSP-only, informational).
-_speech_dir = "/Users/yejunjang/Projects/mutual/audio-splice-detector/data/korean-splice"
+_speech_dir = "/path/to/mutual/audio-splice-detector/data/korean-splice"
 if os.path.isdir(_speech_dir):
     print("\n=== Secondary eval: Korean speech (DSP-only) ===")
     try:

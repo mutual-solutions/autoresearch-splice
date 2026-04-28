@@ -23,7 +23,7 @@ Approach:
 Usage:
   uv run python .omc/experiments/energy_dip_test.py
   uv run python .omc/experiments/energy_dip_test.py \\
-      --data-dir /Users/yejunjang/Projects/mutual/audio-splice-detector/data/korean-splice
+      --data-dir /path/to/mutual/audio-splice-detector/data/korean-splice
 """
 
 from __future__ import annotations
@@ -378,7 +378,7 @@ def main() -> None:
     parser.add_argument(
         "--data-dir",
         type=Path,
-        default=Path("/Users/yejunjang/Projects/mutual/autoresearch-splice/data/spliced"),
+        default=Path("data/spliced"),
         help="Dataset directory containing ground_truth.json",
     )
     parser.add_argument(
@@ -397,7 +397,7 @@ def main() -> None:
     datasets = [(args.data_dir, str(args.data_dir))]
     if args.korean:
         korean_dir = Path(
-            "/Users/yejunjang/Projects/mutual/audio-splice-detector/data/korean-splice"
+            "/path/to/mutual/audio-splice-detector/data/korean-splice"
         )
         datasets.append((korean_dir, "Korean dataset"))
 

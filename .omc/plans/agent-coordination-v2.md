@@ -64,7 +64,7 @@ Defer locking, cleanup, and AGENTS.md to Phase 2.
 
 **Action:**
 ```bash
-chmod -R 555 "$(realpath /Users/yejunjang/Projects/mutual/autoresearch-splice/data/spliced)"
+chmod -R 555 "$(realpath data/spliced)"
 # NOTE: data/spliced is a symlink to audio-splice-detector/data/spliced.
 # This chmod applies to the SHARED source directory. Any scripts in
 # audio-splice-detector that write to data/spliced/ will need `chmod 755`

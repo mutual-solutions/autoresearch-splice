@@ -1,7 +1,7 @@
 # RALPLAN — US-514: `verify_agent.py --retest <from-sha>` — systematic replay of discards
 
 **Plan ID:** `ralplan-retest-discards`
-**Source spec:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/specs/deep-interview-retest-discards.md` (ambiguity 19%, PASSED)
+**Source spec:** `.omc/specs/deep-interview-retest-discards.md` (ambiguity 19%, PASSED)
 **Date:** 2026-04-18 (rev 3 — post-Architect ITERATE, phase-1 scope)
 **Mode:** consensus (SHORT)
 **Status:** revised; phase 1 only; Python helper lift deferred to phase 2 on explicit trigger

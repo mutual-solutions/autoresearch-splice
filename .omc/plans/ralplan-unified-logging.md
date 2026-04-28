@@ -1,7 +1,7 @@
 # RALPLAN — US-515: Unified logging (phase-split; Python-side now, bash-side deferred)
 
 **Plan ID:** `ralplan-unified-logging`
-**Source spec:** `/Users/yejunjang/Projects/mutual/autoresearch-splice/.omc/specs/deep-interview-unified-logging.md` (ambiguity 18%, PASSED)
+**Source spec:** `.omc/specs/deep-interview-unified-logging.md` (ambiguity 18%, PASSED)
 **Date:** 2026-04-18
 **Mode:** consensus (SHORT) — Rev-4, single-PR two-commit landing per Critic ask 7
 **Status:** draft; autoresearch loop STOPPED during phase 1 migration

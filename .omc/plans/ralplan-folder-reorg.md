@@ -908,7 +908,7 @@ EXIT=1
 
 **sys.path inspection:**
 ```
-sys.path[:5]: ['/Users/yejunjang/Projects/mutual/autoresearch-splice/splice', ...]
+sys.path[:5]: ['splice', ...]
 ```
 The file's parent directory (`splice/`) is on sys.path[0], NOT the repo root.
 
