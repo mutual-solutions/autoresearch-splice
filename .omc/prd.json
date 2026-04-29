@@ -37,7 +37,7 @@
       "priority": 1,
       "passes": true,
       "completedAt": "2026-04-29",
-      "partial": "eval re-encrypted (data/eval.tar.gz.enc 195 MB, decrypt-roundtrip verified, layout matches data/eval/korean_iter1/<files>). Test re-encrypt is DEFERRED — Touch ID prompt was issued but the user wasn't at the machine to authenticate; killed the prompt cleanly, plaintext data/test/korean_iter1/ remains on disk, gitignored. To finish: `PYTHONPATH=$PWD uv run python scripts/test_crypto.py encrypt` (will prompt Touch ID once).",
+      "outcome": "Both blobs re-encrypted against the new flat layout. data/eval.tar.gz.enc 195 MB (same-user keychain). data/test.tar.gz.enc 739 MB (Touch-ID-gated, user authenticated 2026-04-29 12:51). Both plaintext directories shredded. Decrypt-roundtrip verified for eval; test status check confirms blob present + helper executable.",
       "acceptanceCriteria": [
         "Stale data/eval.tar.gz.enc (Apr 18, pre-pivot 3-domain content) is removed before the new setup",
         "Stale data/test.tar.gz.enc is removed before the new setup",
