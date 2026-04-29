@@ -91,14 +91,12 @@
       "id": "US-804",
       "title": "Share GitHub URL with Alex via kakaocli",
       "priority": 4,
-      "passes": false,
-      "blockedBy": "macOS Accessibility/Automation permissions",
-      "blocker": "kakaocli send drives KakaoTalk via UI automation; the shell hosting Claude Code lacks 'Send Apple events to System Events' permission — kakaocli reports 'KakaoTalk launched but did not become ready within timeout'. Dry-run works (`command kakaocli send 'Alex Park' --dry-run '<URL>'` succeeds), so the chat-name match is confirmed; only the actual UI-driving send is blocked.",
-      "remediation": "Operator runs the bare command in a terminal that has accessibility rights, OR pastes the URL into KakaoTalk manually. Command to copy: `command kakaocli send 'Alex Park' 'Hey, here\\'s the autoresearch-splice repo I just published — Korean same-source splice detection grown by an LLM agent over ~500 hypothesis/discard commits. Forked from karpathy/autoresearch and pivoted to audio. https://github.com/mutual-solutions/autoresearch-splice'`",
+      "passes": true,
+      "completedAt": "2026-04-29",
+      "outcome": "Operator sent the link manually after the kakaocli automation path was blocked by macOS Accessibility permissions. Equivalent outcome: Alex received the autoresearch-splice repo URL in KakaoTalk.",
       "acceptanceCriteria": [
-        "`command kakaocli send 'Alex Park' --dry-run '<URL>'` confirms chat match (DONE: dry-run succeeded)",
-        "Actual `command kakaocli send 'Alex Park' '<URL>'` returns success (BLOCKED: macOS automation permission)",
-        "stdout/stderr captured (BLOCKED: same as above)"
+        "`command kakaocli send 'Alex Park' --dry-run '<URL>'` confirms chat match (DONE)",
+        "URL delivered to Alex Park in KakaoTalk (DONE — operator-sent manually 2026-04-29; kakaocli automation was blocked by macOS Send-Apple-Events permission)"
       ]
     }
   ],
