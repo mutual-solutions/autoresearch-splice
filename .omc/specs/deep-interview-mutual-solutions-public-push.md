@@ -29,7 +29,7 @@ Publish this repo as `mutual-solutions/autoresearch-splice` (public) such that a
   - README rewrite (audio-splice oriented, with upstream attribution)
   - Add `LICENSE` (MIT, copyright holder = the user)
   - Add `DATA.md` (outsider data-acquisition story: source pools, regen flow, encrypted blobs explained)
-  - Scrub the 9 `/Users/yejunjang` absolute-path leaks in tracked `.omc/plans/*.md` and `.omc/evaluate_integration.md` (replace with relative paths or `<project-root>` placeholder)
+  - Scrub the 9 `/Users/<name>` absolute-path leaks in tracked `.omc/plans/*.md` and `.omc/evaluate_integration.md` (replace with relative paths or `<project-root>` placeholder)
 - **Branches to push**: all 5 — `master`, `autoresearch/apr15`, `autoresearch/korean-iter1` (3 local) + `agenthub`, `exp/H100/mar8` (2 currently remote-tracking-only from upstream `origin`; need to be checked out or pushed via `git push mutual refs/remotes/origin/<branch>:refs/heads/<branch>` so they exist on the new remote).
 - **Visibility**: public.
 - **Pre-push state**: working tree clean before `git push -u`. Autoresearch loop must be gracefully stopped (`./run_autoresearch.sh stop` + wait for current iteration) before any tracked-file edits — per project memory rule on never force-killing iterations.
@@ -52,7 +52,7 @@ Publish this repo as `mutual-solutions/autoresearch-splice` (public) such that a
   - source-pool acquisition (zeroth-korean, LibriSpeech dev-clean, singing WAVs) with links + commands;
   - the `data_synth/regenerate_datasets.py` flow that produces eval/train/test splits;
   - what `data/eval.tar.gz.enc` and `data/test.tar.gz.enc` are for (research-integrity prevention, not security secret) and how an outsider can either decrypt them, regenerate equivalent corpora, or skip the held-out gate.
-- [ ] Zero `/Users/yejunjang` strings remain in tracked text files (verified by `git ls-files | xargs grep -l '/Users/yejunjang'` → empty).
+- [ ] Zero `/Users/<name>` strings remain in tracked text files (verified by `git ls-files | xargs grep -l '/Users/<name>'` → empty).
 - [ ] All 4 changes (README, LICENSE, DATA.md, path-scrubs) committed in a coherent commit (or small commit series) with `Co-Authored-By: Claude` trailer.
 - [ ] `gh repo create mutual-solutions/autoresearch-splice --public --source=. --remote=mutual` succeeds.
 - [ ] `git push -u mutual` pushes the 5 branches (master, autoresearch/apr15, autoresearch/korean-iter1, agenthub, exp/H100/mar8). Verified via `gh repo view mutual-solutions/autoresearch-splice --json defaultBranchRef,refs`.
@@ -69,7 +69,7 @@ Publish this repo as `mutual-solutions/autoresearch-splice` (public) such that a
 | License is up for debate | Round 4 default | MIT, upstream-compatible, default unless user objects |
 
 ## Technical Context
-- **Repo**: `/Users/yejunjang/Projects/mutual/autoresearch-splice` on branch `autoresearch/korean-iter1`, HEAD `0a81909` (chore commit just landed).
+- **Repo**: `/Users/<name>/Projects/mutual/autoresearch-splice` on branch `autoresearch/korean-iter1`, HEAD `0a81909` (chore commit just landed).
 - **Upstream**: `origin = https://github.com/karpathy/autoresearch.git` (read-only for this user — `mutantQ` GitHub identity has no write access there).
 - **New remote**: `mutual = https://github.com/mutual-solutions/autoresearch-splice.git` (to be created via `gh repo create`).
 - **Branches**:
@@ -81,7 +81,7 @@ Publish this repo as `mutual-solutions/autoresearch-splice` (public) such that a
 - **Loop state**: 🟢 RUNNING in tmux session `autoresearch` — must `./run_autoresearch.sh stop` before this work, resume after push (or leave stopped if user is done iterating).
 - **Tracked-file PII / leakage scan**:
   - Secrets: clean ✓
-  - `/Users/yejunjang` absolute paths: 9 files (`.omc/evaluate_integration.md`, 8 of `.omc/plans/*.md`)
+  - `/Users/<name>` absolute paths: 9 files (`.omc/evaluate_integration.md`, 8 of `.omc/plans/*.md`)
   - Non-user-author emails in history: pre-fork upstream contributors (Karpathy + others) — preserved by design
 - **Ngrok tunnel**: `https://decoratively-conidial-sadye.ngrok-free.dev` → `localhost:8765` serving `~/Desktop/{eval,train}.zip`. Out-of-scope for this spec.
 

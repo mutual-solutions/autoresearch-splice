@@ -165,16 +165,9 @@ Current Korean-iter1 baseline: `combined = 0.151237` at SHA `c35ba8e`
 (metric-v2 first keep). See `autoresearch/baseline_metrics.json` for
 the full metric breakdown.
 
-## Acknowledgements
-
-This repository is a fork of
-[karpathy/autoresearch](https://github.com/karpathy/autoresearch) — the
-loop structure, the `program.md` agent-prompt convention, and the keep /
-discard / verify-fail journal pattern are all upstream ideas applied
-here to a different problem. Karpathy's original README is at
-[`README-upstream.md`](./README-upstream.md). Thanks to Andrej for the
-scaffolding and the framing.
-
 ## License
 
-MIT — see [`LICENSE`](./LICENSE). Compatible with the upstream MIT.
+MIT — see [`LICENSE`](./LICENSE). Loop structure, `program.md` convention,
+and the keep / discard / verify-fail journal pattern are inherited from
+upstream [karpathy/autoresearch](https://github.com/karpathy/autoresearch)
+under upstream-MIT.

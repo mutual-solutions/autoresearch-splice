@@ -21,7 +21,7 @@ data/
     └── LibriSpeech/dev-clean/
 ```
 
-## Two paths to the data
+## Paths to the data
 
 ### Path A — regenerate from public sources (works for any outsider)
 
@@ -94,20 +94,14 @@ iteration — operators only need to manually decrypt for retest workflows
 ### Path C — skip the test gate
 
 If you only want to run the optimization loop (eval-set iterations) and
-don't need the held-out overfitting check, you can skip the test corpus
-entirely:
+don't need the held-out overfitting check: regen everything anyway (Path
+A produces all three splits in one pass), then just delete `data/test/`
+or leave it alone — the loop's `keep` / `discard` decisions don't depend
+on the test gate. The wrapper fires `scripts/test_eval.py` every 10 keeps
+as an overfitting alarm only; it never blocks a keep.
 
-```bash
-# Generate eval + train only
-PYTHONPATH=$PWD uv run python scripts/regenerate_korean_iter1.py --regenerate \
-    --skip-split test
-
-# Run the loop without test_eval
-./run_autoresearch.sh start
-```
-
-The loop's `keep` decisions don't depend on the held-out test gate; the
-gate is fired every 10 keeps as an overfitting alarm only.
+To suppress the test_eval fire entirely, comment out its invocation in
+`run_autoresearch.sh` (search for `test_eval` in the wrapper).
 
 ## After data is in place
 
